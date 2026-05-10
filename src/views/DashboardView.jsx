@@ -50,21 +50,55 @@ const S = {
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
     gap: 20,
   },
   card: {
     background: "#1a1a1a",
     borderRadius: 10,
     border: "1px solid #2e2e2e",
-    padding: "22px 24px",
-    cursor: "pointer",
+    padding: "22px 24px 18px",
     position: "relative",
-    transition: "border-color 0.15s ease",
+    display: "flex",
+    flexDirection: "column",
+    transition: "border-color 0.15s ease, transform 0.15s ease",
   },
-  cardTitle: { fontWeight: 700, fontSize: 16, color: "#f1f1f1", marginBottom: 6 },
-  cardSub: { fontSize: 13, color: "#a0a0a0", marginBottom: 4 },
-  cardCount: { fontSize: 12, color: "#555555" },
+  cardTitle: { fontWeight: 700, fontSize: 16, color: "#f1f1f1", marginBottom: 8, paddingRight: 24 },
+  subjectBadge: {
+    display: "inline-block",
+    background: "#242424",
+    color: "#a0a0a0",
+    fontSize: 12,
+    padding: "3px 10px",
+    borderRadius: 20,
+    marginBottom: 10,
+  },
+  cardMeta: { fontSize: 12, color: "#555555", marginBottom: 16 },
+  cardBtns: { display: "flex", gap: 8, marginTop: "auto" },
+  editBtn: {
+    flex: 1,
+    padding: "8px 0",
+    background: "#242424",
+    color: "#a0a0a0",
+    border: "1px solid #2e2e2e",
+    borderRadius: 6,
+    fontWeight: 600,
+    fontSize: 13,
+    cursor: "pointer",
+    transition: "opacity 0.15s ease",
+  },
+  solveBtn: {
+    flex: 1,
+    padding: "8px 0",
+    background: "#f59e0b",
+    color: "#000000",
+    border: "none",
+    borderRadius: 6,
+    fontWeight: 700,
+    fontSize: 13,
+    cursor: "pointer",
+    transition: "opacity 0.15s ease",
+  },
   delBtn: {
     position: "absolute",
     top: 14,
@@ -72,46 +106,102 @@ const S = {
     background: "none",
     border: "none",
     color: "#555555",
-    fontSize: 18,
+    fontSize: 16,
     cursor: "pointer",
     lineHeight: 1,
     transition: "color 0.15s ease",
   },
-  empty: { color: "#555555", fontSize: 15, textAlign: "center", marginTop: 60 },
+  emptyWrap: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 80,
+    gap: 12,
+  },
+  emptyIcon: { fontSize: 48, color: "#555555" },
+  emptyText: { color: "#555555", fontSize: 15 },
   overlay: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
-    display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
+    position: "fixed",
+    inset: 0,
+    background: "rgba(0,0,0,0.75)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 100,
   },
   modal: {
-    background: "#1a1a1a", borderRadius: 12, padding: "32px 36px", width: 340,
+    background: "#1a1a1a",
+    borderRadius: 12,
     border: "1px solid #2e2e2e",
-    boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
+    padding: "32px 36px",
+    width: 360,
+    boxShadow: "0 16px 48px rgba(0,0,0,0.6)",
+    position: "relative",
   },
-  modalTitle: { fontWeight: 700, fontSize: 17, color: "#f1f1f1", marginBottom: 20 },
-  label: { display: "block", fontSize: 13, fontWeight: 600, color: "#a0a0a0", marginBottom: 6 },
+  modalTitle: { fontWeight: 700, fontSize: 17, color: "#f1f1f1", marginBottom: 24 },
+  modalClose: {
+    position: "absolute",
+    top: 16,
+    right: 18,
+    background: "none",
+    border: "none",
+    color: "#555555",
+    fontSize: 20,
+    cursor: "pointer",
+    lineHeight: 1,
+    transition: "color 0.15s ease",
+  },
+  label: {
+    display: "block",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#a0a0a0",
+    marginBottom: 6,
+  },
   input: {
-    width: "100%", padding: "9px 12px",
+    width: "100%",
+    padding: "9px 12px",
     background: "#242424",
     border: "1px solid #2e2e2e",
-    borderRadius: 7, fontSize: 14, marginBottom: 14,
+    borderRadius: 7,
+    fontSize: 14,
+    marginBottom: 16,
     color: "#f1f1f1",
     outline: "none",
     transition: "border-color 0.15s ease",
   },
-  modalBtns: { display: "flex", gap: 10, marginTop: 4 },
+  modalBtns: { display: "flex", gap: 10, marginTop: 8 },
   confirmBtn: {
-    flex: 1, padding: "10px 0", background: "#f59e0b", color: "#000000",
-    border: "none", borderRadius: 7, fontWeight: 700, cursor: "pointer", fontSize: 14,
+    flex: 1,
+    padding: "10px 0",
+    background: "#f59e0b",
+    color: "#000000",
+    border: "none",
+    borderRadius: 7,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontSize: 14,
     transition: "opacity 0.15s ease",
   },
   cancelBtn: {
-    flex: 1, padding: "10px 0", background: "#242424", color: "#a0a0a0",
-    border: "1px solid #2e2e2e", borderRadius: 7, fontWeight: 700, cursor: "pointer", fontSize: 14,
+    flex: 1,
+    padding: "10px 0",
+    background: "#242424",
+    color: "#a0a0a0",
+    border: "1px solid #2e2e2e",
+    borderRadius: 7,
+    fontWeight: 700,
+    cursor: "pointer",
+    fontSize: 14,
     transition: "opacity 0.15s ease",
   },
 };
 
-export default function DashboardView({ onLogout, onOpenEditor }) {
+function focusGold(e) { e.target.style.borderColor = "#f59e0b"; }
+function blurGray(e) { e.target.style.borderColor = "#2e2e2e"; }
+
+export default function DashboardView({ onLogout, onOpenEditor, onSolve }) {
   const [sets, setSets] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [title, setTitle] = useState("");
@@ -136,7 +226,8 @@ export default function DashboardView({ onLogout, onOpenEditor }) {
     try {
       await createSet(title.trim(), subject.trim());
       setShowModal(false);
-      setTitle(""); setSubject("");
+      setTitle("");
+      setSubject("");
       fetchSets();
     } catch (e) {
       alert(e.message);
@@ -187,16 +278,24 @@ export default function DashboardView({ onLogout, onOpenEditor }) {
         </div>
 
         {sets.length === 0 ? (
-          <p style={S.empty}>아직 문제집이 없습니다. 새 세트를 만들어보세요!</p>
+          <div style={S.emptyWrap}>
+            <div style={S.emptyIcon}>📭</div>
+            <p style={S.emptyText}>아직 문제집이 없습니다. 새 세트를 만들어보세요!</p>
+          </div>
         ) : (
           <div style={S.grid}>
             {sets.map((s) => (
               <div
                 key={s.id}
                 style={S.card}
-                onClick={() => onOpenEditor(s)}
-                onMouseOver={(e) => { e.currentTarget.style.borderColor = "#f59e0b"; }}
-                onMouseOut={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.borderColor = "#f59e0b";
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.borderColor = "#2e2e2e";
+                  e.currentTarget.style.transform = "translateY(0)";
+                }}
               >
                 <button
                   style={S.delBtn}
@@ -207,8 +306,26 @@ export default function DashboardView({ onLogout, onOpenEditor }) {
                   ✕
                 </button>
                 <div style={S.cardTitle}>{s.title}</div>
-                {s.subject && <div style={S.cardSub}>📚 {s.subject}</div>}
-                <div style={S.cardCount}>문항 {s.questionCount}개</div>
+                {s.subject && <div style={S.subjectBadge}>📚 {s.subject}</div>}
+                <div style={S.cardMeta}>문항 {s.questionCount}개</div>
+                <div style={S.cardBtns}>
+                  <button
+                    style={S.editBtn}
+                    onClick={(e) => { e.stopPropagation(); onOpenEditor(s); }}
+                    onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
+                    onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                  >
+                    편집
+                  </button>
+                  <button
+                    style={S.solveBtn}
+                    onClick={(e) => { e.stopPropagation(); onSolve(s); }}
+                    onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
+                    onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                  >
+                    풀기
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -218,26 +335,37 @@ export default function DashboardView({ onLogout, onOpenEditor }) {
       {showModal && (
         <div style={S.overlay} onClick={() => setShowModal(false)}>
           <div style={S.modal} onClick={(e) => e.stopPropagation()}>
+            <button
+              style={S.modalClose}
+              onClick={() => setShowModal(false)}
+              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
+              onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
+            >
+              ✕
+            </button>
             <div style={S.modalTitle}>새 문제집 만들기</div>
+
             <label style={S.label}>제목 *</label>
             <input
               style={S.input}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              onFocus={(e) => { e.target.style.borderColor = "#f59e0b"; }}
-              onBlur={(e) => { e.target.style.borderColor = "#2e2e2e"; }}
+              onFocus={focusGold}
+              onBlur={blurGray}
               placeholder="예: 2025 수능 국어"
               autoFocus
             />
+
             <label style={S.label}>과목</label>
             <input
               style={S.input}
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              onFocus={(e) => { e.target.style.borderColor = "#f59e0b"; }}
-              onBlur={(e) => { e.target.style.borderColor = "#2e2e2e"; }}
+              onFocus={focusGold}
+              onBlur={blurGray}
               placeholder="예: 국어, 수학 ..."
             />
+
             <div style={S.modalBtns}>
               <button
                 style={S.cancelBtn}

@@ -3,6 +3,7 @@ import LoginView from "./views/LoginView";
 import DashboardView from "./views/DashboardView";
 import EditorView from "./views/EditorView";
 import PreviewView from "./views/PreviewView";
+import SolveView from "./views/SolveView";
 
 export default function App() {
   const [view, setView] = useState("login");
@@ -34,6 +35,11 @@ export default function App() {
     setView("preview");
   }
 
+  function handleSolve(set) {
+    setCurrentSet(set);
+    setView("solve");
+  }
+
   if (view === "login") {
     return <LoginView onLoginSuccess={handleLoginSuccess} />;
   }
@@ -43,6 +49,7 @@ export default function App() {
       <DashboardView
         onLogout={handleLogout}
         onOpenEditor={handleOpenEditor}
+        onSolve={handleSolve}
       />
     );
   }
@@ -62,6 +69,15 @@ export default function App() {
       <PreviewView
         set={currentSet}
         onBack={() => setView("editor")}
+      />
+    );
+  }
+
+  if (view === "solve") {
+    return (
+      <SolveView
+        set={currentSet}
+        onBack={() => setView("dashboard")}
       />
     );
   }
