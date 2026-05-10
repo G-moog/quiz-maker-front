@@ -19,6 +19,19 @@ const S = {
   navTitle: { fontWeight: 700, fontSize: 18, letterSpacing: 1, color: "#f59e0b" },
   navRight: { display: "flex", alignItems: "center", gap: 12 },
   username: { fontSize: 14, color: "#a0a0a0" },
+  roleBadge: (role) => {
+    const map = {
+      ADMIN:   { bg: "rgba(248,113,113,0.15)", color: "#f87171",  label: "관리자" },
+      MANAGER: { bg: "rgba(245,158,11,0.15)",  color: "#f59e0b",  label: "중간관리자" },
+      USER:    { bg: "rgba(96,165,250,0.15)",  color: "#60a5fa",  label: "일반사용자" },
+    };
+    const { bg, color, label } = map[role] ?? map.USER;
+    return {
+      display: "inline-block", fontSize: 11, fontWeight: 700,
+      padding: "2px 8px", borderRadius: 20,
+      background: bg, color,
+    };
+  },
   logoutBtn: {
     background: "#242424",
     border: "1px solid #2e2e2e",
@@ -201,7 +214,9 @@ const S = {
 function focusGold(e) { e.target.style.borderColor = "#f59e0b"; }
 function blurGray(e) { e.target.style.borderColor = "#2e2e2e"; }
 
-export default function DashboardView({ onLogout, onOpenEditor, onSolve }) {
+const ROLE_LABEL = { ADMIN: "관리자", MANAGER: "중간관리자", USER: "일반사용자" };
+
+export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = "USER" }) {
   const [sets, setSets] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [title, setTitle] = useState("");
@@ -253,6 +268,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve }) {
         <span style={S.navTitle}>📝 Quiz Maker</span>
         <div style={S.navRight}>
           <span style={S.username}>{username}</span>
+          <span style={S.roleBadge(role)}>{ROLE_LABEL[role] ?? "일반사용자"}</span>
           <button
             style={S.logoutBtn}
             onClick={onLogout}

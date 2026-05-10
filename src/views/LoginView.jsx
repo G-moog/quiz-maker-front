@@ -138,6 +138,7 @@ export default function LoginView({ onLoginSuccess }) {
       const res = await login(loginForm.username, loginForm.password);
       localStorage.setItem("token", res.token);
       localStorage.setItem("username", res.username);
+      localStorage.setItem("role", res.role ?? "USER");
       onLoginSuccess();
     } catch (err) {
       setServerError(err.message);
@@ -166,6 +167,7 @@ export default function LoginView({ onLoginSuccess }) {
       );
       localStorage.setItem("token", res.token);
       localStorage.setItem("username", res.username);
+      localStorage.setItem("role", res.role ?? "USER");
       onLoginSuccess();
     } catch (err) {
       setServerError(err.message);

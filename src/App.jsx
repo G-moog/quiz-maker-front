@@ -8,9 +8,11 @@ import SolveView from "./views/SolveView";
 export default function App() {
   const [view, setView] = useState("login");
   const [currentSet, setCurrentSet] = useState(null);
+  const [role, setRole] = useState(localStorage.getItem("role") || "USER");
 
   useEffect(() => {
     if (localStorage.getItem("token")) {
+      setRole(localStorage.getItem("role") || "USER");
       setView("dashboard");
     }
   }, []);
@@ -18,10 +20,13 @@ export default function App() {
   function handleLogout() {
     localStorage.removeItem("token");
     localStorage.removeItem("username");
+    localStorage.removeItem("role");
+    setRole("USER");
     setView("login");
   }
 
   function handleLoginSuccess() {
+    setRole(localStorage.getItem("role") || "USER");
     setView("dashboard");
   }
 
@@ -50,6 +55,7 @@ export default function App() {
         onLogout={handleLogout}
         onOpenEditor={handleOpenEditor}
         onSolve={handleSolve}
+        role={role}
       />
     );
   }
