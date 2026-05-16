@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getSets, createSet, deleteSet } from "../api/quiz";
+import { getSets, createSet, updateSet, deleteSet } from "../api/quiz";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
 
 const S = {
@@ -75,6 +75,11 @@ const S = {
   delBtn: {
     position: "absolute", top: 14, right: 14, background: "none",
     border: "none", color: "#555555", fontSize: 16, cursor: "pointer",
+    lineHeight: 1, transition: "color 0.15s ease",
+  },
+  renameBtn: {
+    position: "absolute", top: 14, right: 40, background: "none",
+    border: "none", color: "#555555", fontSize: 14, cursor: "pointer",
     lineHeight: 1, transition: "color 0.15s ease",
   },
   emptyWrap: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginTop: 80, gap: 12 },
@@ -185,6 +190,14 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
 
+  // 세트 수정 모달 상태
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingSet, setEditingSet] = useState(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSubject, setEditSubject] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+
   // 토스트
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
@@ -216,6 +229,32 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
       alert(e.message);
     } finally {
       setCreating(false);
+    }
+  }
+
+  // 세트 수정
+  function openEditModal(e, s) {
+    e.stopPropagation();
+    setEditingSet(s);
+    setEditTitle(s.title);
+    setEditSubject(s.subject || "");
+    setEditError("");
+    setShowEditModal(true);
+  }
+
+  async function handleEditSave() {
+    if (!editTitle.trim()) { setEditError("제목을 입력해주세요."); return; }
+    setEditSaving(true);
+    setEditError("");
+    try {
+      await updateSet(editingSet.id, editTitle.trim(), editSubject.trim());
+      setShowEditModal(false);
+      fetchSets();
+      showToast("문제집 정보가 수정되었습니다.", "success");
+    } catch (e) {
+      setEditError(e.message.includes("403") ? "수정 권한이 없습니다." : e.message);
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -355,6 +394,13 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                 }}
               >
                 <button
+                  style={S.renameBtn}
+                  onClick={(e) => openEditModal(e, s)}
+                  onMouseOver={(e) => { e.currentTarget.style.color = "#f59e0b"; }}
+                  onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
+                  title="제목/과목 수정"
+                >✏</button>
+                <button
                   style={S.delBtn}
                   onClick={(e) => handleDelete(e, s.id)}
                   onMouseOver={(e) => { e.currentTarget.style.color = "#f87171"; }}
@@ -430,6 +476,54 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                 onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
                 onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
               >{creating ? "생성 중..." : "만들기"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 세트 수정 모달 ── */}
+      {showEditModal && (
+        <div style={S.overlay} onClick={() => setShowEditModal(false)}>
+          <div style={S.modal} onClick={(e) => e.stopPropagation()}>
+            <button
+              style={S.modalClose}
+              onClick={() => setShowEditModal(false)}
+              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
+              onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
+            >✕</button>
+            <div style={S.modalTitle}>문제집 수정</div>
+            <label style={S.label}>제목 *</label>
+            <input
+              style={S.input}
+              value={editTitle}
+              onChange={(e) => { setEditTitle(e.target.value); setEditError(""); }}
+              onFocus={focusGold} onBlur={blurGray}
+              placeholder="문제집 제목"
+              autoFocus
+            />
+            <label style={S.label}>과목</label>
+            <input
+              style={S.input}
+              value={editSubject}
+              onChange={(e) => setEditSubject(e.target.value)}
+              onFocus={focusGold} onBlur={blurGray}
+              placeholder="예: 국어, 수학 ..."
+            />
+            {editError && <div style={S.modalError}>{editError}</div>}
+            <div style={S.modalBtns}>
+              <button
+                style={S.cancelBtn}
+                onClick={() => setShowEditModal(false)}
+                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
+                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+              >취소</button>
+              <button
+                style={S.confirmBtn}
+                onClick={handleEditSave}
+                disabled={editSaving}
+                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
+                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+              >{editSaving ? "저장 중..." : "저장"}</button>
             </div>
           </div>
         </div>

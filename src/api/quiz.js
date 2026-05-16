@@ -11,6 +11,13 @@ export function createSet(title, subject) {
   });
 }
 
+export function updateSet(id, title, subject) {
+  return authFetch(`/api/sets/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ title, subject }),
+  });
+}
+
 export function deleteSet(id) {
   return authFetch(`/api/sets/${id}`, { method: "DELETE" });
 }
