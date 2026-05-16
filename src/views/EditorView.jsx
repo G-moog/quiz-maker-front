@@ -13,6 +13,13 @@ const TYPE_COLOR = {
   fill:     { text: "#f59e0b", bg: "rgba(245,158,11,0.1)",  border: "#f59e0b" },
 };
 
+// 백엔드 타입명(short_answer, multiple_choice 등)을 프론트엔드 내부명으로 정규화
+function normalizeType(type) {
+  const map = { short_answer: "short", multiple_choice: "multiple" };
+  const lower = (type || "").toLowerCase();
+  return map[lower] ?? lower;
+}
+
 function emptyForm(type, orderIndex = 0) {
   return {
     type,
@@ -221,7 +228,7 @@ export default function EditorView({ set, onBack, onPreview }) {
   function handleSelectQuestion(q) {
     setForm({
       id: q.id,
-      type: q.type,
+      type: normalizeType(q.type),
       text: q.text || "",
       options: parseOptions(q.options),
       answerIndex: q.answerIndex ?? 0,
@@ -395,11 +402,11 @@ export default function EditorView({ set, onBack, onPreview }) {
             questions.map((q, i) => (
               <div
                 key={q.id}
-                style={S.qItem(form?.id === q.id, q.type)}
+                style={S.qItem(form?.id === q.id, normalizeType(q.type))}
                 onClick={() => handleSelectQuestion(q)}
               >
                 <div>
-                  <div style={S.qNum}>{i + 1}번 · {TYPE_LABEL[q.type]}</div>
+                  <div style={S.qNum}>{i + 1}번 · {TYPE_LABEL[normalizeType(q.type)]}</div>
                   <div style={S.qText}>{q.text?.slice(0, 40) || "(내용 없음)"}</div>
                 </div>
                 <button

@@ -11,6 +11,13 @@ const TYPE_COLOR = {
   fill:     { text: "#f59e0b", bg: "rgba(245,158,11,0.1)" },
 };
 
+// 백엔드 타입명(short_answer, multiple_choice 등)을 프론트엔드 내부명으로 정규화
+function normalizeType(type) {
+  const map = { short_answer: "short", multiple_choice: "multiple" };
+  const lower = (type || "").toLowerCase();
+  return map[lower] ?? lower;
+}
+
 function parseOptions(opts) {
   if (!opts) return [];
   if (Array.isArray(opts)) return opts;
@@ -347,8 +354,8 @@ export default function SolveView({ set, onBack }) {
   }
 
   // ── 문항 풀기 화면 ──
-  // 백엔드가 대문자 enum("SHORT", "MULTIPLE" 등)을 반환할 수 있으므로 소문자로 정규화
-  const qtype = (current?.type || "").toLowerCase();
+  // 백엔드 타입명 정규화 (short_answer → short, multiple_choice → multiple 등)
+  const qtype = normalizeType(current?.type);
   const opts = current ? parseOptions(current.options) : [];
   const isLast = currentIndex === questions.length - 1;
 
