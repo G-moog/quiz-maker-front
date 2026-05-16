@@ -4,30 +4,21 @@ function getToken() {
   return localStorage.getItem("token");
 }
 
-async function downloadBlob(path, filename) {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
-  });
-  if (!res.ok) throw new Error(`다운로드 실패 (HTTP ${res.status})`);
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+function downloadByUrl(path) {
+  const token = getToken();
+  window.location.href = `${BASE_URL}${path}?token=${token}`;
 }
 
-export function downloadSet(setId, title) {
-  return downloadBlob(`/api/export/set/${setId}`, `${title}.xlsx`);
+export function downloadSet(setId) {
+  downloadByUrl(`/api/export/set/${setId}`);
 }
 
 export function downloadAll() {
-  return downloadBlob("/api/export/all", "전체_문제집.xlsx");
+  downloadByUrl("/api/export/all");
 }
 
 export function downloadTemplate() {
-  return downloadBlob("/api/export/template", "업로드_양식.xlsx");
+  downloadByUrl("/api/export/template");
 }
 
 export async function uploadToSet(setId, file) {

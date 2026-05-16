@@ -176,9 +176,6 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   const [subject, setSubject] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // 엑셀 다운로드 상태
-  const [dlAll, setDlAll] = useState(false);
-  const [dlSetId, setDlSetId] = useState(null);
 
   // 업로드 모달 상태
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -265,17 +262,11 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   }
 
   // 엑셀 다운로드
-  async function handleDownloadAll() {
-    setDlAll(true);
-    try { await downloadAll(); } catch (e) { showToast(e.message, "error"); }
-    finally { setDlAll(false); }
-  }
+  function handleDownloadAll() { downloadAll(); }
 
-  async function handleDownloadSet(e, id, setTitle) {
+  function handleDownloadSet(e, id) {
     e.stopPropagation();
-    setDlSetId(id);
-    try { await downloadSet(id, setTitle); } catch (e) { showToast(e.message, "error"); }
-    finally { setDlSetId(null); }
+    downloadSet(id);
   }
 
   // 엑셀 업로드
@@ -316,9 +307,9 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
     }
   }
 
-  async function handleDownloadTemplate(e) {
+  function handleDownloadTemplate(e) {
     e.preventDefault();
-    try { await downloadTemplate(); } catch (e) { showToast(e.message, "error"); }
+    downloadTemplate();
   }
 
   return (
@@ -331,11 +322,10 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
               <button
                 style={S.navIconBtn}
                 onClick={handleDownloadAll}
-                disabled={dlAll}
                 onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
                 onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
               >
-                {dlAll ? "다운로드 중..." : "⬇ 전체 다운로드"}
+                ⬇ 전체 다운로드
               </button>
               <button
                 style={S.navUploadBtn}
@@ -425,12 +415,11 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                   {canExcel && (
                     <button
                       style={S.excelBtn}
-                      onClick={(e) => handleDownloadSet(e, s.id, s.title)}
-                      disabled={dlSetId === s.id}
+                      onClick={(e) => handleDownloadSet(e, s.id)}
                       onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
                       onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
                     >
-                      {dlSetId === s.id ? "..." : "⬇ 엑셀"}
+                      ⬇ 엑셀
                     </button>
                   )}
                 </div>
