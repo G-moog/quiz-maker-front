@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
+import FillText from "../components/FillText";
 
-const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X" };
+const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
 const TYPE_COLOR = {
   multiple: { text: "#60a5fa", bg: "rgba(96,165,250,0.1)" },
   short:    { text: "#34d399", bg: "rgba(52,211,153,0.1)" },
   ox:       { text: "#f87171", bg: "rgba(248,113,113,0.1)" },
+  fill:     { text: "#f59e0b", bg: "rgba(245,158,11,0.1)" },
 };
 
 function parseOptions(opts) {
@@ -399,8 +401,10 @@ export default function SolveView({ set, onBack }) {
                 <span style={S.typeBadge(current.type)}>{TYPE_LABEL[current.type]}</span>
               </div>
 
-              {/* 문제 */}
-              <div style={S.qText}>{current.text}</div>
+              {/* 문제 (빈칸 채우기는 FillText 내부에서 렌더링) */}
+              {current.type !== "fill" && (
+                <div style={S.qText}>{current.text}</div>
+              )}
 
               {/* 객관식 */}
               {current.type === "multiple" && (
@@ -477,6 +481,18 @@ export default function SolveView({ set, onBack }) {
                     <div style={S.correctAnswer}>정답: {current.answer}</div>
                   )}
                 </div>
+              )}
+
+              {/* 빈칸 채우기 */}
+              {current.type === "fill" && (
+                <FillText
+                  key={currentIndex}
+                  text={current.text}
+                  answers={current.answers}
+                  mode="exam"
+                  answered={answered}
+                  onAnswer={recordAnswer}
+                />
               )}
 
               {/* 채점 후 해설/다음 버튼 */}

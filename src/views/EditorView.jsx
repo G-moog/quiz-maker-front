@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
 import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "../api/quiz";
+import FillText from "../components/FillText";
 
 const ANTHROPIC_API_KEY = "YOUR_API_KEY_HERE"; // TODO: 환경변수로 교체
 
-const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X" };
+const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
 const TYPE_COLOR = {
   multiple: { text: "#60a5fa", bg: "rgba(96,165,250,0.1)", border: "#60a5fa" },
   short:    { text: "#34d399", bg: "rgba(52,211,153,0.1)",  border: "#34d399" },
   ox:       { text: "#f87171", bg: "rgba(248,113,113,0.1)", border: "#f87171" },
+  fill:     { text: "#f59e0b", bg: "rgba(245,158,11,0.1)",  border: "#f59e0b" },
 };
 
 function emptyForm(type, orderIndex = 0) {
@@ -18,6 +20,7 @@ function emptyForm(type, orderIndex = 0) {
     options: type === "multiple" ? ["", "", "", ""] : null,
     answerIndex: type === "multiple" ? 0 : null,
     answer: "",
+    answers: type === "fill" ? [] : null,
     explanation: "",
     orderIndex,
   };
@@ -27,6 +30,12 @@ function parseOptions(opts) {
   if (!opts) return ["", "", "", ""];
   if (Array.isArray(opts)) return opts;
   try { return JSON.parse(opts); } catch { return ["", "", "", ""]; }
+}
+
+function parseAnswers(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try { return JSON.parse(raw); } catch { return []; }
 }
 
 const S = {
@@ -60,9 +69,13 @@ const S = {
     width: 300, background: "#1a1a1a", borderRight: "1px solid #2e2e2e",
     display: "flex", flexDirection: "column", overflowY: "auto",
   },
-  addBtns: { padding: "16px 14px", display: "flex", gap: 8, borderBottom: "1px solid #2e2e2e" },
+  addBtns: {
+    padding: "14px",
+    display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6,
+    borderBottom: "1px solid #2e2e2e",
+  },
   typeBtn: (color) => ({
-    flex: 1, padding: "7px 0", background: "transparent",
+    padding: "7px 0", background: "transparent",
     border: `1px solid ${color}`, color, borderRadius: 6,
     fontWeight: 700, fontSize: 12, cursor: "pointer", transition: "background 0.15s ease",
   }),
@@ -120,15 +133,24 @@ const S = {
     display: "flex", alignItems: "center", justifyContent: "center",
     width: 72, height: 56, borderRadius: 8, cursor: "pointer",
     fontSize: 24, fontWeight: 800,
-    border: `2px solid ${selected
-      ? (v === "O" ? "#34d399" : "#f87171")
-      : "#2e2e2e"}`,
+    border: `2px solid ${selected ? (v === "O" ? "#34d399" : "#f87171") : "#2e2e2e"}`,
     background: selected
       ? (v === "O" ? "rgba(52,211,153,0.1)" : "rgba(248,113,113,0.1)")
       : "#242424",
     color: v === "O" ? "#34d399" : "#f87171",
     transition: "all 0.15s ease",
   }),
+  // 빈칸 정답 입력 행
+  fillAnswerRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
+  fillAnswerLabel: { color: "#f59e0b", fontWeight: 700, fontSize: 12, minWidth: 44, flexShrink: 0 },
+  fillHint: {
+    fontSize: 13, color: "#555555", marginBottom: 16,
+    padding: "10px 12px", background: "#1a1a1a", border: "1px solid #2e2e2e",
+    borderRadius: 7, lineHeight: 1.6,
+  },
+  fillPreviewLabel: { fontSize: 12, color: "#a0a0a0", marginBottom: 8, marginTop: 4 },
+
+  // 버튼
   btnRow: { display: "flex", gap: 10, marginTop: 4 },
   cancelBtn: {
     flex: 1, padding: "10px 0", background: "#242424", color: "#a0a0a0",
@@ -140,6 +162,7 @@ const S = {
     border: "none", borderRadius: 7, fontWeight: 700,
     cursor: "pointer", fontSize: 14, transition: "opacity 0.15s ease",
   },
+  divider: { borderTop: "1px solid #2e2e2e", margin: "16px 0" },
 
   // AI 모달
   overlay: {
@@ -176,7 +199,6 @@ function blurGray(e) { e.target.style.borderColor = "#2e2e2e"; }
 
 export default function EditorView({ set, onBack, onPreview }) {
   const [questions, setQuestions] = useState([]);
-  // form: null(idle) | { ...fields, id?(edit모드) }
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [showAI, setShowAI] = useState(false);
@@ -195,7 +217,7 @@ export default function EditorView({ set, onBack, onPreview }) {
     setForm(emptyForm(type, questions.length));
   }
 
-  // 기존 문항 클릭 → 편집 폼 표시
+  // 기존 문항 클릭 → 편집 폼
   function handleSelectQuestion(q) {
     setForm({
       id: q.id,
@@ -204,18 +226,16 @@ export default function EditorView({ set, onBack, onPreview }) {
       options: parseOptions(q.options),
       answerIndex: q.answerIndex ?? 0,
       answer: q.answer || "",
+      answers: parseAnswers(q.answers),
       explanation: q.explanation || "",
       orderIndex: q.orderIndex,
     });
   }
 
-  // 저장 버튼
+  // 저장
   async function handleSave() {
     if (!form) return;
-    if (!form.text.trim()) {
-      alert("문제 내용을 입력해주세요.");
-      return;
-    }
+    if (!form.text.trim()) { alert("문제 내용을 입력해주세요."); return; }
     setSaving(true);
     try {
       const payload = {
@@ -223,7 +243,8 @@ export default function EditorView({ set, onBack, onPreview }) {
         text: form.text,
         options: form.type === "multiple" ? JSON.stringify(form.options) : null,
         answerIndex: form.type === "multiple" ? form.answerIndex : null,
-        answer: form.answer,
+        answer: form.type === "fill" ? null : form.answer,
+        answers: form.type === "fill" ? (form.answers || []) : null,
         explanation: form.explanation,
         orderIndex: form.orderIndex,
       };
@@ -231,7 +252,7 @@ export default function EditorView({ set, onBack, onPreview }) {
         await updateQuestion(form.id, payload);
       } else {
         await addQuestion(set.id, payload);
-        setForm(null); // 새 문항 저장 후 폼 초기화
+        setForm(null);
       }
       await fetchQ();
     } catch (e) {
@@ -255,6 +276,22 @@ export default function EditorView({ set, onBack, onPreview }) {
     const opts = [...(form.options ?? ["", "", "", ""])];
     opts[idx] = val;
     setForm((f) => ({ ...f, options: opts }));
+  }
+
+  // 문제 텍스트 변경 핸들러: fill 타입이면 ___ 개수에 맞춰 answers 배열 자동 조정
+  function handleTextChange(e) {
+    const newText = e.target.value;
+    if (form.type === "fill") {
+      const count = (newText.match(/___/g) || []).length;
+      const cur = form.answers || [];
+      setForm((f) => ({
+        ...f,
+        text: newText,
+        answers: Array.from({ length: count }, (_, i) => cur[i] ?? ""),
+      }));
+    } else {
+      setForm((f) => ({ ...f, text: newText }));
+    }
   }
 
   async function handleAIGenerate() {
@@ -288,6 +325,7 @@ export default function EditorView({ set, onBack, onPreview }) {
           options: JSON.stringify(item.options),
           answerIndex: item.answerIndex ?? 0,
           answer: "",
+          answers: null,
           explanation: item.explanation ?? "",
           orderIndex: questions.length + i,
         });
@@ -304,6 +342,7 @@ export default function EditorView({ set, onBack, onPreview }) {
 
   const isEdit = !!form?.id;
   const opts = form?.options ?? ["", "", "", ""];
+  const fillBlankCount = form?.type === "fill" ? (form.text.match(/___/g) || []).length : 0;
 
   return (
     <div style={S.page}>
@@ -334,10 +373,10 @@ export default function EditorView({ set, onBack, onPreview }) {
       </nav>
 
       <div style={S.layout}>
-        {/* 사이드바 */}
+        {/* ── 사이드바 ── */}
         <div style={S.sidebar}>
           <div style={S.addBtns}>
-            {["multiple", "short", "ox"].map((type) => (
+            {["multiple", "short", "ox", "fill"].map((type) => (
               <button
                 key={type}
                 style={S.typeBtn(TYPE_COLOR[type].text)}
@@ -374,7 +413,7 @@ export default function EditorView({ set, onBack, onPreview }) {
           )}
         </div>
 
-        {/* 우측 편집 패널 */}
+        {/* ── 편집 패널 ── */}
         <div style={S.editor}>
           {!form ? (
             <div style={S.idle}>
@@ -386,18 +425,29 @@ export default function EditorView({ set, onBack, onPreview }) {
               <div style={S.typeBadge(form.type)}>{TYPE_LABEL[form.type]}</div>
               <div style={S.modeLabel}>{isEdit ? "문항 편집" : "새 문항 작성"}</div>
 
-              {/* 문제 */}
-              <label style={S.fieldLabel}>문제</label>
+              {/* 문제 텍스트 */}
+              <label style={S.fieldLabel}>
+                문제
+                {form.type === "fill" && (
+                  <span style={{ color: "#f59e0b", fontSize: 11, fontWeight: 400, marginLeft: 8 }}>
+                    빈칸은 ___ 로 표시 (자동 감지)
+                  </span>
+                )}
+              </label>
               <textarea
                 style={S.textarea}
                 value={form.text}
-                onChange={(e) => setForm((f) => ({ ...f, text: e.target.value }))}
+                onChange={handleTextChange}
                 onFocus={focusGold}
                 onBlur={blurGray}
-                placeholder="문제를 입력하세요"
+                placeholder={
+                  form.type === "fill"
+                    ? "예: 가식 완료 후 ___을 덮어 ___cm 간격으로 심는다."
+                    : "문제를 입력하세요"
+                }
               />
 
-              {/* 객관식 보기 */}
+              {/* ── 객관식 ── */}
               {form.type === "multiple" && (
                 <>
                   <label style={S.fieldLabel}>보기 (정답 라디오 선택)</label>
@@ -426,7 +476,7 @@ export default function EditorView({ set, onBack, onPreview }) {
                 </>
               )}
 
-              {/* 주관식 모범 답안 */}
+              {/* ── 주관식 ── */}
               {form.type === "short" && (
                 <>
                   <label style={S.fieldLabel}>모범 답안</label>
@@ -441,7 +491,7 @@ export default function EditorView({ set, onBack, onPreview }) {
                 </>
               )}
 
-              {/* O·X 정답 */}
+              {/* ── O/X ── */}
               {form.type === "ox" && (
                 <>
                   <label style={S.fieldLabel}>정답</label>
@@ -459,7 +509,61 @@ export default function EditorView({ set, onBack, onPreview }) {
                 </>
               )}
 
-              {/* 해설 */}
+              {/* ── 빈칸 채우기 ── */}
+              {form.type === "fill" && (
+                <>
+                  {fillBlankCount === 0 ? (
+                    <div style={S.fillHint}>
+                      문제에{" "}
+                      <span style={{ color: "#f59e0b", fontWeight: 700 }}>___</span>
+                      {" "}를 입력하면 빈칸 정답 입력창이 자동으로 나타납니다.
+                    </div>
+                  ) : (
+                    <>
+                      <label style={S.fieldLabel}>빈칸 정답 ({fillBlankCount}개)</label>
+                      {(form.answers || []).map((ans, i) => (
+                        <div key={i} style={S.fillAnswerRow}>
+                          <span style={S.fillAnswerLabel}>빈칸{i + 1}</span>
+                          <input
+                            style={{ ...S.input, marginBottom: 0, flex: 1 }}
+                            value={ans}
+                            onChange={(e) => {
+                              const next = [...(form.answers || [])];
+                              next[i] = e.target.value;
+                              setForm((f) => ({ ...f, answers: next }));
+                            }}
+                            onFocus={focusGold}
+                            onBlur={blurGray}
+                            placeholder={`빈칸 ${i + 1}의 정답`}
+                          />
+                        </div>
+                      ))}
+
+                      {/* 학습 미리보기 */}
+                      {form.text.includes("___") && (
+                        <>
+                          <div style={{ ...S.divider, marginTop: 20 }} />
+                          <div style={S.fillPreviewLabel}>💡 학습 미리보기</div>
+                          <div style={{
+                            padding: "14px 16px", background: "#1a1a1a",
+                            border: "1px solid #2e2e2e", borderRadius: 8, marginBottom: 16,
+                          }}>
+                            <FillText
+                              key={form.text + (form.answers || []).join(",")}
+                              text={form.text}
+                              answers={form.answers || []}
+                              mode="learn"
+                              answered={false}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* ── 해설 (공통) ── */}
               <label style={S.fieldLabel}>해설 (선택)</label>
               <input
                 style={{ ...S.input, marginBottom: 20 }}
@@ -470,32 +574,28 @@ export default function EditorView({ set, onBack, onPreview }) {
                 placeholder="해설을 입력하세요 (선택)"
               />
 
-              {/* 버튼 */}
+              {/* ── 버튼 ── */}
               <div style={S.btnRow}>
                 <button
                   style={S.cancelBtn}
                   onClick={() => setForm(null)}
                   onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
                   onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
-                >
-                  취소
-                </button>
+                >취소</button>
                 <button
                   style={S.saveBtn}
                   onClick={handleSave}
                   disabled={saving}
                   onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
                   onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
-                >
-                  {saving ? "저장 중..." : "저장"}
-                </button>
+                >{saving ? "저장 중..." : "저장"}</button>
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* AI 생성 모달 */}
+      {/* ── AI 생성 모달 ── */}
       {showAI && (
         <div style={S.overlay} onClick={() => setShowAI(false)}>
           <div style={S.modal} onClick={(e) => e.stopPropagation()}>
