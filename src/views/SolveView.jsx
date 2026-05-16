@@ -347,6 +347,8 @@ export default function SolveView({ set, onBack }) {
   }
 
   // ── 문항 풀기 화면 ──
+  // 백엔드가 대문자 enum("SHORT", "MULTIPLE" 등)을 반환할 수 있으므로 소문자로 정규화
+  const qtype = (current?.type || "").toLowerCase();
   const opts = current ? parseOptions(current.options) : [];
   const isLast = currentIndex === questions.length - 1;
 
@@ -398,16 +400,16 @@ export default function SolveView({ set, onBack }) {
               {/* 문항 번호 + 유형 */}
               <div style={S.qMeta}>
                 <span style={S.qNum}>Q{currentIndex + 1}</span>
-                <span style={S.typeBadge(current.type)}>{TYPE_LABEL[current.type]}</span>
+                <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype]}</span>
               </div>
 
               {/* 문제 (빈칸 채우기는 FillText 내부에서 렌더링) */}
-              {current.type !== "fill" && (
+              {qtype !== "fill" && (
                 <div style={S.qText}>{current.text}</div>
               )}
 
               {/* 객관식 */}
-              {current.type === "multiple" && (
+              {qtype === "multiple" && (
                 <div>
                   {opts.map((opt, i) => (
                     <button
@@ -429,7 +431,7 @@ export default function SolveView({ set, onBack }) {
               )}
 
               {/* 주관식 */}
-              {current.type === "short" && (
+              {qtype === "short" && (
                 <div>
                   {!answered ? (
                     <div style={S.shortRow}>
@@ -464,7 +466,7 @@ export default function SolveView({ set, onBack }) {
               )}
 
               {/* O/X */}
-              {current.type === "ox" && (
+              {qtype === "ox" && (
                 <div>
                   <div style={S.oxRow}>
                     {["O", "X"].map((v) => (
@@ -484,7 +486,7 @@ export default function SolveView({ set, onBack }) {
               )}
 
               {/* 빈칸 채우기 */}
-              {current.type === "fill" && (
+              {qtype === "fill" && (
                 <FillText
                   key={currentIndex}
                   text={current.text}
