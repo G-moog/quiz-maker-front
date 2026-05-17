@@ -459,9 +459,12 @@ export default function SolveView({ set, onBack }) {
     : Array(fillBlankCount).fill(false);
   function toggleFill(i) {
     setFillRevealed((prev) => {
-      const next = fillRev.length === fillBlankCount ? [...prev] : Array(fillBlankCount).fill(false);
-      next[i] = !fillRev[i];
-      return next;
+      // prev(실제 상태)로 base를 만들고 base[i]를 토글 — fillRev(외부 파생값) 참조 금지
+      const base = prev.length === fillBlankCount
+        ? [...prev]
+        : Array(fillBlankCount).fill(false);
+      base[i] = !base[i];
+      return base;
     });
   }
 
