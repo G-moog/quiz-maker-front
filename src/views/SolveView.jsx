@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
-import FillText from "../components/FillText";
+import { parseAnswers } from "../components/FillText";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
@@ -16,6 +16,21 @@ function normalizeType(type) {
   const map = { short_answer: "short", multiple_choice: "multiple" };
   const lower = (type || "").toLowerCase();
   return map[lower] ?? lower;
+}
+
+// FILL 빈칸 버튼 스타일
+function fillBlankBtnStyle(revealed) {
+  return {
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+    minWidth: 64, padding: "2px 14px", margin: "0 3px",
+    verticalAlign: "middle", borderRadius: 6,
+    fontSize: 14, fontWeight: 700, cursor: "pointer",
+    border: `2px ${revealed ? "solid" : "dashed"} #f59e0b`,
+    background: revealed ? "#f59e0b" : "transparent",
+    color: revealed ? "#1a1a1a" : "#f59e0b",
+    transition: "all 0.2s ease",
+    lineHeight: 1.4,
+  };
 }
 
 function parseOptions(opts) {
@@ -200,6 +215,21 @@ const S = {
     fontWeight: 700, fontSize: 14, cursor: "pointer",
     transition: "opacity 0.15s ease",
   },
+  // FILL 학습 모드 버튼
+  revealAllBtn: {
+    padding: "8px 20px",
+    background: "#f59e0b", color: "#000000",
+    border: "none", borderRadius: 7,
+    fontWeight: 700, fontSize: 13, cursor: "pointer",
+    transition: "opacity 0.15s ease",
+  },
+  hideAllBtn: {
+    padding: "8px 20px",
+    background: "#242424", color: "#a0a0a0",
+    border: "1px solid #2e2e2e", borderRadius: 7,
+    fontWeight: 700, fontSize: 13, cursor: "pointer",
+    transition: "opacity 0.15s ease",
+  },
 };
 
 export default function SolveView({ set, onBack }) {
@@ -210,6 +240,7 @@ export default function SolveView({ set, onBack }) {
   const [results, setResults] = useState({});
   const [showExplanation, setShowExplanation] = useState(false);
   const [userInput, setUserInput] = useState("");
+  const [fillRevealed, setFillRevealed] = useState([]); // FILL 빈칸 공개 상태
   const [done, setDone] = useState(false);
 
   useEffect(() => {
@@ -261,6 +292,7 @@ export default function SolveView({ set, onBack }) {
       setCurrentIndex((i) => i + 1);
       setShowExplanation(false);
       setUserInput("");
+      setFillRevealed([]);
     } else {
       setDone(true);
     }
@@ -271,13 +303,19 @@ export default function SolveView({ set, onBack }) {
     setResults({});
     setShowExplanation(false);
     setUserInput("");
+    setFillRevealed([]);
     setDone(false);
   }
 
   // ── 결과 화면 ──
   if (done) {
-    const total = questions.length;
-    const rate = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+    // FILL 유형은 채점 제외
+    const gradable = questions.filter((q) => normalizeType(q.type) !== "fill");
+    const total = gradable.length;
+    const gradableCorrect = Object.entries(results).filter(
+      ([i, r]) => normalizeType(questions[parseInt(i)]?.type) !== "fill" && r.correct
+    ).length;
+    const rate = total > 0 ? Math.round((gradableCorrect / total) * 100) : 0;
     return (
       <div style={S.page}>
         <nav style={S.nav}>
@@ -303,13 +341,37 @@ export default function SolveView({ set, onBack }) {
             <div style={S.resultTop}>
               <div style={S.resultEmoji}>🎉</div>
               <div style={S.resultHeading}>풀이 완료!</div>
-              <div style={S.scoreNum(rate)}>{correctCount} / {total}</div>
+              <div style={S.scoreNum(rate)}>{gradableCorrect} / {total}</div>
               <div style={S.scoreRate(rate)}>정답률 {rate}%</div>
+              {total < questions.length && (
+                <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>
+                  (빈칸 채우기 {questions.length - total}문항은 채점 제외)
+                </div>
+              )}
             </div>
 
             <div style={S.resultList}>
               <div style={S.resultListTitle}>문항별 결과</div>
               {questions.map((q, i) => {
+                const ntype = normalizeType(q.type);
+                if (ntype === "fill") {
+                  return (
+                    <div key={q.id} style={S.resultItem}>
+                      <div style={{
+                        ...S.resultIcon(null),
+                        background: "rgba(245,158,11,0.15)", color: "#f59e0b",
+                        fontSize: 10,
+                      }}>
+                        학습
+                      </div>
+                      <div style={S.resultItemText}>
+                        <strong style={{ color: "#f59e0b" }}>{i + 1}번</strong>
+                        {" "}— {q.text?.slice(0, 50) || "(내용 없음)"}
+                        {q.text?.length > 50 ? "…" : ""}
+                      </div>
+                    </div>
+                  );
+                }
                 const r = results[i];
                 const correct = r?.correct ?? false;
                 return (
@@ -359,6 +421,22 @@ export default function SolveView({ set, onBack }) {
   const opts = current ? parseOptions(current.options) : [];
   const isLast = currentIndex === questions.length - 1;
 
+  // FILL 학습 모드 관련 (채점 없이 토글 방식)
+  const fillAnswers = qtype === "fill" ? parseAnswers(current?.answers) : [];
+  const fillParts  = qtype === "fill" ? (current?.text || "").split("___") : [];
+  const fillBlankCount = fillParts.length - 1;
+  // fillRevealed 길이가 문항 빈칸 수와 다를 경우 자동 보정
+  const fillRev = fillRevealed.length === fillBlankCount
+    ? fillRevealed
+    : Array(fillBlankCount).fill(false);
+  function toggleFill(i) {
+    setFillRevealed((prev) => {
+      const next = fillRev.length === fillBlankCount ? [...prev] : Array(fillBlankCount).fill(false);
+      next[i] = !fillRev[i];
+      return next;
+    });
+  }
+
   function getOptionState(i) {
     if (!answered) return "default";
     if (i === current.answerIndex) return "correct";
@@ -396,8 +474,8 @@ export default function SolveView({ set, onBack }) {
           <div style={S.center}>문항이 없습니다.</div>
         ) : (
           <div style={S.card}>
-            {/* 채점 결과 배너 */}
-            {answered && (
+            {/* 채점 결과 배너 (FILL 유형은 채점 없으므로 표시 안 함) */}
+            {answered && qtype !== "fill" && (
               <div style={S.resultBanner(result.correct)}>
                 {result.correct ? "✓ 정답입니다!" : "✗ 오답입니다"}
               </div>
@@ -410,7 +488,7 @@ export default function SolveView({ set, onBack }) {
                 <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype]}</span>
               </div>
 
-              {/* 문제 (빈칸 채우기는 FillText 내부에서 렌더링) */}
+              {/* 문제 텍스트 (빈칸 채우기는 아래 토글 UI에서 렌더링) */}
               {qtype !== "fill" && (
                 <div style={S.qText}>{current.text}</div>
               )}
@@ -492,20 +570,50 @@ export default function SolveView({ set, onBack }) {
                 </div>
               )}
 
-              {/* 빈칸 채우기 */}
+              {/* 빈칸 채우기 – 학습 모드 (채점 없음, 토글 방식) */}
               {qtype === "fill" && (
-                <FillText
-                  key={currentIndex}
-                  text={current.text}
-                  answers={current.answers}
-                  mode="exam"
-                  answered={answered}
-                  onAnswer={recordAnswer}
-                />
+                <div>
+                  {/* 문제 텍스트 + 빈칸 토글 버튼 */}
+                  <div style={{ fontSize: 15, lineHeight: 2.8, color: "#f1f1f1", wordBreak: "keep-all" }}>
+                    {fillParts.map((part, i) => (
+                      <span key={i}>
+                        <span style={{ whiteSpace: "pre-wrap" }}>{part}</span>
+                        {i < fillBlankCount && (
+                          <button
+                            style={fillBlankBtnStyle(fillRev[i])}
+                            onClick={() => toggleFill(i)}
+                            title={fillRev[i] ? "클릭하여 가리기" : "클릭하여 정답 확인"}
+                          >
+                            {fillRev[i] ? (fillAnswers[i] ?? "?") : "?"}
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                  {/* 모두 보기 / 모두 가리기 */}
+                  <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+                    <button
+                      style={S.revealAllBtn}
+                      onClick={() => setFillRevealed(Array(fillBlankCount).fill(true))}
+                      onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
+                      onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                    >
+                      모두 보기
+                    </button>
+                    <button
+                      style={S.hideAllBtn}
+                      onClick={() => setFillRevealed(Array(fillBlankCount).fill(false))}
+                      onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
+                      onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                    >
+                      모두 가리기
+                    </button>
+                  </div>
+                </div>
               )}
 
-              {/* 채점 후 해설/다음 버튼 */}
-              {answered && (
+              {/* 해설/다음 버튼: 채점 완료 또는 FILL 유형(채점 없음) */}
+              {(answered || qtype === "fill") && (
                 <>
                   <div style={S.actionRow}>
                     {current.explanation && (
