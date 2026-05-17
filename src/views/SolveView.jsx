@@ -450,8 +450,9 @@ export default function SolveView({ set, onBack }) {
 
   // FILL 학습 모드 관련 (채점 없이 토글 방식)
   const fillAnswers = qtype === "fill" ? parseAnswers(current?.answers) : [];
-  const fillParts  = qtype === "fill" ? (current?.text || "").split("___") : [];
-  const fillBlankCount = fillParts.length - 1;
+  // 비-fill 문항에서는 [""] 로 초기화하여 fillBlankCount 가 절대 음수가 되지 않도록 함
+  const fillParts  = qtype === "fill" ? (current?.text || "").split("___") : [""];
+  const fillBlankCount = Math.max(0, fillParts.length - 1);
   // fillRevealed 길이가 문항 빈칸 수와 다를 경우 자동 보정
   const fillRev = fillRevealed.length === fillBlankCount
     ? fillRevealed
