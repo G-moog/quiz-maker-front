@@ -215,6 +215,30 @@ const S = {
     fontWeight: 700, fontSize: 14, cursor: "pointer",
     transition: "opacity 0.15s ease",
   },
+  // ── 모드 선택 화면 ──
+  modeSelectPage: { maxWidth: 480, margin: "0 auto", padding: "60px 20px" },
+  modeSelectTitle: { fontSize: 13, color: "#a0a0a0", fontWeight: 600, marginBottom: 6 },
+  modeSelectSetName: { fontSize: 22, fontWeight: 800, color: "#f1f1f1", marginBottom: 8 },
+  modeSelectCount: { fontSize: 13, color: "#555", marginBottom: 40 },
+  modeCards: { display: "flex", gap: 14 },
+  modeCard: (active) => ({
+    flex: 1, padding: "24px 20px", borderRadius: 12, cursor: "pointer",
+    border: `2px solid ${active ? "#f59e0b" : "#2e2e2e"}`,
+    background: active ? "rgba(245,158,11,0.06)" : "#1a1a1a",
+    transition: "border-color 0.15s ease, background 0.15s ease",
+    textAlign: "center",
+  }),
+  modeCardIcon: { fontSize: 32, marginBottom: 12 },
+  modeCardTitle: { fontSize: 15, fontWeight: 800, color: "#f1f1f1", marginBottom: 6 },
+  modeCardDesc: { fontSize: 12, color: "#666", lineHeight: 1.5 },
+  modeStartBtn: {
+    width: "100%", marginTop: 28, padding: "14px 0",
+    background: "#f59e0b", color: "#000",
+    border: "none", borderRadius: 10,
+    fontWeight: 800, fontSize: 15, cursor: "pointer",
+    transition: "opacity 0.15s ease",
+  },
+
   // 이미지 표시
   qImage: {
     display: "block", maxWidth: "100%", borderRadius: 8,
@@ -266,6 +290,8 @@ export default function SolveView({ set, onBack }) {
   const [fillRevealed, setFillRevealed] = useState([]); // FILL 빈칸 공개 상태
   const [showAnswerImage, setShowAnswerImage] = useState(false); // 답안 이미지 토글
   const [done, setDone] = useState(false);
+  const [mode, setMode] = useState(null);       // null | "ordered" | "random"
+  const [modeChoice, setModeChoice] = useState("ordered"); // 모드 선택 화면 임시 상태
 
   useEffect(() => {
     (async () => {
@@ -323,7 +349,18 @@ export default function SolveView({ set, onBack }) {
     }
   }
 
-  function handleRetry() {
+  function shuffleArray(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function startQuiz(selectedMode) {
+    if (selectedMode === "random") setQuestions((q) => shuffleArray(q));
+    setMode(selectedMode);
     setCurrentIndex(0);
     setResults({});
     setShowExplanation(false);
@@ -331,6 +368,74 @@ export default function SolveView({ set, onBack }) {
     setFillRevealed([]);
     setShowAnswerImage(false);
     setDone(false);
+  }
+
+  function handleRetry() {
+    // 결과 화면 → 모드 선택으로 돌아가기
+    setMode(null);
+    setModeChoice("ordered");
+    setCurrentIndex(0);
+    setResults({});
+    setShowExplanation(false);
+    setUserInput("");
+    setFillRevealed([]);
+    setShowAnswerImage(false);
+    setDone(false);
+  }
+
+  // ── 모드 선택 화면 ──
+  if (!loadingQ && questions.length > 0 && mode === null) {
+    return (
+      <div style={S.page}>
+        <nav style={S.nav}>
+          <div style={S.navLeft}>
+            <button
+              style={S.backBtn}
+              onClick={onBack}
+              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
+              onMouseOut={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+            >← 목록으로</button>
+          </div>
+          <span style={S.navTitle}>{set.title}</span>
+          <div style={{ width: 80 }} />
+        </nav>
+        <div style={S.progressBar}><div style={S.progressFill(0)} /></div>
+
+        <div style={S.modeSelectPage}>
+          <div style={S.modeSelectTitle}>문제 풀기</div>
+          <div style={S.modeSelectSetName}>{set.title}</div>
+          <div style={S.modeSelectCount}>총 {questions.length}문항</div>
+
+          <div style={S.modeCards}>
+            {[
+              { key: "ordered", icon: "📋", title: "순번대로", desc: "문제집에 저장된\n순서대로 풀기" },
+              { key: "random",  icon: "🔀", title: "랜덤 배치", desc: "문제 순서를\n무작위로 섞어 풀기" },
+            ].map(({ key, icon, title, desc }) => (
+              <div
+                key={key}
+                style={S.modeCard(modeChoice === key)}
+                onClick={() => setModeChoice(key)}
+                onMouseOver={(e) => { if (modeChoice !== key) e.currentTarget.style.borderColor = "#555"; }}
+                onMouseOut={(e) => { if (modeChoice !== key) e.currentTarget.style.borderColor = "#2e2e2e"; }}
+              >
+                <div style={S.modeCardIcon}>{icon}</div>
+                <div style={S.modeCardTitle}>{title}</div>
+                <div style={S.modeCardDesc}>{desc}</div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            style={S.modeStartBtn}
+            onClick={() => startQuiz(modeChoice)}
+            onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
+            onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+          >
+            {modeChoice === "random" ? "🔀 랜덤으로 시작" : "📋 순번대로 시작"}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // ── 결과 화면 ──
