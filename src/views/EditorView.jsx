@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "../api/quiz";
+import { uploadImage } from "../api/image";
 import FillText from "../components/FillText";
 
 const ANTHROPIC_API_KEY = "YOUR_API_KEY_HERE"; // TODO: 환경변수로 교체
@@ -30,6 +31,9 @@ function emptyForm(type, orderIndex = 0) {
     answers: type === "fill" ? [] : null,
     explanation: "",
     orderIndex,
+    questionImageUrl: "",
+    answerImageUrl: "",
+    answerMode: "text", // "text" | "image"
   };
 }
 
@@ -171,6 +175,36 @@ const S = {
   },
   divider: { borderTop: "1px solid #2e2e2e", margin: "16px 0" },
 
+  // 이미지 업로드 UI
+  imgSection: { marginBottom: 16 },
+  imgUploadLabel: {
+    display: "inline-flex", alignItems: "center", gap: 6,
+    padding: "8px 16px", background: "#242424",
+    border: "2px dashed #2e2e2e", borderRadius: 7,
+    fontSize: 13, color: "#a0a0a0", cursor: "pointer",
+    transition: "border-color 0.15s ease, color 0.15s ease",
+  },
+  imgPreviewWrap: { position: "relative", display: "inline-block", marginTop: 6 },
+  imgPreview: {
+    display: "block", maxWidth: "100%", maxHeight: 200,
+    borderRadius: 8, border: "1px solid #2e2e2e",
+  },
+  imgDelBtn: {
+    position: "absolute", top: 6, right: 6,
+    background: "rgba(248,113,113,0.9)", color: "#fff",
+    border: "none", borderRadius: 4,
+    fontSize: 11, fontWeight: 700, padding: "3px 8px", cursor: "pointer",
+  },
+  answerModeRow: { display: "flex", gap: 6, marginBottom: 14 },
+  answerModeBtn: (active) => ({
+    padding: "6px 14px",
+    background: active ? "rgba(245,158,11,0.12)" : "transparent",
+    border: `1px solid ${active ? "#f59e0b" : "#2e2e2e"}`,
+    borderRadius: 6, fontSize: 12, fontWeight: 700,
+    color: active ? "#f59e0b" : "#555555", cursor: "pointer",
+    transition: "all 0.15s ease",
+  }),
+
   // AI 모달
   overlay: {
     position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
@@ -208,6 +242,8 @@ export default function EditorView({ set, onBack, onPreview }) {
   const [questions, setQuestions] = useState([]);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [uploadingQ, setUploadingQ] = useState(false); // 문제 이미지 업로드 중
+  const [uploadingA, setUploadingA] = useState(false); // 답안 이미지 업로드 중
   const [showAI, setShowAI] = useState(false);
   const [aiTopic, setAiTopic] = useState("");
   const [aiCount, setAiCount] = useState(3);
@@ -236,6 +272,9 @@ export default function EditorView({ set, onBack, onPreview }) {
       answers: parseAnswers(q.answers),
       explanation: q.explanation || "",
       orderIndex: q.orderIndex,
+      questionImageUrl: q.questionImageUrl || "",
+      answerImageUrl: q.answerImageUrl || "",
+      answerMode: q.answerImageUrl ? "image" : "text",
     });
   }
 
@@ -254,6 +293,8 @@ export default function EditorView({ set, onBack, onPreview }) {
         answers: form.type === "fill" ? (form.answers || []) : null,
         explanation: form.explanation,
         orderIndex: form.orderIndex,
+        questionImageUrl: form.questionImageUrl || null,
+        answerImageUrl: form.answerMode === "image" ? (form.answerImageUrl || null) : null,
       };
       if (form.id) {
         await updateQuestion(form.id, payload);
@@ -277,6 +318,23 @@ export default function EditorView({ set, onBack, onPreview }) {
       if (form?.id === id) setForm(null);
       fetchQ();
     } catch (e) { alert(e.message); }
+  }
+
+  // 이미지 업로드 핸들러 (field: "question" | "answer")
+  async function handleImageUpload(file, field) {
+    if (!file) return;
+    if (field === "question") setUploadingQ(true); else setUploadingA(true);
+    try {
+      const { url } = await uploadImage(file);
+      setForm((f) => ({
+        ...f,
+        ...(field === "question" ? { questionImageUrl: url } : { answerImageUrl: url }),
+      }));
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      if (field === "question") setUploadingQ(false); else setUploadingA(false);
+    }
   }
 
   function setOpt(idx, val) {
@@ -454,8 +512,79 @@ export default function EditorView({ set, onBack, onPreview }) {
                 }
               />
 
+              {/* ── 문제 이미지 (선택) ── */}
+              <div style={S.imgSection}>
+                <label style={{ ...S.fieldLabel, marginBottom: 6 }}>
+                  문제 이미지&nbsp;
+                  <span style={{ color: "#555", fontWeight: 400, fontSize: 11 }}>(선택)</span>
+                </label>
+                {form.questionImageUrl ? (
+                  <div style={S.imgPreviewWrap}>
+                    <img src={form.questionImageUrl} style={S.imgPreview} alt="문제 이미지" />
+                    <button
+                      style={S.imgDelBtn}
+                      onClick={() => setForm((f) => ({ ...f, questionImageUrl: "" }))}
+                    >✕ 삭제</button>
+                  </div>
+                ) : (
+                  <label
+                    style={S.imgUploadLabel}
+                    onMouseOver={(e) => { e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
+                    onMouseOut={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
+                  >
+                    {uploadingQ ? "⏳ 업로드 중..." : "📷 이미지 업로드"}
+                    <input
+                      type="file" accept="image/*" hidden
+                      disabled={uploadingQ}
+                      onChange={(e) => { handleImageUpload(e.target.files[0], "question"); e.target.value = ""; }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* ── 답안 방식 선택 ── */}
+              <label style={{ ...S.fieldLabel, marginBottom: 6 }}>답안 방식</label>
+              <div style={S.answerModeRow}>
+                <button
+                  style={S.answerModeBtn(form.answerMode !== "image")}
+                  onClick={() => setForm((f) => ({ ...f, answerMode: "text" }))}
+                >기본 답안</button>
+                <button
+                  style={S.answerModeBtn(form.answerMode === "image")}
+                  onClick={() => setForm((f) => ({ ...f, answerMode: "image" }))}
+                >이미지 답안</button>
+              </div>
+
+              {/* ── 이미지 답안 업로드 ── */}
+              {form.answerMode === "image" && (
+                <div style={S.imgSection}>
+                  {form.answerImageUrl ? (
+                    <div style={S.imgPreviewWrap}>
+                      <img src={form.answerImageUrl} style={S.imgPreview} alt="답안 이미지" />
+                      <button
+                        style={S.imgDelBtn}
+                        onClick={() => setForm((f) => ({ ...f, answerImageUrl: "" }))}
+                      >✕ 삭제</button>
+                    </div>
+                  ) : (
+                    <label
+                      style={S.imgUploadLabel}
+                      onMouseOver={(e) => { e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
+                      onMouseOut={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
+                    >
+                      {uploadingA ? "⏳ 업로드 중..." : "📷 답안 이미지 업로드"}
+                      <input
+                        type="file" accept="image/*" hidden
+                        disabled={uploadingA}
+                        onChange={(e) => { handleImageUpload(e.target.files[0], "answer"); e.target.value = ""; }}
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+
               {/* ── 객관식 ── */}
-              {form.type === "multiple" && (
+              {form.type === "multiple" && form.answerMode !== "image" && (
                 <>
                   <label style={S.fieldLabel}>보기 (정답 라디오 선택)</label>
                   {opts.map((opt, i) => (
@@ -484,7 +613,7 @@ export default function EditorView({ set, onBack, onPreview }) {
               )}
 
               {/* ── 주관식 ── */}
-              {form.type === "short" && (
+              {form.type === "short" && form.answerMode !== "image" && (
                 <>
                   <label style={S.fieldLabel}>모범 답안</label>
                   <input
@@ -499,7 +628,7 @@ export default function EditorView({ set, onBack, onPreview }) {
               )}
 
               {/* ── O/X ── */}
-              {form.type === "ox" && (
+              {form.type === "ox" && form.answerMode !== "image" && (
                 <>
                   <label style={S.fieldLabel}>정답</label>
                   <div style={S.oxRow}>
@@ -517,7 +646,7 @@ export default function EditorView({ set, onBack, onPreview }) {
               )}
 
               {/* ── 빈칸 채우기 ── */}
-              {form.type === "fill" && (
+              {form.type === "fill" && form.answerMode !== "image" && (
                 <>
                   {fillBlankCount === 0 ? (
                     <div style={S.fillHint}>

@@ -215,6 +215,29 @@ const S = {
     fontWeight: 700, fontSize: 14, cursor: "pointer",
     transition: "opacity 0.15s ease",
   },
+  // 이미지 표시
+  qImage: {
+    display: "block", maxWidth: "100%", borderRadius: 8,
+    border: "1px solid #2e2e2e", marginBottom: 20,
+  },
+  answerImgToggleBtn: (open) => ({
+    display: "flex", alignItems: "center", gap: 6,
+    padding: "10px 20px", marginBottom: 10,
+    background: open ? "rgba(245,158,11,0.15)" : "#242424",
+    border: `1px solid ${open ? "#f59e0b" : "#2e2e2e"}`,
+    borderRadius: 8, fontWeight: 700, fontSize: 14,
+    color: open ? "#f59e0b" : "#a0a0a0", cursor: "pointer",
+    transition: "all 0.15s ease",
+  }),
+  answerImgBox: (open) => ({
+    overflow: "hidden",
+    maxHeight: open ? 600 : 0,
+    transition: "max-height 0.35s ease",
+  }),
+  answerImg: {
+    display: "block", maxWidth: "100%", borderRadius: 8,
+    border: "1px solid #2e2e2e", marginBottom: 8,
+  },
   // FILL 학습 모드 버튼
   revealAllBtn: {
     padding: "8px 20px",
@@ -241,6 +264,7 @@ export default function SolveView({ set, onBack }) {
   const [showExplanation, setShowExplanation] = useState(false);
   const [userInput, setUserInput] = useState("");
   const [fillRevealed, setFillRevealed] = useState([]); // FILL 빈칸 공개 상태
+  const [showAnswerImage, setShowAnswerImage] = useState(false); // 답안 이미지 토글
   const [done, setDone] = useState(false);
 
   useEffect(() => {
@@ -293,6 +317,7 @@ export default function SolveView({ set, onBack }) {
       setShowExplanation(false);
       setUserInput("");
       setFillRevealed([]);
+      setShowAnswerImage(false);
     } else {
       setDone(true);
     }
@@ -304,16 +329,18 @@ export default function SolveView({ set, onBack }) {
     setShowExplanation(false);
     setUserInput("");
     setFillRevealed([]);
+    setShowAnswerImage(false);
     setDone(false);
   }
 
   // ── 결과 화면 ──
   if (done) {
-    // FILL 유형은 채점 제외
-    const gradable = questions.filter((q) => normalizeType(q.type) !== "fill");
+    // FILL 유형 및 답안 이미지 문항은 채점 제외
+    const isNoGrade = (q) => normalizeType(q.type) === "fill" || !!q.answerImageUrl;
+    const gradable = questions.filter((q) => !isNoGrade(q));
     const total = gradable.length;
     const gradableCorrect = Object.entries(results).filter(
-      ([i, r]) => normalizeType(questions[parseInt(i)]?.type) !== "fill" && r.correct
+      ([i, r]) => !isNoGrade(questions[parseInt(i)]) && r.correct
     ).length;
     const rate = total > 0 ? Math.round((gradableCorrect / total) * 100) : 0;
     return (
@@ -354,7 +381,7 @@ export default function SolveView({ set, onBack }) {
               <div style={S.resultListTitle}>문항별 결과</div>
               {questions.map((q, i) => {
                 const ntype = normalizeType(q.type);
-                if (ntype === "fill") {
+                if (ntype === "fill" || !!q.answerImageUrl) {
                   return (
                     <div key={q.id} style={S.resultItem}>
                       <div style={{
@@ -493,8 +520,28 @@ export default function SolveView({ set, onBack }) {
                 <div style={S.qText}>{current.text}</div>
               )}
 
+              {/* 문제 이미지 */}
+              {current.questionImageUrl && (
+                <img src={current.questionImageUrl} style={S.qImage} alt="문제 이미지" />
+              )}
+
+              {/* 답안 이미지 (있으면 기존 답안 UI 대체) */}
+              {current.answerImageUrl && (
+                <div>
+                  <button
+                    style={S.answerImgToggleBtn(showAnswerImage)}
+                    onClick={() => setShowAnswerImage((v) => !v)}
+                  >
+                    {showAnswerImage ? "▲ 답안 닫기" : "▼ 답안 보기"}
+                  </button>
+                  <div style={S.answerImgBox(showAnswerImage)}>
+                    <img src={current.answerImageUrl} style={S.answerImg} alt="답안 이미지" />
+                  </div>
+                </div>
+              )}
+
               {/* 객관식 */}
-              {qtype === "multiple" && (
+              {!current.answerImageUrl && qtype === "multiple" && (
                 <div>
                   {opts.map((opt, i) => (
                     <button
@@ -516,7 +563,7 @@ export default function SolveView({ set, onBack }) {
               )}
 
               {/* 주관식 */}
-              {qtype === "short" && (
+              {!current.answerImageUrl && qtype === "short" && (
                 <div>
                   {!answered ? (
                     <div style={S.shortRow}>
@@ -551,7 +598,7 @@ export default function SolveView({ set, onBack }) {
               )}
 
               {/* O/X */}
-              {qtype === "ox" && (
+              {!current.answerImageUrl && qtype === "ox" && (
                 <div>
                   <div style={S.oxRow}>
                     {["O", "X"].map((v) => (
@@ -571,7 +618,7 @@ export default function SolveView({ set, onBack }) {
               )}
 
               {/* 빈칸 채우기 – 학습 모드 (채점 없음, 토글 방식) */}
-              {qtype === "fill" && (
+              {!current.answerImageUrl && qtype === "fill" && (
                 <div>
                   {/* 문제 텍스트 + 빈칸 토글 버튼 */}
                   <div style={{ fontSize: 15, lineHeight: 2.8, color: "#f1f1f1", wordBreak: "keep-all" }}>
@@ -612,8 +659,8 @@ export default function SolveView({ set, onBack }) {
                 </div>
               )}
 
-              {/* 해설/다음 버튼: 채점 완료 또는 FILL 유형(채점 없음) */}
-              {(answered || qtype === "fill") && (
+              {/* 해설/다음 버튼: 채점 완료 또는 채점 불필요 유형 (FILL / 답안이미지) */}
+              {(answered || qtype === "fill" || !!current.answerImageUrl) && (
                 <>
                   <div style={S.actionRow}>
                     {current.explanation && (
