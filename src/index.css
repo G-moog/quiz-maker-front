@@ -31,3 +31,13 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #4a4a4a;
 }
+
+/* textarea 리사이즈 핸들 시각화 */
+textarea {
+  resize: vertical;
+}
+textarea::-webkit-resizer {
+  border-width: 6px;
+  border-style: solid;
+  border-color: transparent #f59e0b #f59e0b transparent;
+}

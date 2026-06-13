@@ -121,7 +121,8 @@ const S = {
     width: "100%", padding: "10px 12px",
     background: "#242424", border: "1px solid #2e2e2e", borderRadius: 7,
     fontSize: 14, marginBottom: 16, color: "#f1f1f1",
-    resize: "vertical", minHeight: 80, outline: "none",
+    resize: "vertical", minHeight: 90, maxHeight: 480, outline: "none",
+    boxSizing: "border-box", lineHeight: 1.6,
     transition: "border-color 0.15s ease",
   },
   input: {
@@ -511,6 +512,9 @@ export default function EditorView({ set, onBack, onPreview }) {
                     : "문제를 입력하세요"
                 }
               />
+              <div style={{ fontSize: 11, color: "#3a3a3a", textAlign: "right", marginTop: -12, marginBottom: 12 }}>
+                ↕ 우하단 모서리를 드래그하여 크기 조절
+              </div>
 
               {/* ── 문제 이미지 (선택) ── */}
               <div style={S.imgSection}>
