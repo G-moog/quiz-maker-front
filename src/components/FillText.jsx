@@ -1,4 +1,5 @@
 import { useState } from "react";
+import TableAwareText from "./TableAwareText";
 
 /**
  * FillText – 빈칸 채우기 렌더러 (재사용 가능 컴포넌트)
@@ -66,8 +67,7 @@ function examInputStyle(state) {
 
 export default function FillText({ text, answers: rawAnswers = [], mode = "learn", answered, onAnswer }) {
   const answers = parseAnswers(rawAnswers);
-  const parts = (text || "").split("___");
-  const blankCount = parts.length - 1;
+  const blankCount = ((text || "").match(/___/g) || []).length;
 
   const [revealed, setRevealed] = useState(() => Array(blankCount).fill(false));
   const [inputs, setInputs] = useState(() => Array(blankCount).fill(""));
@@ -110,47 +110,44 @@ export default function FillText({ text, answers: rawAnswers = [], mode = "learn
     });
   }
 
+  function renderBlank(i) {
+    return mode === "learn" ? (
+      <button
+        style={blankBtnStyle(revealed[i])}
+        onClick={() => handleLearnClick(i)}
+        title={revealed[i] ? "" : "클릭하여 정답 확인"}
+      >
+        {revealed[i] ? (answers[i] ?? "?") : "?"}
+      </button>
+    ) : (
+      <span style={{ whiteSpace: "nowrap" }}>
+        <input
+          style={examInputStyle(getInputState(i))}
+          value={inputs[i]}
+          onChange={(e) => { if (!answered) setInput(i, e.target.value); }}
+          onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+          disabled={answered}
+          placeholder={`빈칸${i + 1}`}
+          onFocus={(e) => { if (!answered) e.target.style.borderColor = "#f59e0b"; }}
+          onBlur={(e) => {
+            if (!answered) e.target.style.borderColor = "#2e2e2e";
+          }}
+        />
+        {/* 오답 시 정답 힌트 */}
+        {answered && getInputState(i) === "wrong" && (
+          <span style={{ fontSize: 12, color: "#34d399", marginLeft: 2, fontWeight: 600 }}>
+            → {answers[i]}
+          </span>
+        )}
+      </span>
+    );
+  }
+
   return (
     <div>
-      {/* 문제 텍스트 + 빈칸 */}
+      {/* 문제 텍스트 + 빈칸 (표 문법 포함 가능) */}
       <div style={{ fontSize: 15, lineHeight: 2.5, color: "#f1f1f1", wordBreak: "keep-all" }}>
-        {parts.map((part, i) => (
-          <span key={i}>
-            <span style={{ whiteSpace: "pre-wrap" }}>{part}</span>
-            {i < blankCount && (
-              mode === "learn" ? (
-                <button
-                  style={blankBtnStyle(revealed[i])}
-                  onClick={() => handleLearnClick(i)}
-                  title={revealed[i] ? "" : "클릭하여 정답 확인"}
-                >
-                  {revealed[i] ? (answers[i] ?? "?") : "?"}
-                </button>
-              ) : (
-                <span style={{ whiteSpace: "nowrap" }}>
-                  <input
-                    style={examInputStyle(getInputState(i))}
-                    value={inputs[i]}
-                    onChange={(e) => { if (!answered) setInput(i, e.target.value); }}
-                    onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
-                    disabled={answered}
-                    placeholder={`빈칸${i + 1}`}
-                    onFocus={(e) => { if (!answered) e.target.style.borderColor = "#f59e0b"; }}
-                    onBlur={(e) => {
-                      if (!answered) e.target.style.borderColor = "#2e2e2e";
-                    }}
-                  />
-                  {/* 오답 시 정답 힌트 */}
-                  {answered && getInputState(i) === "wrong" && (
-                    <span style={{ fontSize: 12, color: "#34d399", marginLeft: 2, fontWeight: 600 }}>
-                      → {answers[i]}
-                    </span>
-                  )}
-                </span>
-              )
-            )}
-          </span>
-        ))}
+        <TableAwareText text={text} renderBlank={renderBlank} />
       </div>
 
       {/* 시험 모드 제출 버튼 */}

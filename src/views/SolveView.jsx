@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
 import { parseAnswers } from "../components/FillText";
+import TableAwareText from "../components/TableAwareText";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
@@ -626,7 +627,7 @@ export default function SolveView({ set, onBack }) {
 
               {/* 문제 텍스트 (빈칸 채우기는 아래 토글 UI에서 렌더링) */}
               {qtype !== "fill" && (
-                <div style={S.qText}>{current.text}</div>
+                <div style={S.qText}><TableAwareText text={current.text} /></div>
               )}
 
               {/* 문제 이미지 */}
@@ -729,22 +730,20 @@ export default function SolveView({ set, onBack }) {
               {/* 빈칸 채우기 – 학습 모드 (채점 없음, 토글 방식) */}
               {!current.answerImageUrl && qtype === "fill" && (
                 <div>
-                  {/* 문제 텍스트 + 빈칸 토글 버튼 */}
+                  {/* 문제 텍스트 + 빈칸 토글 버튼 (표 문법 포함 가능) */}
                   <div style={{ fontSize: 15, lineHeight: 2.8, color: "#f1f1f1", wordBreak: "keep-all" }}>
-                    {fillParts.map((part, i) => (
-                      <span key={i}>
-                        <span style={{ whiteSpace: "pre-wrap" }}>{part}</span>
-                        {i < fillBlankCount && (
-                          <button
-                            style={fillBlankBtnStyle(fillRev[i])}
-                            onClick={() => toggleFill(i)}
-                            title={fillRev[i] ? "클릭하여 가리기" : "클릭하여 정답 확인"}
-                          >
-                            {fillRev[i] ? (fillAnswers[i] ?? "?") : "?"}
-                          </button>
-                        )}
-                      </span>
-                    ))}
+                    <TableAwareText
+                      text={current.text}
+                      renderBlank={(i) => (
+                        <button
+                          style={fillBlankBtnStyle(fillRev[i])}
+                          onClick={() => toggleFill(i)}
+                          title={fillRev[i] ? "클릭하여 가리기" : "클릭하여 정답 확인"}
+                        >
+                          {fillRev[i] ? (fillAnswers[i] ?? "?") : "?"}
+                        </button>
+                      )}
+                    />
                   </div>
                   {/* 모두 보기 / 모두 가리기 */}
                   <div style={{ display: "flex", gap: 8, marginTop: 18 }}>

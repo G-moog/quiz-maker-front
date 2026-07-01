@@ -1,7 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "../api/quiz";
 import { uploadImage } from "../api/image";
 import FillText from "../components/FillText";
+import TableAwareText from "../components/TableAwareText";
+import { buildTableTemplate } from "../utils/textBlocks";
 
 const ANTHROPIC_API_KEY = "YOUR_API_KEY_HERE"; // TODO: 환경변수로 교체
 
@@ -196,6 +198,29 @@ const S = {
     border: "none", borderRadius: 4,
     fontSize: 11, fontWeight: 700, padding: "3px 8px", cursor: "pointer",
   },
+  // 표 삽입 UI
+  tableInsertBtn: {
+    display: "inline-flex", alignItems: "center", gap: 6,
+    padding: "7px 14px", background: "#242424",
+    border: "1px dashed #2e2e2e", borderRadius: 7,
+    fontSize: 13, color: "#a0a0a0", cursor: "pointer",
+    marginBottom: 8, transition: "border-color 0.15s ease, color 0.15s ease",
+  },
+  tablePanel: {
+    display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+    padding: "12px 14px", background: "#1a1a1a",
+    border: "1px solid #2e2e2e", borderRadius: 8, marginBottom: 16,
+  },
+  miniLabel: { fontSize: 12, color: "#a0a0a0" },
+  numInput: {
+    width: 52, padding: "6px 8px", background: "#242424",
+    border: "1px solid #2e2e2e", borderRadius: 6,
+    color: "#f1f1f1", fontSize: 13, textAlign: "center", outline: "none",
+  },
+  tableConfirmBtn: {
+    padding: "6px 16px", background: "#f59e0b", color: "#000000",
+    border: "none", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer",
+  },
   answerModeRow: { display: "flex", gap: 6, marginBottom: 14 },
   answerModeBtn: (active) => ({
     padding: "6px 14px",
@@ -249,6 +274,10 @@ export default function EditorView({ set, onBack, onPreview }) {
   const [aiTopic, setAiTopic] = useState("");
   const [aiCount, setAiCount] = useState(3);
   const [aiLoading, setAiLoading] = useState(false);
+  const [showTableInsert, setShowTableInsert] = useState(false);
+  const [tableRows, setTableRows] = useState(2);
+  const [tableCols, setTableCols] = useState(2);
+  const textareaRef = useRef(null);
 
   useEffect(() => { fetchQ(); }, []);
 
@@ -344,9 +373,8 @@ export default function EditorView({ set, onBack, onPreview }) {
     setForm((f) => ({ ...f, options: opts }));
   }
 
-  // 문제 텍스트 변경 핸들러: fill 타입이면 ___ 개수에 맞춰 answers 배열 자동 조정
-  function handleTextChange(e) {
-    const newText = e.target.value;
+  // 텍스트 반영: fill 타입이면 ___ 개수에 맞춰 answers 배열 자동 조정
+  function applyTextChange(newText) {
     if (form.type === "fill") {
       const count = (newText.match(/___/g) || []).length;
       const cur = form.answers || [];
@@ -358,6 +386,26 @@ export default function EditorView({ set, onBack, onPreview }) {
     } else {
       setForm((f) => ({ ...f, text: newText }));
     }
+  }
+
+  function handleTextChange(e) {
+    applyTextChange(e.target.value);
+  }
+
+  // 표 삽입: textarea 커서 위치에 행×열 템플릿 삽입
+  function insertTable() {
+    const ta = textareaRef.current;
+    const template = buildTableTemplate(tableRows, tableCols);
+    const pos = ta ? ta.selectionStart : form.text.length;
+    const newText = form.text.slice(0, pos) + template + form.text.slice(pos);
+    applyTextChange(newText);
+    setShowTableInsert(false);
+    requestAnimationFrame(() => {
+      if (!ta) return;
+      const newPos = pos + template.length;
+      ta.focus();
+      ta.setSelectionRange(newPos, newPos);
+    });
   }
 
   async function handleAIGenerate() {
@@ -501,6 +549,7 @@ export default function EditorView({ set, onBack, onPreview }) {
                 )}
               </label>
               <textarea
+                ref={textareaRef}
                 style={S.textarea}
                 value={form.text}
                 onChange={handleTextChange}
@@ -515,6 +564,51 @@ export default function EditorView({ set, onBack, onPreview }) {
               <div style={{ fontSize: 11, color: "#3a3a3a", textAlign: "right", marginTop: -12, marginBottom: 12 }}>
                 ↕ 우하단 모서리를 드래그하여 크기 조절
               </div>
+
+              {/* ── 표 삽입 ── */}
+              <button
+                type="button"
+                style={S.tableInsertBtn}
+                onClick={() => setShowTableInsert((v) => !v)}
+                onMouseOver={(e) => { e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
+                onMouseOut={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
+              >
+                🔲 표 삽입
+              </button>
+
+              {showTableInsert && (
+                <div style={S.tablePanel}>
+                  <span style={S.miniLabel}>행</span>
+                  <input
+                    type="number" min={1} max={10}
+                    value={tableRows}
+                    onChange={(e) => setTableRows(Math.max(1, Number(e.target.value) || 1))}
+                    style={S.numInput}
+                  />
+                  <span style={S.miniLabel}>열</span>
+                  <input
+                    type="number" min={1} max={10}
+                    value={tableCols}
+                    onChange={(e) => setTableCols(Math.max(1, Number(e.target.value) || 1))}
+                    style={S.numInput}
+                  />
+                  <button type="button" style={S.tableConfirmBtn} onClick={insertTable}>삽입</button>
+                </div>
+              )}
+
+              {/* ── 표 미리보기 (FILL 유형은 아래 학습 미리보기에서 함께 표시) ── */}
+              {form.type !== "fill" && form.text.includes("|") && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={S.fillPreviewLabel}>💡 표 미리보기</div>
+                  <div style={{
+                    padding: "14px 16px", background: "#1a1a1a",
+                    border: "1px solid #2e2e2e", borderRadius: 8,
+                    color: "#f1f1f1", fontSize: 14,
+                  }}>
+                    <TableAwareText text={form.text} />
+                  </div>
+                </div>
+              )}
 
               {/* ── 문제 이미지 (선택) ── */}
               <div style={S.imgSection}>

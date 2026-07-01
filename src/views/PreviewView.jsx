@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
+import TableAwareText from "../components/TableAwareText";
 
 const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
 
@@ -125,7 +126,7 @@ export default function PreviewView({ set, onBack }) {
           <div key={q.id} style={S.qBlock}>
             <div style={S.qHeader}>
               <span style={S.qNum}>{i + 1}.</span>
-              <span style={S.qText}>{q.text}</span>
+              <div style={S.qText}><TableAwareText text={q.text} /></div>
             </div>
 
             {q.type === "multiple" && (
