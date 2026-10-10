@@ -1,8 +1,16 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
+import { parseAnswers } from "../components/FillText";
 import TableAwareText from "../components/TableAwareText";
 
 const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
+
+// 백엔드 타입명(short_answer, multiple_choice 등)을 프론트엔드 내부명으로 정규화
+function normalizeType(type) {
+  const map = { short_answer: "short", multiple_choice: "multiple" };
+  const lower = (type || "").toLowerCase();
+  return map[lower] ?? lower;
+}
 
 function parseOptions(opts) {
   if (!opts) return [];
@@ -91,7 +99,9 @@ export default function PreviewView({ set, onBack }) {
     return () => document.head.removeChild(style);
   }, []);
 
-  const withAnswer = questions.filter((q) => q.explanation || q.answer || q.answerIndex != null);
+  const withAnswer = questions.filter(
+    (q) => q.explanation || q.answer || q.answerIndex != null || parseAnswers(q.answers).length > 0
+  );
 
   return (
     <div style={S.page}>
@@ -122,41 +132,51 @@ export default function PreviewView({ set, onBack }) {
         {set.subject && <div style={S.docSub}>{set.subject}</div>}
         <hr style={S.divider} />
 
-        {questions.map((q, i) => (
-          <div key={q.id} style={S.qBlock}>
-            <div style={S.qHeader}>
-              <span style={S.qNum}>{i + 1}.</span>
-              <div style={S.qText}><TableAwareText text={q.text} /></div>
-            </div>
-
-            {q.type === "multiple" && (
-              <ul style={S.optList}>
-                {parseOptions(q.options).map((opt, oi) => (
-                  <li key={oi} style={S.optItem}>{CIRCLE[oi]} {opt}</li>
-                ))}
-              </ul>
-            )}
-
-            {q.type === "short" && <div style={S.answerLine} />}
-
-            {q.type === "ox" && (
-              <div style={S.oxRow}>
-                <span style={S.oxOpt}>O</span>
-                <span style={S.oxOpt}>X</span>
+        {questions.map((q, i) => {
+          const type = normalizeType(q.type);
+          return (
+            <div key={q.id} style={S.qBlock}>
+              <div style={S.qHeader}>
+                <span style={S.qNum}>{i + 1}.</span>
+                <div style={S.qText}><TableAwareText text={q.text} /></div>
               </div>
-            )}
-          </div>
-        ))}
+
+              {type === "multiple" && (
+                <ul style={S.optList}>
+                  {parseOptions(q.options).map((opt, oi) => (
+                    <li key={oi} style={S.optItem}>{CIRCLE[oi]} {opt}</li>
+                  ))}
+                </ul>
+              )}
+
+              {type === "short" && <div style={S.answerLine} />}
+
+              {type === "ox" && (
+                <div style={S.oxRow}>
+                  <span style={S.oxOpt}>O</span>
+                  <span style={S.oxOpt}>X</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
 
         {withAnswer.length > 0 && (
           <div style={S.answerSection}>
             <div style={S.answerTitle}>정답 및 해설</div>
             {withAnswer.map((q) => {
               const num = questions.indexOf(q) + 1;
-              let ans = "";
-              if (q.type === "multiple") {
+              const type = normalizeType(q.type);
+              let ans;
+              if (type === "multiple") {
                 const options = parseOptions(q.options);
                 ans = `${CIRCLE[q.answerIndex] ?? ""} ${options[q.answerIndex] ?? ""}`;
+              } else if (type === "fill") {
+                // 빈칸이 여러 개면 순서 번호를 붙여 표시
+                const answers = parseAnswers(q.answers);
+                ans = answers.length > 1
+                  ? answers.map((a, ai) => `(${ai + 1}) ${a}`).join(", ")
+                  : (answers[0] ?? "");
               } else {
                 ans = q.answer || "";
               }
