@@ -90,6 +90,16 @@ const S = {
     marginBottom: 12,
     textAlign: "center",
   },
+  notice: {
+    color: "#f59e0b",
+    background: "rgba(245,158,11,0.1)",
+    border: "1px solid rgba(245,158,11,0.4)",
+    borderRadius: 8,
+    padding: "10px 12px",
+    fontSize: 13,
+    marginBottom: 20,
+    textAlign: "center",
+  },
 };
 
 const INIT_REGISTER = {
@@ -115,7 +125,7 @@ function validateRegister(fields) {
   return errors;
 }
 
-export default function LoginView({ onLoginSuccess }) {
+export default function LoginView({ onLoginSuccess, notice = "" }) {
   const [tab, setTab] = useState("login");
 
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
@@ -192,6 +202,7 @@ export default function LoginView({ onLoginSuccess }) {
     <div style={S.page}>
       <div style={S.card}>
         <div style={S.logo}>📝 Quiz Maker</div>
+        {notice && <div style={S.notice} role="status">{notice}</div>}
         <div style={S.tabs}>
           <button style={S.tab(tab === "login")} onClick={() => handleTabChange("login")}>
             로그인

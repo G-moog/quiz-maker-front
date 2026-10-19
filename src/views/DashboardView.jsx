@@ -85,6 +85,16 @@ const S = {
   emptyWrap: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginTop: 80, gap: 12 },
   emptyIcon: { fontSize: 48, color: "#555555" },
   emptyText: { color: "#555555", fontSize: 15 },
+  loadError: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+    padding: "12px 16px", marginBottom: 20, borderRadius: 8,
+    border: "1px solid rgba(248,113,113,0.4)", background: "rgba(248,113,113,0.1)",
+    color: "#f87171", fontSize: 14,
+  },
+  retryBtn: {
+    padding: "6px 14px", minHeight: 36, borderRadius: 6, border: "1px solid #f87171",
+    background: "none", color: "#f87171", fontSize: 13, fontWeight: 600, cursor: "pointer",
+  },
 
   // 공통 모달
   overlay: {
@@ -201,10 +211,27 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
 
   const username = localStorage.getItem("username") || "";
 
+  // 목록 상태: loading(처음 불러오는 중) · ok · error. 실패를 빈 목록으로 보이지 않게 한다.
+  const [loadState, setLoadState] = useState("loading");
+  const [loadError, setLoadError] = useState("");
+
   useEffect(() => { fetchSets(); }, []);
 
   async function fetchSets() {
-    try { setSets(await getSets()); } catch (e) { console.error(e); }
+    try {
+      setSets(await getSets());
+      setLoadState("ok");
+      setLoadError("");
+    } catch (e) {
+      console.error(e);
+      setLoadState("error");
+      setLoadError(e.message || "");
+    }
+  }
+
+  function retryLoad() {
+    setLoadState("loading");
+    fetchSets();
   }
 
   function showToast(message, type = "success") {
@@ -363,11 +390,27 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
           </button>
         </div>
 
-        {sets.length === 0 ? (
-          <div style={S.emptyWrap}>
-            <div style={S.emptyIcon}>📭</div>
-            <p style={S.emptyText}>아직 문제집이 없습니다. 새 세트를 만들어보세요!</p>
+        {loadState === "error" && (
+          <div style={S.loadError} role="alert">
+            <span>
+              문제집 목록을 불러오지 못했습니다.
+              {loadError && loadError.length <= 80 ? ` (${loadError})` : ""}
+            </span>
+            <button style={S.retryBtn} onClick={retryLoad}>다시 시도</button>
           </div>
+        )}
+
+        {sets.length === 0 ? (
+          loadState === "ok" ? (
+            <div style={S.emptyWrap}>
+              <div style={S.emptyIcon}>📭</div>
+              <p style={S.emptyText}>아직 문제집이 없습니다. 새 세트를 만들어보세요!</p>
+            </div>
+          ) : loadState === "loading" ? (
+            <div style={S.emptyWrap}>
+              <p style={S.emptyText}>문제집을 불러오는 중…</p>
+            </div>
+          ) : null
         ) : (
           <div style={S.grid}>
             {sets.map((s) => (
