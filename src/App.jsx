@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import LoginView from "./views/LoginView";
 import DashboardView from "./views/DashboardView";
 import EditorView from "./views/EditorView";
@@ -6,16 +6,10 @@ import PreviewView from "./views/PreviewView";
 import SolveView from "./views/SolveView";
 
 export default function App() {
-  const [view, setView] = useState("login");
+  // 토큰이 남아 있으면 처음부터 대시보드로 시작 (effect 안 setState 대신 초기값으로)
+  const [view, setView] = useState(() => (localStorage.getItem("token") ? "dashboard" : "login"));
   const [currentSet, setCurrentSet] = useState(null);
-  const [role, setRole] = useState(localStorage.getItem("role") || "USER");
-
-  useEffect(() => {
-    if (localStorage.getItem("token")) {
-      setRole(localStorage.getItem("role") || "USER");
-      setView("dashboard");
-    }
-  }, []);
+  const [role, setRole] = useState(() => localStorage.getItem("role") || "USER");
 
   function handleLogout() {
     localStorage.removeItem("token");

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import TableAwareText from "./TableAwareText";
+import { parseAnswers } from "../utils/answers";
 
 /**
  * FillText – 빈칸 채우기 렌더러 (재사용 가능 컴포넌트)
@@ -12,12 +13,6 @@ import TableAwareText from "./TableAwareText";
  * answered  : boolean – 이미 채점 완료 여부 (부모에서 전달)
  * onAnswer  : (correct: boolean, userAnswer: string) => void
  */
-
-export function parseAnswers(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  try { return JSON.parse(raw); } catch { return []; }
-}
 
 function blankBtnStyle(revealed) {
   return {

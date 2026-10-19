@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
-import { parseAnswers } from "../components/FillText";
+import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
@@ -310,7 +310,6 @@ export default function SolveView({ set, onBack }) {
   const current = questions[currentIndex];
   const answered = results[currentIndex] !== undefined;
   const result = results[currentIndex];
-  const correctCount = Object.values(results).filter((r) => r.correct).length;
   const answeredCount = Object.keys(results).length;
   const progressPct = questions.length > 0
     ? Math.round((answeredCount / questions.length) * 100)

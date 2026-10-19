@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
-import { parseAnswers } from "../components/FillText";
+import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
 
 const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
