@@ -14,17 +14,19 @@ import { parseAnswers } from "../utils/answers";
  * onAnswer  : (correct: boolean, userAnswer: string) => void
  */
 
-function blankBtnStyle(revealed) {
+// 학습 모드 빈칸 버튼 (표 칸 안에서는 좁은 칸을 넘지 않게 작게, 긴 정답은 버튼 안에서 줄바꿈)
+function blankBtnStyle(revealed, inTable = false) {
   return {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    minWidth: 64,
-    padding: "2px 14px",
-    margin: "0 3px",
+    minWidth: inTable ? "min(40px, 100%)" : 64,
+    maxWidth: "100%",
+    padding: inTable ? "1px 6px" : "2px 14px",
+    margin: inTable ? "2px" : "0 3px",
     verticalAlign: "middle",
     borderRadius: 6,
-    fontSize: 14,
+    fontSize: inTable ? 13 : 14,
     fontWeight: 700,
     cursor: revealed ? "default" : "pointer",
     border: `2px ${revealed ? "solid" : "dashed"} #f59e0b`,
@@ -105,14 +107,15 @@ export default function FillText({ text, answers: rawAnswers = [], mode = "learn
     });
   }
 
-  function renderBlank(i) {
+  // 학습 모드: 가린 빈칸에는 번호(i + 1, answers[i] 와 같은 순서), 연 빈칸에는 정답
+  function renderBlank(i, { inTable } = {}) {
     return mode === "learn" ? (
       <button
-        style={blankBtnStyle(revealed[i])}
+        style={blankBtnStyle(revealed[i], inTable)}
         onClick={() => handleLearnClick(i)}
-        title={revealed[i] ? "" : "클릭하여 정답 확인"}
+        title={revealed[i] ? "" : `클릭하여 ${i + 1}번 빈칸 정답 확인`}
       >
-        {revealed[i] ? (answers[i] ?? "?") : "?"}
+        {revealed[i] ? (answers[i] ?? "?") : i + 1}
       </button>
     ) : (
       <span style={{ whiteSpace: "nowrap" }}>

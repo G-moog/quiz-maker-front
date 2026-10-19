@@ -134,11 +134,20 @@ export default function PreviewView({ set, onBack }) {
 
         {questions.map((q, i) => {
           const type = normalizeType(q.type);
+          // 빈칸이 둘 이상인 FILL 은 아래 정답 목록의 "(번호) 정답" 과 맞춰 본문 빈칸에도 번호를 붙임
+          const numberBlanks = type === "fill" && ((q.text || "").match(/___/g) || []).length > 1;
           return (
             <div key={q.id} style={S.qBlock}>
               <div style={S.qHeader}>
                 <span style={S.qNum}>{i + 1}.</span>
-                <div style={S.qText}><TableAwareText text={q.text} /></div>
+                <div style={S.qText}>
+                  <TableAwareText
+                    text={q.text}
+                    renderBlank={numberBlanks
+                      ? (bi) => <span style={{ whiteSpace: "nowrap" }}>({bi + 1})____</span>
+                      : undefined}
+                  />
+                </div>
               </div>
 
               {type === "multiple" && (

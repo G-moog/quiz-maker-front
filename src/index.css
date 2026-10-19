@@ -41,3 +41,56 @@ textarea::-webkit-resizer {
   border-style: solid;
   border-color: transparent #f59e0b #f59e0b transparent;
 }
+
+/* ── 문제 본문(TableAwareText): 가로 스크롤 없이 카드 폭 안에서 줄바꿈 ──
+   한국어 낱말을 지키는 word-break: keep-all 은 부모가 정하고, 여기서는 긴 주소처럼
+   끊을 곳 없는 덩어리만 줄바꿈한다. anywhere 는 최소 폭 계산에도 반영돼 표 칸·flex 안에서도
+   넘치지 않는다(anywhere 를 모르는 옛 브라우저는 앞 줄의 break-word 로 동작). */
+.qm-text,
+.qm-table td {
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.qm-table {
+  border-collapse: collapse;
+  margin: 10px 0;
+  max-width: 100%;
+}
+.qm-table td {
+  border: 1px solid #2e2e2e;
+  padding: 8px 14px;
+  font-size: inherit;
+  color: inherit;
+  vertical-align: top;
+  /* 빈칸 문제 본문의 큰 줄 간격(2.8)이 칸에 그대로 물려 행이 너무 높아지지 않게 */
+  line-height: 1.6;
+  /* 넓은 화면(자동 배치): 열에서 가장 긴 낱말(최대 4글자, TableAwareText 의 --qm-min)만큼은 지킴.
+     32px 은 좌우 여백 14px × 2 + 테두리·여유 4px (box-sizing: border-box) */
+  min-width: calc(var(--qm-min, 0em) + 32px);
+}
+/* 고정 배치: 표를 카드 폭(100%)에 맞추고, 열 너비는 TableAwareText 가 글 길이로 정한 비율(--qm-col-w).
+   열 7개 이상인 표(.qm-table--fixed)는 늘, 휴대폰에서는 모든 표가 이 방식 */
+.qm-table--fixed {
+  table-layout: fixed;
+  width: 100%;
+}
+.qm-table--fixed col {
+  width: var(--qm-col-w);
+}
+.qm-table--fixed td {
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .qm-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  .qm-table col {
+    width: var(--qm-col-w);
+  }
+  .qm-table td {
+    padding: 6px;
+    font-size: 0.92em;
+    min-width: 0;
+  }
+}

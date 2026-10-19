@@ -19,13 +19,14 @@ function normalizeType(type) {
   return map[lower] ?? lower;
 }
 
-// FILL 빈칸 버튼 스타일
-function fillBlankBtnStyle(revealed) {
+// FILL 빈칸 버튼 스타일 (표 칸 안에서는 좁은 칸을 넘지 않게 작게, 긴 정답은 버튼 안에서 줄바꿈)
+function fillBlankBtnStyle(revealed, inTable = false) {
   return {
     display: "inline-flex", alignItems: "center", justifyContent: "center",
-    minWidth: 64, padding: "2px 14px", margin: "0 3px",
+    minWidth: inTable ? "min(40px, 100%)" : 64, maxWidth: "100%",
+    padding: inTable ? "1px 6px" : "2px 14px", margin: inTable ? "2px" : "0 3px",
     verticalAlign: "middle", borderRadius: 6,
-    fontSize: 14, fontWeight: 700, cursor: "pointer",
+    fontSize: inTable ? 13 : 14, fontWeight: 700, cursor: "pointer",
     border: `2px ${revealed ? "solid" : "dashed"} #f59e0b`,
     background: revealed ? "#f59e0b" : "transparent",
     color: revealed ? "#1a1a1a" : "#f59e0b",
@@ -729,17 +730,18 @@ export default function SolveView({ set, onBack }) {
               {/* 빈칸 채우기 – 학습 모드 (채점 없음, 토글 방식) */}
               {!current.answerImageUrl && qtype === "fill" && (
                 <div>
-                  {/* 문제 텍스트 + 빈칸 토글 버튼 (표 문법 포함 가능) */}
+                  {/* 문제 텍스트 + 빈칸 토글 버튼 (표 문법 포함 가능)
+                      가린 빈칸에는 번호(i + 1)를 표시 — 글·표 칸을 통틀어 읽는 순서대로 answers[i] 와 같은 번호 */}
                   <div style={{ fontSize: 15, lineHeight: 2.8, color: "#f1f1f1", wordBreak: "keep-all" }}>
                     <TableAwareText
                       text={current.text}
-                      renderBlank={(i) => (
+                      renderBlank={(i, { inTable }) => (
                         <button
-                          style={fillBlankBtnStyle(fillRev[i])}
+                          style={fillBlankBtnStyle(fillRev[i], inTable)}
                           onClick={() => toggleFill(i)}
-                          title={fillRev[i] ? "클릭하여 가리기" : "클릭하여 정답 확인"}
+                          title={fillRev[i] ? "클릭하여 가리기" : `클릭하여 ${i + 1}번 빈칸 정답 확인`}
                         >
-                          {fillRev[i] ? (fillAnswers[i] ?? "?") : "?"}
+                          {fillRev[i] ? (fillAnswers[i] ?? "?") : i + 1}
                         </button>
                       )}
                     />
