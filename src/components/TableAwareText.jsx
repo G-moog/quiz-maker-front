@@ -1,17 +1,27 @@
 import { parseTextBlocks } from "../utils/textBlocks";
 
+// 칸 글 길이. 공백 없이 긴 덩어리(주소 등)는 어차피 칸 안에서 줄바꿈되므로 8글자로만 셈
+function cellLength(cell) {
+  return cell
+    .split(/\s+/)
+    .filter(Boolean)
+    .reduce((sum, word, i) => sum + (i > 0 ? 1 : 0) + Math.min(word.length, 8), 0);
+}
+
 // 표 열마다 두 값을 정한다 (index.css 의 .qm-table 이 CSS 변수로 사용)
 //  w   (--qm-col-w) : 좁은 화면(고정 배치)의 열 너비 비율. 글이 짧은 열(구분·항목)은 좁게, 긴 열은 넓게.
-//                     제곱근으로 눌러 긴 주소 열이 폭을 독차지하지 않게 하고(최대 2배), 아래는 4글자로 받침
+//                     제곱근으로 눌러 긴 열이 폭을 독차지하지 않게 하고(5~16글자 → 최대 약 1.8배),
+//                     열이 6개 이상이면 9글자에서 잘라(최대 약 1.3배) 좁은 열에도 두 자리 빈칸 번호·두 글자 낱말이 들어가게 함
 //  min (--qm-min)   : 넓은 화면(자동 배치)의 칸 최소 너비. 열에서 가장 긴 낱말 길이(최대 4글자)만큼은 지켜
 //                     긴 열 옆에서 "구분" 같은 짧은 이름이 한 글자씩 쪼개지지 않게 함
 function columnSizes(rows) {
   const colCount = Math.max(0, ...rows.map((r) => r.length));
+  const maxLen = colCount >= 6 ? 9 : 16;
   const cols = Array.from({ length: colCount }, (_, ci) => {
     const cells = rows.map((r) => r[ci] ?? "");
-    const len = Math.max(...cells.map((c) => c.length));
+    const len = Math.max(...cells.map(cellLength));
     const word = Math.max(...cells.flatMap((c) => c.split(/\s+/).map((t) => t.length)));
-    return { weight: Math.sqrt(Math.min(Math.max(len, 4), 16)), min: Math.min(word, 4) };
+    return { weight: Math.sqrt(Math.min(Math.max(len, 5), maxLen)), min: Math.min(word, 4) };
   });
   const total = cols.reduce((a, c) => a + c.weight, 0);
   return cols.map((c) => ({ w: `${((c.weight / total) * 100).toFixed(2)}%`, min: `${c.min}em` }));
@@ -47,7 +57,7 @@ export default function TableAwareText({ text, renderBlank }) {
       {blocks.map((block, bi) => {
         if (block.type === "table") {
           const sizes = columnSizes(block.rows);
-          // 열이 7개 이상이면 넓은 화면에서도 칸 최소 너비 합이 카드를 넘을 수 있어 휴대폰처럼 고정 배치
+          // 열이 7개 이상이면 넓은 화면에서도 칸 최소 너비 합이 카드를 넘을 수 있어 좁은 화면처럼 고정 배치
           return (
             <table key={`tbl-${bi}`} className={sizes.length >= 7 ? "qm-table qm-table--fixed" : "qm-table"}>
               <colgroup>

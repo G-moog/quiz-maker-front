@@ -69,7 +69,9 @@ textarea::-webkit-resizer {
   min-width: calc(var(--qm-min, 0em) + 32px);
 }
 /* 고정 배치: 표를 카드 폭(100%)에 맞추고, 열 너비는 TableAwareText 가 글 길이로 정한 비율(--qm-col-w).
-   열 7개 이상인 표(.qm-table--fixed)는 늘, 휴대폰에서는 모든 표가 이 방식 */
+   열 7개 이상인 표(.qm-table--fixed)는 늘, 폭 720px 이하(휴대폰 세로·가로)에서는 모든 표가 이 방식.
+   720px 은 열 6개 표의 칸 최소 너비 합(6 × (4em + 32px), 글자 16px 이면 약 580px)이
+   풀기 카드·인쇄 미리보기 본문 폭 안에 들어오는 가장 좁은 화면(약 700px)보다 조금 넉넉하게 잡은 값 */
 .qm-table--fixed {
   table-layout: fixed;
   width: 100%;
@@ -80,7 +82,7 @@ textarea::-webkit-resizer {
 .qm-table--fixed td {
   min-width: 0;
 }
-@media (max-width: 640px) {
+@media (max-width: 720px) {
   .qm-table {
     table-layout: fixed;
     width: 100%;
@@ -88,8 +90,9 @@ textarea::-webkit-resizer {
   .qm-table col {
     width: var(--qm-col-w);
   }
+  /* 좌우 여백 4px: 열 6개 표(375px 화면에서 열 약 44px)에도 두 글자 낱말·두 자리 빈칸 번호가 한 줄에 들어가게 */
   .qm-table td {
-    padding: 6px;
+    padding: 5px 4px;
     font-size: 0.92em;
     min-width: 0;
   }

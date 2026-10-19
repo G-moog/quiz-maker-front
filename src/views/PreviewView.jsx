@@ -134,7 +134,8 @@ export default function PreviewView({ set, onBack }) {
 
         {questions.map((q, i) => {
           const type = normalizeType(q.type);
-          // 빈칸이 둘 이상인 FILL 은 아래 정답 목록의 "(번호) 정답" 과 맞춰 본문 빈칸에도 번호를 붙임
+          // 빈칸이 둘 이상인 FILL 은 아래 정답 목록의 "(번호) 정답" 과 맞춰 본문 빈칸에도 번호를 붙임.
+          // 표 칸 안에서는 번호만 붙여 두고 밑줄 앞에서 줄바꿈을 허용 — 좁은 화면의 고정 배치 표에서 옆 칸 글을 덮지 않게
           const numberBlanks = type === "fill" && ((q.text || "").match(/___/g) || []).length > 1;
           return (
             <div key={q.id} style={S.qBlock}>
@@ -144,7 +145,9 @@ export default function PreviewView({ set, onBack }) {
                   <TableAwareText
                     text={q.text}
                     renderBlank={numberBlanks
-                      ? (bi) => <span style={{ whiteSpace: "nowrap" }}>({bi + 1})____</span>
+                      ? (bi, { inTable }) => (inTable
+                        ? <><span style={{ whiteSpace: "nowrap" }}>({bi + 1})</span><wbr />____</>
+                        : <span style={{ whiteSpace: "nowrap" }}>({bi + 1})____</span>)
                       : undefined}
                   />
                 </div>

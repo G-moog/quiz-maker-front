@@ -19,19 +19,22 @@ function normalizeType(type) {
   return map[lower] ?? lower;
 }
 
-// FILL 빈칸 버튼 스타일 (표 칸 안에서는 좁은 칸을 넘지 않게 작게, 긴 정답은 버튼 안에서 줄바꿈)
+// FILL 빈칸 버튼 스타일
+//  표 칸 안(inTable): 좁은 칸을 넘지 않게 여백·테두리를 줄임. 연 상태의 긴 정답은 버튼 안에서 줄바꿈
+//  가린 상태의 번호는 줄바꿈 금지 — 칸이 좁아도 "13" 이 "1/3" 처럼 세로로 쪼개지지 않게
 function fillBlankBtnStyle(revealed, inTable = false) {
   return {
     display: "inline-flex", alignItems: "center", justifyContent: "center",
     minWidth: inTable ? "min(40px, 100%)" : 64, maxWidth: "100%",
-    padding: inTable ? "1px 6px" : "2px 14px", margin: inTable ? "2px" : "0 3px",
-    verticalAlign: "middle", borderRadius: 6,
+    padding: inTable ? "1px 3px" : "2px 14px", margin: inTable ? "1px 0" : "0 3px",
+    verticalAlign: "middle", borderRadius: inTable ? 5 : 6,
     fontSize: inTable ? 13 : 14, fontWeight: 700, cursor: "pointer",
-    border: `2px ${revealed ? "solid" : "dashed"} #f59e0b`,
+    border: `${inTable ? 1.5 : 2}px ${revealed ? "solid" : "dashed"} #f59e0b`,
     background: revealed ? "#f59e0b" : "transparent",
     color: revealed ? "#1a1a1a" : "#f59e0b",
     transition: "all 0.2s ease",
     lineHeight: 1.4,
+    ...(revealed ? {} : { whiteSpace: "nowrap", overflowWrap: "normal" }),
   };
 }
 
