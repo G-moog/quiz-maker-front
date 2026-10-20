@@ -162,10 +162,65 @@ textarea::-webkit-resizer {
 /* 문제집 카드: 낮고 촘촘하게(제목 한 줄이면 약 70px) */
 .qm-card {
   padding: 11px 14px 10px;
+  /* 둘째 줄은 화면 폭이 아니라 카드 폭으로 줄인다(넓은 화면도 카드가 3열이면 휴대폰만큼 좁다) */
+  container-type: inline-size;
 }
 .qm-card-title {
   font-size: 15px;
   line-height: 1.35;
+}
+/* 카드 둘째 줄: 과목·문항 수 + 하드모드·편집·풀기·엑셀 단추. 좁은 카드에서도 한 줄에 들어가게
+   '문항 N개' → 'N문항', 단추 좌우 여백·간격을 단계별로 줄인다 */
+.qm-card-meta,
+.qm-card-btns {
+  gap: 6px;
+}
+.qm-cbtn-hard {
+  padding: 0 10px;
+}
+.qm-cbtn-edit {
+  padding: 0 12px;
+}
+.qm-cbtn-solve {
+  padding: 0 18px;
+}
+.qm-cbtn-excel {
+  padding: 0 10px;
+}
+.qm-count-short {
+  display: none;
+}
+@container (max-width: 340px) {
+  .qm-count-long {
+    display: none;
+  }
+  .qm-count-short {
+    display: inline;
+  }
+  .qm-cbtn-hard,
+  .qm-cbtn-edit {
+    padding: 0 9px;
+  }
+  .qm-cbtn-solve {
+    padding: 0 13px;
+  }
+  .qm-cbtn-excel {
+    padding: 0 8px;
+  }
+}
+@container (max-width: 290px) {
+  .qm-card-meta,
+  .qm-card-btns {
+    gap: 4px;
+  }
+  .qm-cbtn-hard,
+  .qm-cbtn-edit,
+  .qm-cbtn-excel {
+    padding: 0 6px;
+  }
+  .qm-cbtn-solve {
+    padding: 0 9px;
+  }
 }
 
 /* 풀기 화면 */

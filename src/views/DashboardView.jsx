@@ -1,10 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { getSets, createSet, updateSet, deleteSet } from "../api/quiz";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
+import { groupHardSets, hardTitleOf, loadHardModeIds, saveHardModeIds } from "../utils/hardMode";
 
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType). 휴대폰에서 누른 뒤
 // 흐리거나 떠오른 모양이 그대로 남지 않게.
 const ICON_GRAY = "#6b6b6b";
+const CARD_BORDER = "#2e2e2e";
+const CARD_BORDER_HARD = "#ef4444";
 
 const S = {
   page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
@@ -56,11 +59,13 @@ const S = {
   },
   // 본문·카드 여백과 카드 사이 간격은 index.css 의 .qm-dash-body / .qm-dash-grid / .qm-card (휴대폰에서 촘촘하게)
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))" },
-  card: {
-    background: "#1a1a1a", borderRadius: 10, border: "1px solid #2e2e2e",
-    position: "relative", display: "flex",
-    flexDirection: "column", transition: "border-color 0.15s ease, transform 0.15s ease",
-  },
+  // 하드모드를 켠 카드는 짙은 빨강 배경 + 빨간 테두리
+  card: (hard) => ({
+    background: hard ? "#3a1416" : "#1a1a1a", borderRadius: 10,
+    border: `1px solid ${hard ? CARD_BORDER_HARD : CARD_BORDER}`,
+    position: "relative", display: "flex", flexDirection: "column",
+    transition: "border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease",
+  }),
   // 카드는 두 줄: ① 제목 + ✏ ✕  ② 과목·문항 수 + 작은 단추들 (사용자 요청: 칩을 낮고 촘촘하게)
   // 제목 글자 크기·줄 간격은 index.css 의 .qm-card-title (휴대폰에서 한 단계 작게)
   // ✏ ✕ 는 제목 글 안에서 오른쪽으로 띄움(float) — 첫 줄만 아이콘 폭만큼 줄고 둘째 줄부터는 카드 폭 전체를 씀
@@ -73,30 +78,41 @@ const S = {
   cardFoot: {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: "auto",
   },
-  cardMeta: {
-    display: "flex", alignItems: "center", gap: 6, minWidth: 0,
-    fontSize: 12, color: "#7a7a7a", whiteSpace: "nowrap",
-  },
-  subjectBadge: {
+  // 둘째 줄 글자·단추 좌우 여백과 단추 사이 간격은 index.css 의 .qm-card-meta / .qm-card-btns / .qm-cbtn-*
+  // (카드가 좁으면 '문항 N개' → 'N문항', 여백을 줄여 한 줄에 들어가게)
+  cardMeta: (hard) => ({
+    display: "flex", alignItems: "center", minWidth: 0,
+    fontSize: 12, color: hard ? "#e3b0b0" : "#7a7a7a", whiteSpace: "nowrap",
+  }),
+  subjectBadge: (hard) => ({
     minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
-    background: "#242424", color: "#a0a0a0", fontSize: 11, padding: "1px 6px", borderRadius: 4,
-  },
-  cardBtns: { display: "flex", gap: 6, flexShrink: 0 },
+    background: hard ? "#4d1c1f" : "#242424", color: hard ? "#e3b0b0" : "#a0a0a0",
+    fontSize: 11, padding: "1px 6px", borderRadius: 4,
+  }),
+  count: { flexShrink: 0 },
+  cardBtns: { display: "flex", flexShrink: 0 },
   editBtn: {
-    height: 30, padding: "0 12px", background: "#242424", color: "#a0a0a0",
+    height: 30, background: "#242424", color: "#a0a0a0",
     border: "1px solid #2e2e2e", borderRadius: 6, fontWeight: 600, fontSize: 12,
     cursor: "pointer", transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
   solveBtn: {
-    height: 30, padding: "0 18px", background: "#f59e0b", color: "#000000",
+    height: 30, background: "#f59e0b", color: "#000000",
     border: "none", borderRadius: 6, fontWeight: 700, fontSize: 12,
     cursor: "pointer", transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
   excelBtn: {
-    height: 30, padding: "0 10px", background: "#242424", color: "#a0a0a0",
+    height: 30, background: "#242424", color: "#a0a0a0",
     border: "1px solid #2e2e2e", borderRadius: 6, fontWeight: 600, fontSize: 12,
     cursor: "pointer", transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
+  // 하드모드 켜고 끄기: 꺼짐은 회색 단추에 붉은 테두리·글자, 켜짐은 빨간 바탕에 흰 글자
+  hardBtn: (on) => ({
+    height: 30, borderRadius: 6, fontWeight: 700, fontSize: 12,
+    background: on ? "#dc2626" : "#242424", color: on ? "#ffffff" : "#f87171",
+    border: `1px solid ${on ? "#dc2626" : "rgba(239,68,68,0.5)"}`,
+    cursor: "pointer", transition: "opacity 0.15s ease, background-color 0.15s ease", whiteSpace: "nowrap",
+  }),
   iconBtn: {
     width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center",
     background: "none", border: "none", borderRadius: 6, color: ICON_GRAY, fontSize: 14,
@@ -227,6 +243,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   // 세트 수정 모달 상태
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingSet, setEditingSet] = useState(null);
+  const [editingHard, setEditingHard] = useState(null); // 짝인 하드 문제집(제목·과목을 함께 고친다)
   const [editTitle, setEditTitle] = useState("");
   const [editSubject, setEditSubject] = useState("");
   const [editSaving, setEditSaving] = useState(false);
@@ -237,6 +254,24 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   const toastTimer = useRef(null);
 
   const username = localStorage.getItem("username") || "";
+
+  // 하드모드를 켠 원래 문제집 id(문자열). 기기에 기억한다(utils/hardMode.js)
+  const [hardOn, setHardOn] = useState(() => new Set(loadHardModeIds(username)));
+
+  function changeHardOn(next) {
+    setHardOn(next);
+    saveHardModeIds(username, next);
+  }
+
+  function toggleHard(e, id) {
+    e.stopPropagation();
+    // 지금 목록에 없는 문제집(다른 곳에서 지운 것)의 기억은 이참에 뺀다
+    const alive = new Set(sets.map((s) => String(s.id)));
+    const next = new Set([...hardOn].filter((k) => alive.has(k)));
+    const key = String(id);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    changeHardOn(next);
+  }
 
   // 목록 상태: loading(처음 불러오는 중) · ok · error. 실패를 빈 목록으로 보이지 않게 한다.
   const [loadState, setLoadState] = useState("loading");
@@ -284,9 +319,11 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   }
 
   // 세트 수정
-  function openEditModal(e, s) {
+  // ✏ 는 늘 원래 문제집을 고친다. 짝인 하드 문제집이 있으면 제목("[하드] " + 새 제목)·과목도 함께.
+  function openEditModal(e, s, hard) {
     e.stopPropagation();
     setEditingSet(s);
+    setEditingHard(hard);
     setEditTitle(s.title);
     setEditSubject(s.subject || "");
     setEditError("");
@@ -294,25 +331,57 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   }
 
   async function handleEditSave() {
-    if (!editTitle.trim()) { setEditError("제목을 입력해주세요."); return; }
+    const nextTitle = editTitle.trim();
+    const nextSubject = editSubject.trim();
+    if (!nextTitle) { setEditError("제목을 입력해주세요."); return; }
     setEditSaving(true);
     setEditError("");
     try {
-      await updateSet(editingSet.id, editTitle.trim(), editSubject.trim());
-      setShowEditModal(false);
-      fetchSets();
-      showToast("문제집 정보가 수정되었습니다.", "success");
+      await updateSet(editingSet.id, nextTitle, nextSubject);
     } catch (e) {
       setEditError(e.message.includes("403") ? "수정 권한이 없습니다." : e.message);
-    } finally {
       setEditSaving(false);
+      return;
     }
+    if (editingHard) {
+      try {
+        await updateSet(editingHard.id, hardTitleOf(nextTitle), nextSubject);
+      } catch (e) {
+        // 원래 문제집은 이미 고쳐졌다. 창을 열어 둔 채 알리고, 저장을 다시 누르면 둘 다 다시 보낸다
+        fetchSets();
+        setEditError(
+          "원래 문제집은 고쳤지만 하드 문제집은 고치지 못했습니다" +
+          `(${e.message.includes("403") ? "수정 권한이 없습니다" : e.message}). 저장을 다시 누르면 다시 시도합니다.`
+        );
+        setEditSaving(false);
+        return;
+      }
+    }
+    setEditSaving(false);
+    setShowEditModal(false);
+    fetchSets();
+    showToast(editingHard ? "문제집 정보가 수정되었습니다(하드 문제집 포함)." : "문제집 정보가 수정되었습니다.", "success");
   }
 
-  async function handleDelete(e, id) {
+  // ✕: 짝인 하드 문제집이 있으면 함께 지운다(하드 먼저 — 중간에 실패해도 원래 문제집은 남게)
+  async function handleDelete(e, s, hard) {
     e.stopPropagation();
-    if (!confirm("이 세트를 삭제할까요?")) return;
-    try { await deleteSet(id); fetchSets(); } catch (e) { alert(e.message); }
+    const message = hard ? "이 세트를 삭제할까요?\n하드 문제집도 함께 지웁니다." : "이 세트를 삭제할까요?";
+    if (!confirm(message)) return;
+    let hardDeleted = false;
+    try {
+      if (hard) { await deleteSet(hard.id); hardDeleted = true; }
+      await deleteSet(s.id);
+      if (hardOn.has(String(s.id))) {
+        const next = new Set(hardOn);
+        next.delete(String(s.id));
+        changeHardOn(next);
+      }
+      fetchSets();
+    } catch (err) {
+      if (hardDeleted) fetchSets();
+      alert(hardDeleted ? `하드 문제집은 지웠지만 원래 문제집은 지우지 못했습니다.\n${err.message}` : err.message);
+    }
   }
 
   // 엑셀 다운로드
@@ -448,72 +517,95 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
           ) : null
         ) : (
           <div style={S.grid} className="qm-dash-grid">
-            {sets.map((s) => (
-              <div
-                key={s.id}
-                style={S.card}
-                className="qm-card"
-                onPointerEnter={(e) => {
-                  if (e.pointerType !== "mouse") return;
-                  e.currentTarget.style.borderColor = "#f59e0b";
-                  e.currentTarget.style.transform = "translateY(-2px)";
-                }}
-                onPointerLeave={(e) => {
-                  e.currentTarget.style.borderColor = "#2e2e2e";
-                  e.currentTarget.style.transform = "translateY(0)";
-                }}
-              >
-                <div style={S.cardTitle} className="qm-card-title">
-                  <div style={S.cardIcons}>
-                    <button
-                      style={S.iconBtn}
-                      onClick={(e) => openEditModal(e, s)}
-                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f59e0b"; }}
-                      onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
-                      title="제목/과목 수정"
-                    >✏</button>
-                    <button
-                      style={S.iconBtn}
-                      onClick={(e) => handleDelete(e, s.id)}
-                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
-                      onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
-                      title="삭제"
-                    >✕</button>
-                  </div>
-                  {s.title}
-                </div>
-                <div style={S.cardFoot}>
-                  <div style={S.cardMeta}>
-                    {s.subject && <span style={S.subjectBadge}>📚 {s.subject}</span>}
-                    <span>문항 {s.questionCount}개</span>
-                  </div>
-                  <div style={S.cardBtns}>
-                    <button
-                      style={S.editBtn}
-                      onClick={(e) => { e.stopPropagation(); onOpenEditor(s); }}
-                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
-                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                    >편집</button>
-                    <button
-                      style={S.solveBtn}
-                      onClick={(e) => { e.stopPropagation(); onSolve(s); }}
-                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
-                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                    >풀기</button>
-                    {canExcel && (
+            {groupHardSets(sets).map(({ set: s, hard }) => {
+              // 하드모드가 켜지면 풀기·편집·⬇ 엑셀·문항 수가 짝인 하드 문제집을 따른다
+              const hardActive = !!hard && hardOn.has(String(s.id));
+              const target = hardActive ? hard : s;
+              return (
+                <div
+                  key={s.id}
+                  style={S.card(hardActive)}
+                  className="qm-card"
+                  onPointerEnter={(e) => {
+                    if (e.pointerType !== "mouse") return;
+                    e.currentTarget.style.borderColor = hardActive ? "#f87171" : "#f59e0b";
+                    e.currentTarget.style.transform = "translateY(-2px)";
+                  }}
+                  onPointerLeave={(e) => {
+                    e.currentTarget.style.borderColor = hardActive ? CARD_BORDER_HARD : CARD_BORDER;
+                    e.currentTarget.style.transform = "translateY(0)";
+                  }}
+                >
+                  <div style={S.cardTitle} className="qm-card-title">
+                    <div style={S.cardIcons}>
                       <button
-                        style={S.excelBtn}
-                        onClick={(e) => handleDownloadSet(e, s.id)}
+                        style={S.iconBtn}
+                        onClick={(e) => openEditModal(e, s, hard)}
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f59e0b"; }}
+                        onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
+                        title="제목/과목 수정"
+                      >✏</button>
+                      <button
+                        style={S.iconBtn}
+                        onClick={(e) => handleDelete(e, s, hard)}
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
+                        onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
+                        title="삭제"
+                      >✕</button>
+                    </div>
+                    {s.title}
+                  </div>
+                  <div style={S.cardFoot}>
+                    <div style={S.cardMeta(hardActive)} className="qm-card-meta">
+                      {s.subject && <span style={S.subjectBadge(hardActive)} title={s.subject}>📚 {s.subject}</span>}
+                      {/* 카드가 좁으면 짧은 글씨(index.css) */}
+                      <span style={S.count}>
+                        <span className="qm-count-long">문항 {target.questionCount}개</span>
+                        <span className="qm-count-short">{target.questionCount}문항</span>
+                      </span>
+                    </div>
+                    <div style={S.cardBtns} className="qm-card-btns">
+                      {hard && (
+                        <button
+                          style={S.hardBtn(hardActive)}
+                          className="qm-cbtn-hard"
+                          onClick={(e) => toggleHard(e, s.id)}
+                          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.8"; }}
+                          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                          aria-pressed={hardActive}
+                          title={hardActive ? "하드모드 끄기" : "하드모드: 빈칸이 더 많은 문제"}
+                        >하드모드</button>
+                      )}
+                      <button
+                        style={S.editBtn}
+                        className="qm-cbtn-edit"
+                        onClick={(e) => { e.stopPropagation(); onOpenEditor(target); }}
                         onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
                         onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                      >
-                        ⬇ 엑셀
-                      </button>
-                    )}
+                      >편집</button>
+                      <button
+                        style={S.solveBtn}
+                        className="qm-cbtn-solve"
+                        onClick={(e) => { e.stopPropagation(); onSolve(target); }}
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                        onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      >풀기</button>
+                      {canExcel && (
+                        <button
+                          style={S.excelBtn}
+                          className="qm-cbtn-excel"
+                          onClick={(e) => handleDownloadSet(e, target.id)}
+                          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        >
+                          ⬇ 엑셀
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
