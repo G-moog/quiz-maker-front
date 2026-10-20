@@ -2,12 +2,15 @@ import { useState, useEffect, useRef } from "react";
 import { getSets, createSet, updateSet, deleteSet } from "../api/quiz";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
 import { groupHardSets, hardTitleOf, loadHardModeIds, saveHardModeIds } from "../utils/hardMode";
+import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType). 휴대폰에서 누른 뒤
 // 흐리거나 떠오른 모양이 그대로 남지 않게.
 const ICON_GRAY = "#6b6b6b";
 const CARD_BORDER = "#2e2e2e";
 const CARD_BORDER_HARD = "#ef4444";
+const CARD_BORDER_HOVER = "#f59e0b";
+const CARD_BORDER_HARD_HOVER = "#f87171";
 
 const S = {
   page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
@@ -59,10 +62,14 @@ const S = {
   },
   // 본문·카드 여백과 카드 사이 간격은 index.css 의 .qm-dash-body / .qm-dash-grid / .qm-card (휴대폰에서 촘촘하게)
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))" },
-  // 하드모드를 켠 카드는 짙은 빨강 배경 + 빨간 테두리
-  card: (hard) => ({
+  // 하드모드를 켠 카드는 짙은 빨강 배경 + 빨간 테두리. 마우스 올림(hover)도 상태로 그려서
+  // 올린 채 하드모드를 눌러 다시 그려져도 강조 테두리가 풀리지 않게 한다
+  card: (hard, hover) => ({
     background: hard ? "#3a1416" : "#1a1a1a", borderRadius: 10,
-    border: `1px solid ${hard ? CARD_BORDER_HARD : CARD_BORDER}`,
+    border: `1px solid ${hard
+      ? (hover ? CARD_BORDER_HARD_HOVER : CARD_BORDER_HARD)
+      : (hover ? CARD_BORDER_HOVER : CARD_BORDER)}`,
+    transform: hover ? "translateY(-2px)" : "translateY(0)",
     position: "relative", display: "flex", flexDirection: "column",
     transition: "border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease",
   }),
@@ -248,6 +255,10 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   const [editSubject, setEditSubject] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
+  // 원래 문제집만 새 제목이 되고 하드 문제집은 옛 제목으로 남은 상태(되돌리기도 실패). 이대로 두면
+  // 하드 문제집이 짝을 잃고 따로 된 카드로 보이므로, 글을 고쳐도 지우지 않고 창을 닫을 때도 알린다.
+  // { text: 창 안내, hardTitle: 하드 문제집의 지금(옛) 제목, wantTitle: 짝이 되려면 필요한 제목 } 또는 null
+  const [editMismatch, setEditMismatch] = useState(null);
 
   // 토스트
   const [toast, setToast] = useState(null);
@@ -257,20 +268,32 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
 
   // 하드모드를 켠 원래 문제집 id(문자열). 기기에 기억한다(utils/hardMode.js)
   const [hardOn, setHardOn] = useState(() => new Set(loadHardModeIds(username)));
+  useEffect(() => { saveHardModeIds(username, hardOn); }, [username, hardOn]);
 
-  function changeHardOn(next) {
-    setHardOn(next);
-    saveHardModeIds(username, next);
-  }
+  // 마우스를 올린 카드(원래 문제집 id). 마우스에서만 쓴다
+  const [hoverId, setHoverId] = useState(null);
 
+  // 바꿀 때는 늘 바로 앞 값에서 고친다(함수형 갱신) — 삭제를 기다리는 동안 다른 카드를 켜고 꺼도 되돌아가지 않게
   function toggleHard(e, id) {
     e.stopPropagation();
     // 지금 목록에 없는 문제집(다른 곳에서 지운 것)의 기억은 이참에 뺀다
     const alive = new Set(sets.map((s) => String(s.id)));
-    const next = new Set([...hardOn].filter((k) => alive.has(k)));
     const key = String(id);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    changeHardOn(next);
+    setHardOn((prev) => {
+      const next = new Set([...prev].filter((k) => alive.has(k)));
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+
+  function forgetHard(id) {
+    const key = String(id);
+    setHardOn((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
   }
 
   // 목록 상태: loading(처음 불러오는 중) · ok · error. 실패를 빈 목록으로 보이지 않게 한다.
@@ -327,8 +350,25 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
     setEditTitle(s.title);
     setEditSubject(s.subject || "");
     setEditError("");
+    setEditMismatch(null);
     setShowEditModal(true);
   }
+
+  // 저장 중에는 닫지 않는다(바깥·✕·취소) — 두 번째 수정이 실패한 것을 못 보고 지나치지 않게.
+  // 어긋난 채로 닫으면 어떻게 다시 묶는지 창으로 알린다(드문 경우라 토스트보다 오래 보이게)
+  function closeEditModal() {
+    if (editSaving) return;
+    setShowEditModal(false);
+    if (editMismatch) {
+      alert(
+        "하드 문제집 제목은 바꾸지 못했습니다.\n" +
+        `하드 문제집은 "${editMismatch.hardTitle}" 카드로 따로 보입니다. ` +
+        `그 카드의 ✏ 에서 제목을 "${editMismatch.wantTitle}" 로 고치면 다시 하드모드로 묶입니다.`
+      );
+    }
+  }
+
+  const editErrorText = (e) => (e.message.includes("403") ? "수정 권한이 없습니다" : e.message);
 
   async function handleEditSave() {
     const nextTitle = editTitle.trim();
@@ -347,17 +387,39 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
       try {
         await updateSet(editingHard.id, hardTitleOf(nextTitle), nextSubject);
       } catch (e) {
-        // 원래 문제집은 이미 고쳐졌다. 창을 열어 둔 채 알리고, 저장을 다시 누르면 둘 다 다시 보낸다
+        // 둘 중 원래만 바뀌면 하드 문제집이 짝을 잃는다 → 원래 문제집을 처음 값으로 되돌려 둘을 맞춘다.
+        // 창은 열어 둔 채 알리고, 저장을 다시 누르면 둘 다 다시 보낸다
+        let rolledBack = false;
+        if (e.message !== SESSION_EXPIRED_MESSAGE) {
+          try {
+            await updateSet(editingSet.id, editingSet.title, editingSet.subject ?? "");
+            rolledBack = true;
+          } catch {
+            // 되돌리지 못하면 아래에서 어긋난 상태를 알린다
+          }
+        }
         fetchSets();
-        setEditError(
-          "원래 문제집은 고쳤지만 하드 문제집은 고치지 못했습니다" +
-          `(${e.message.includes("403") ? "수정 권한이 없습니다" : e.message}). 저장을 다시 누르면 다시 시도합니다.`
-        );
+        if (rolledBack) {
+          setEditError(
+            `하드 문제집을 고치지 못해(${editErrorText(e)}) 원래 문제집도 바꾸지 않았습니다. 저장을 다시 누르면 다시 시도합니다.`
+          );
+          setEditMismatch(null);
+        } else {
+          setEditError("");
+          setEditMismatch({
+            text:
+              `원래 문제집은 고쳤지만 하드 문제집은 고치지 못했습니다(${editErrorText(e)}). ` +
+              "저장을 다시 누르면 다시 시도합니다. 이대로 닫으면 하드 문제집은 옛 제목으로 따로 된 카드로 보입니다.",
+            hardTitle: editingHard.title,
+            wantTitle: hardTitleOf(nextTitle),
+          });
+        }
         setEditSaving(false);
         return;
       }
     }
     setEditSaving(false);
+    setEditMismatch(null);
     setShowEditModal(false);
     fetchSets();
     showToast(editingHard ? "문제집 정보가 수정되었습니다(하드 문제집 포함)." : "문제집 정보가 수정되었습니다.", "success");
@@ -372,11 +434,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
     try {
       if (hard) { await deleteSet(hard.id); hardDeleted = true; }
       await deleteSet(s.id);
-      if (hardOn.has(String(s.id))) {
-        const next = new Set(hardOn);
-        next.delete(String(s.id));
-        changeHardOn(next);
-      }
+      forgetHard(s.id);
       fetchSets();
     } catch (err) {
       if (hardDeleted) fetchSets();
@@ -392,11 +450,15 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
     downloadSet(id);
   }
 
+  // 카드 목록: 짝인 하드 문제집은 원래 문제집 카드에 묶는다(utils/hardMode.js)
+  const cards = groupHardSets(sets);
+
   // 엑셀 업로드
   function openUploadModal() {
     setShowUploadModal(true);
     setUploadTab("existing");
-    setSelectedSetId(sets[0]?.id ?? "");
+    // 기본 선택은 화면의 첫 카드(원래 문제집). 서버 목록 맨 앞이 카드로는 숨은 하드 문제집일 수 있다
+    setSelectedSetId(cards[0]?.set.id ?? "");
     setUploadFile(null);
     setNewTitle(""); setNewSubject("");
     setUploadError("");
@@ -517,24 +579,18 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
           ) : null
         ) : (
           <div style={S.grid} className="qm-dash-grid">
-            {groupHardSets(sets).map(({ set: s, hard }) => {
+            {cards.map(({ set: s, hard }) => {
               // 하드모드가 켜지면 풀기·편집·⬇ 엑셀·문항 수가 짝인 하드 문제집을 따른다
               const hardActive = !!hard && hardOn.has(String(s.id));
               const target = hardActive ? hard : s;
               return (
                 <div
                   key={s.id}
-                  style={S.card(hardActive)}
-                  className="qm-card"
-                  onPointerEnter={(e) => {
-                    if (e.pointerType !== "mouse") return;
-                    e.currentTarget.style.borderColor = hardActive ? "#f87171" : "#f59e0b";
-                    e.currentTarget.style.transform = "translateY(-2px)";
-                  }}
-                  onPointerLeave={(e) => {
-                    e.currentTarget.style.borderColor = hardActive ? CARD_BORDER_HARD : CARD_BORDER;
-                    e.currentTarget.style.transform = "translateY(0)";
-                  }}
+                  style={S.card(hardActive, hoverId === s.id)}
+                  // 과목 배지와 하드모드 단추가 함께 있으면 좁을 때 한 단계 먼저 줄여 과목 글자 자리를 남긴다(index.css)
+                  className={hard && s.subject ? "qm-card qm-card--crowded" : "qm-card"}
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") setHoverId(s.id); }}
+                  onPointerLeave={() => setHoverId((cur) => (cur === s.id ? null : cur))}
                 >
                   <div style={S.cardTitle} className="qm-card-title">
                     <div style={S.cardIcons}>
@@ -557,7 +613,11 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                   </div>
                   <div style={S.cardFoot}>
                     <div style={S.cardMeta(hardActive)} className="qm-card-meta">
-                      {s.subject && <span style={S.subjectBadge(hardActive)} title={s.subject}>📚 {s.subject}</span>}
+                      {s.subject && (
+                        <span style={S.subjectBadge(hardActive)} title={s.subject}>
+                          <span className="qm-subj-icon">📚 </span>{s.subject}
+                        </span>
+                      )}
                       {/* 카드가 좁으면 짧은 글씨(index.css) */}
                       <span style={S.count}>
                         <span className="qm-count-long">문항 {target.questionCount}개</span>
@@ -653,11 +713,12 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
 
       {/* ── 세트 수정 모달 ── */}
       {showEditModal && (
-        <div style={S.overlay} onClick={() => setShowEditModal(false)}>
+        <div style={S.overlay} onClick={closeEditModal}>
           <div style={S.modal} onClick={(e) => e.stopPropagation()}>
             <button
               style={S.modalClose}
-              onClick={() => setShowEditModal(false)}
+              onClick={closeEditModal}
+              disabled={editSaving}
               onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
               onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
             >✕</button>
@@ -680,10 +741,12 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
               placeholder="예: 국어, 수학 ..."
             />
             {editError && <div style={S.modalError}>{editError}</div>}
+            {editMismatch && <div style={S.modalError} role="alert">{editMismatch.text}</div>}
             <div style={S.modalBtns}>
               <button
                 style={S.cancelBtn}
-                onClick={() => setShowEditModal(false)}
+                onClick={closeEditModal}
+                disabled={editSaving}
                 onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
                 onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >취소</button>
@@ -731,11 +794,13 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                   onChange={(e) => setSelectedSetId(e.target.value)}
                   onFocus={focusGold} onBlur={blurGray}
                 >
-                  {sets.length === 0
+                  {/* 카드 순서대로, 짝인 하드 문제집은 원래 문제집 바로 뒤('[하드] …') */}
+                  {cards.length === 0
                     ? <option value="">문제집이 없습니다</option>
-                    : sets.map((s) => (
-                        <option key={s.id} value={s.id}>{s.title}</option>
-                      ))
+                    : cards.flatMap(({ set: s, hard }) => [
+                        <option key={s.id} value={s.id}>{s.title}</option>,
+                        ...(hard ? [<option key={hard.id} value={hard.id}>{hard.title}</option>] : []),
+                      ])
                   }
                 </select>
               </>
