@@ -114,6 +114,7 @@ export default function FillText({ text, answers: rawAnswers = [], mode = "learn
   function renderBlank(i, { inTable } = {}) {
     return mode === "learn" ? (
       <button
+        className="qm-blank"
         style={blankBtnStyle(revealed[i], inTable)}
         onClick={() => handleLearnClick(i)}
         title={revealed[i] ? "" : `클릭하여 ${i + 1}번 빈칸 정답 확인`}
@@ -146,8 +147,8 @@ export default function FillText({ text, answers: rawAnswers = [], mode = "learn
 
   return (
     <div>
-      {/* 문제 텍스트 + 빈칸 (표 문법 포함 가능) */}
-      <div style={{ fontSize: 15, lineHeight: 2.5, color: "#f1f1f1", wordBreak: "keep-all" }}>
+      {/* 문제 텍스트 + 빈칸 (표 문법 포함 가능). 줄 간격은 풀기 화면(SolveView)과 같은 2.1 */}
+      <div style={{ fontSize: 15, lineHeight: 2.1, color: "#f1f1f1", wordBreak: "keep-all" }}>
         <TableAwareText text={text} renderBlank={renderBlank} />
       </div>
 
@@ -167,8 +168,8 @@ export default function FillText({ text, answers: rawAnswers = [], mode = "learn
             transition: "opacity 0.15s ease",
           }}
           onClick={handleSubmit}
-          onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-          onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
         >
           제출
         </button>

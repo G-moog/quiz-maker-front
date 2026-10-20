@@ -9,14 +9,17 @@ const S = {
     justifyContent: "center",
     background: "#0f0f0f",
     fontFamily: "system-ui, sans-serif",
+    padding: 16,
   },
+  // 휴대폰: 화면 끝에서 16px 띄우고, 좁을수록 안쪽 여백을 줄여 입력칸을 넓게(clamp). 넓은 화면은 380px 그대로
   card: {
     background: "#1a1a1a",
     borderRadius: 12,
     border: "1px solid #2e2e2e",
     boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-    padding: "40px 48px",
-    width: 380,
+    padding: "clamp(28px, 8vw, 40px) clamp(20px, 7vw, 48px)",
+    width: "100%",
+    maxWidth: 380,
   },
   logo: {
     textAlign: "center",
@@ -239,8 +242,8 @@ export default function LoginView({ onLoginSuccess, notice = "" }) {
               style={S.btn}
               type="submit"
               disabled={loading}
-              onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-              onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
             >
               {loading ? "처리 중..." : "로그인"}
             </button>
@@ -311,8 +314,8 @@ export default function LoginView({ onLoginSuccess, notice = "" }) {
               style={S.btn}
               type="submit"
               disabled={loading}
-              onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-              onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
             >
               {loading ? "처리 중..." : "회원가입"}
             </button>

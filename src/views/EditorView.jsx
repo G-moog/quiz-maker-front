@@ -3,7 +3,7 @@ import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "../ap
 import { uploadImage } from "../api/image";
 import FillText from "../components/FillText";
 import TableAwareText from "../components/TableAwareText";
-import { buildTableTemplate } from "../utils/textBlocks";
+import { buildTableTemplate, plainPreview } from "../utils/textBlocks";
 
 const ANTHROPIC_API_KEY = "YOUR_API_KEY_HERE"; // TODO: 환경변수로 교체
 
@@ -51,44 +51,44 @@ function parseAnswers(raw) {
   try { return JSON.parse(raw); } catch { return []; }
 }
 
+// 화면 폭에 따라 바뀌는 배치(.qm-ed-*)는 index.css 참고: 넓은 화면은 왼쪽 목록 + 오른쪽 편집,
+// 폭 900px 이하(휴대폰·태블릿 세로)는 목록과 편집 폼을 한 화면에 하나씩 전체 폭으로 보여 준다.
+// 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType) — 휴대폰에서 누른 뒤 흐린 채 남지 않게.
 const S = {
   page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
   nav: {
     background: "#1a1a1a", borderBottom: "1px solid #2e2e2e",
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "0 24px", height: 52,
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+    minHeight: 52,
   },
-  navLeft: { display: "flex", alignItems: "center", gap: 12 },
+  navLeft: { display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 },
+  // 여백 10 + 음수 여백 -10: 보이는 자리는 그대로, 누르는 자리만 넓게
   backBtn: {
-    background: "none", border: "none", color: "#a0a0a0",
+    background: "none", border: "none", color: "#a0a0a0", padding: 10, margin: -10, flexShrink: 0,
     fontSize: 20, cursor: "pointer", transition: "color 0.15s ease",
   },
-  navTitle: { fontWeight: 700, fontSize: 16, color: "#f1f1f1" },
-  navRight: { display: "flex", gap: 10 },
+  navTitle: { fontWeight: 700, color: "#f1f1f1", minWidth: 0, overflowWrap: "anywhere" },
+  navRight: { display: "flex", gap: 8, flexShrink: 0 },
   previewBtn: {
     background: "#242424", color: "#f1f1f1", border: "1px solid #2e2e2e",
-    padding: "7px 18px", borderRadius: 6, fontWeight: 700, cursor: "pointer",
+    minHeight: 36, borderRadius: 6, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
     fontSize: 13, transition: "opacity 0.15s ease",
   },
   aiBtn: {
     background: "#f59e0b", color: "#000000", border: "none",
-    padding: "7px 18px", borderRadius: 6, fontWeight: 700, cursor: "pointer",
+    minHeight: 36, borderRadius: 6, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
     fontSize: 13, transition: "opacity 0.15s ease",
   },
-  layout: { display: "flex", height: "calc(100vh - 52px)" },
 
-  // 사이드바
-  sidebar: {
-    width: 300, background: "#1a1a1a", borderRight: "1px solid #2e2e2e",
-    display: "flex", flexDirection: "column", overflowY: "auto",
-  },
+  // 사이드바 (배치·폭·스크롤은 .qm-ed-sidebar — 휴대폰에서 숨기려면 display 를 인라인에 두면 안 됨)
+  sidebar: { background: "#1a1a1a" },
   addBtns: {
     padding: "14px",
     display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6,
     borderBottom: "1px solid #2e2e2e",
   },
   typeBtn: (color) => ({
-    padding: "7px 0", background: "transparent",
+    padding: "7px 0", minHeight: 38, background: "transparent",
     border: `1px solid ${color}`, color, borderRadius: 6,
     fontWeight: 700, fontSize: 12, cursor: "pointer", transition: "background 0.15s ease",
   }),
@@ -99,17 +99,27 @@ const S = {
     display: "flex", justifyContent: "space-between", alignItems: "flex-start",
     transition: "background 0.15s ease",
   }),
+  qBody: { flex: 1, minWidth: 0 },
   qNum: { fontSize: 11, color: "#555555", marginBottom: 3 },
-  qText: { fontSize: 13, color: "#f1f1f1", fontWeight: 500, lineHeight: 1.4 },
+  qText: { fontSize: 13, color: "#f1f1f1", fontWeight: 500, lineHeight: 1.4, overflowWrap: "anywhere" },
+  // 누르는 자리 40×40, 음수 여백으로 보이는 ✕ 위치는 거의 그대로
   qDel: {
     background: "none", border: "none", color: "#555555",
-    cursor: "pointer", fontSize: 16, padding: "0 0 0 8px", flexShrink: 0,
+    cursor: "pointer", fontSize: 16, padding: 0, flexShrink: 0,
+    width: 40, height: 40, margin: "-10px -12px -10px 4px",
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
     transition: "color 0.15s ease",
   },
   sideEmpty: { color: "#555555", fontSize: 13, textAlign: "center", padding: "32px 16px" },
 
-  // 편집 패널
-  editor: { flex: 1, padding: "28px 36px", overflowY: "auto", background: "#0f0f0f" },
+  // 편집 패널 (배치·여백·스크롤은 .qm-ed-editor)
+  editor: { background: "#0f0f0f" },
+  // 휴대폰에서만 보이는(.qm-ed-back) 목록으로 돌아가기 — 취소와 같음
+  edBackBtn: {
+    alignItems: "center", gap: 6, minHeight: 40, padding: "0 4px", marginBottom: 8,
+    background: "none", border: "none", color: "#a0a0a0",
+    fontSize: 14, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+  },
   idle: { color: "#555555", textAlign: "center", marginTop: 80, fontSize: 15 },
   typeBadge: (type) => ({
     display: "inline-block", fontSize: 11, fontWeight: 700, borderRadius: 4,
@@ -119,11 +129,13 @@ const S = {
   }),
   modeLabel: { fontWeight: 700, fontSize: 15, color: "#f1f1f1", marginBottom: 20 },
   fieldLabel: { fontSize: 13, fontWeight: 600, color: "#a0a0a0", marginBottom: 6, display: "block" },
+  // 문제 칸: 글 길이만큼 자동으로 늘어남(fieldSizing: content, 크롬 123+·안드로이드 크롬) — 화면 높이 60% 까지.
+  // 지원하지 않는 브라우저는 예전처럼 최소 90px + 모서리 드래그
   textarea: {
     width: "100%", padding: "10px 12px",
     background: "#242424", border: "1px solid #2e2e2e", borderRadius: 7,
     fontSize: 14, marginBottom: 16, color: "#f1f1f1",
-    resize: "vertical", minHeight: 90, maxHeight: 480, outline: "none",
+    resize: "vertical", fieldSizing: "content", minHeight: 90, maxHeight: "60vh", outline: "none",
     boxSizing: "border-box", lineHeight: 1.6,
     transition: "border-color 0.15s ease",
   },
@@ -133,10 +145,21 @@ const S = {
     fontSize: 14, marginBottom: 14, color: "#f1f1f1", outline: "none",
     transition: "border-color 0.15s ease",
   },
+  // 한 줄 값(보기·모범 답안·빈칸 정답·해설) 칸: 긴 글도 옆으로 넘기지 않고 칸 안에서 줄바꿈해 보이는 textarea.
+  // 값에는 줄바꿈을 넣지 않음(oneLine·blockEnter) — 예전 한 줄 input 과 같은 값
+  oneLineArea: {
+    display: "block", resize: "none", fieldSizing: "content",
+    fontFamily: "inherit", lineHeight: 1.45, overflowWrap: "anywhere",
+  },
   optionRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
+  // 라디오 + ① 묶음: ① 글자를 눌러도 정답이 골라지고 누르는 자리가 넉넉하게
+  optionPick: {
+    display: "flex", alignItems: "center", gap: 8, minHeight: 40, flexShrink: 0, cursor: "pointer",
+  },
+  optionRadio: { accentColor: "#60a5fa", cursor: "pointer", width: 18, height: 18, margin: 0 },
   optionNum: { color: "#a0a0a0", fontWeight: 700, width: 20, flexShrink: 0 },
   optionInput: (selected) => ({
-    flex: 1, padding: "8px 10px",
+    flex: 1, minWidth: 0, padding: "8px 10px",
     background: selected ? "rgba(96,165,250,0.08)" : "#242424",
     border: `1px solid ${selected ? "#60a5fa" : "#2e2e2e"}`,
     borderRadius: 6, fontSize: 13, color: "#f1f1f1", outline: "none",
@@ -164,8 +187,12 @@ const S = {
   },
   fillPreviewLabel: { fontSize: 12, color: "#a0a0a0", marginBottom: 8, marginTop: 4 },
 
-  // 버튼
-  btnRow: { display: "flex", gap: 10, marginTop: 4 },
+  // 버튼: 화면(편집 패널) 아래에 늘 붙어 있게 — 긴 빈칸 문항(1만 자)에서도 끝까지 내려가지 않고 저장
+  btnRow: {
+    display: "flex", gap: 10, marginTop: 4,
+    position: "sticky", bottom: 0, zIndex: 1,
+    background: "#0f0f0f", padding: "10px 0", borderTop: "1px solid #2e2e2e",
+  },
   cancelBtn: {
     flex: 1, padding: "10px 0", background: "#242424", color: "#a0a0a0",
     border: "1px solid #2e2e2e", borderRadius: 7, fontWeight: 700,
@@ -194,13 +221,14 @@ const S = {
   },
   imgDelBtn: {
     position: "absolute", top: 6, right: 6,
+    display: "inline-flex", alignItems: "center", minHeight: 36,
     background: "rgba(248,113,113,0.9)", color: "#fff",
-    border: "none", borderRadius: 4,
-    fontSize: 11, fontWeight: 700, padding: "3px 8px", cursor: "pointer",
+    border: "none", borderRadius: 6,
+    fontSize: 12, fontWeight: 700, padding: "0 12px", cursor: "pointer",
   },
   // 표 삽입 UI
   tableInsertBtn: {
-    display: "inline-flex", alignItems: "center", gap: 6,
+    display: "inline-flex", alignItems: "center", gap: 6, minHeight: 38,
     padding: "7px 14px", background: "#242424",
     border: "1px dashed #2e2e2e", borderRadius: 7,
     fontSize: 13, color: "#a0a0a0", cursor: "pointer",
@@ -213,17 +241,17 @@ const S = {
   },
   miniLabel: { fontSize: 12, color: "#a0a0a0" },
   numInput: {
-    width: 52, padding: "6px 8px", background: "#242424",
+    width: 52, minHeight: 36, padding: "6px 8px", background: "#242424",
     border: "1px solid #2e2e2e", borderRadius: 6,
     color: "#f1f1f1", fontSize: 13, textAlign: "center", outline: "none",
   },
   tableConfirmBtn: {
-    padding: "6px 16px", background: "#f59e0b", color: "#000000",
+    padding: "6px 16px", minHeight: 36, background: "#f59e0b", color: "#000000",
     border: "none", borderRadius: 6, fontWeight: 700, fontSize: 12, cursor: "pointer",
   },
   answerModeRow: { display: "flex", gap: 6, marginBottom: 14 },
   answerModeBtn: (active) => ({
-    padding: "6px 14px",
+    padding: "6px 14px", minHeight: 36,
     background: active ? "rgba(245,158,11,0.12)" : "transparent",
     border: `1px solid ${active ? "#f59e0b" : "#2e2e2e"}`,
     borderRadius: 6, fontSize: 12, fontWeight: 700,
@@ -231,14 +259,14 @@ const S = {
     transition: "all 0.15s ease",
   }),
 
-  // AI 모달
+  // AI 모달: 휴대폰에서도 화면 끝에서 16px 띄우고, 좁으면 안쪽 여백을 줄인다(clamp)
   overlay: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+    position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", padding: 16,
     display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
   },
   modal: {
-    background: "#1a1a1a", borderRadius: 12, padding: "32px 36px",
-    width: 380, border: "1px solid #2e2e2e",
+    background: "#1a1a1a", borderRadius: 12, padding: "clamp(22px, 6vw, 32px) clamp(18px, 6vw, 36px)",
+    width: "100%", maxWidth: 380, border: "1px solid #2e2e2e",
     boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
   },
   modalTitle: { fontWeight: 700, fontSize: 16, color: "#f1f1f1", marginBottom: 16 },
@@ -264,6 +292,13 @@ const S = {
 function focusGold(e) { e.target.style.borderColor = "#f59e0b"; }
 function blurGray(e) { e.target.style.borderColor = "#2e2e2e"; }
 
+// 한 줄 값 칸(textarea + S.oneLineArea): 예전 한 줄 input 처럼 값에 줄바꿈이 들어가지 않게.
+// Enter 는 막고(한글 조합 중 Enter 는 그대로 둠), 붙여 넣은 줄바꿈은 지운다(input 과 같은 동작)
+const oneLine = (v) => v.replace(/[\r\n]+/g, "");
+function blockEnter(e) {
+  if (e.key === "Enter" && !e.nativeEvent.isComposing) e.preventDefault();
+}
+
 export default function EditorView({ set, onBack, onPreview }) {
   const [questions, setQuestions] = useState([]);
   const [form, setForm] = useState(null);
@@ -285,13 +320,20 @@ export default function EditorView({ set, onBack, onPreview }) {
     try { setQuestions(await getQuestions(set.id)); } catch (e) { console.error(e); }
   }
 
+  // 휴대폰(목록·편집을 한 화면에 하나씩)에서 편집 폼을 맨 위부터 보이게. 넓은 화면은 페이지가 스크롤되지 않아 영향 없음
+  function scrollPageTop() {
+    window.scrollTo(0, 0);
+  }
+
   // 유형 버튼 클릭 → 빈 폼 표시 (API 호출 없음)
   function handleSelectType(type) {
     setForm(emptyForm(type, questions.length));
+    scrollPageTop();
   }
 
   // 기존 문항 클릭 → 편집 폼
   function handleSelectQuestion(q) {
+    scrollPageTop();
     setForm({
       id: q.id,
       type: normalizeType(q.type),
@@ -460,43 +502,46 @@ export default function EditorView({ set, onBack, onPreview }) {
 
   return (
     <div style={S.page}>
-      <nav style={S.nav}>
+      <nav style={S.nav} className="qm-ed-nav">
         <div style={S.navLeft}>
           <button
             style={S.backBtn}
             onClick={onBack}
-            onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-            onMouseOut={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
           >←</button>
-          <span style={S.navTitle}>{set.title}</span>
+          <span style={S.navTitle} className="qm-ed-title" title={set.title}>{set.title}</span>
         </div>
+        {/* 휴대폰에서는 단추 글씨를 줄임(.qm-wide-only 숨김): '✨ AI', '미리보기' */}
         <div style={S.navRight}>
           <button
             style={S.aiBtn}
+            className="qm-ed-nav-btn"
             onClick={() => setShowAI(true)}
-            onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-            onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
-          >✨ AI 생성</button>
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+          >✨ AI<span className="qm-wide-only"> 생성</span></button>
           <button
             style={S.previewBtn}
+            className="qm-ed-nav-btn"
             onClick={() => onPreview(set)}
-            onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-            onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
-          >출력 미리보기</button>
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+          ><span className="qm-wide-only">출력 </span>미리보기</button>
         </div>
       </nav>
 
-      <div style={S.layout}>
+      <div className="qm-ed-layout" data-editing={form ? "true" : "false"}>
         {/* ── 사이드바 ── */}
-        <div style={S.sidebar}>
+        <div style={S.sidebar} className="qm-ed-sidebar">
           <div style={S.addBtns}>
             {["multiple", "short", "ox", "fill"].map((type) => (
               <button
                 key={type}
                 style={S.typeBtn(TYPE_COLOR[type].text)}
                 onClick={() => handleSelectType(type)}
-                onMouseOver={(e) => { e.currentTarget.style.background = TYPE_COLOR[type].bg; }}
-                onMouseOut={(e) => { e.currentTarget.style.background = "transparent"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.background = TYPE_COLOR[type].bg; }}
+                onPointerLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
               >
                 {TYPE_LABEL[type]}
               </button>
@@ -512,15 +557,15 @@ export default function EditorView({ set, onBack, onPreview }) {
                 style={S.qItem(form?.id === q.id, normalizeType(q.type))}
                 onClick={() => handleSelectQuestion(q)}
               >
-                <div>
+                <div style={S.qBody}>
                   <div style={S.qNum}>{i + 1}번 · {TYPE_LABEL[normalizeType(q.type)]}</div>
-                  <div style={S.qText}>{q.text?.slice(0, 40) || "(내용 없음)"}</div>
+                  <div style={S.qText}>{plainPreview(q.text, 40) || "(내용 없음)"}</div>
                 </div>
                 <button
                   style={S.qDel}
                   onClick={(e) => handleDelete(e, q.id)}
-                  onMouseOver={(e) => { e.currentTarget.style.color = "#f87171"; }}
-                  onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
                 >✕</button>
               </div>
             ))
@@ -528,7 +573,7 @@ export default function EditorView({ set, onBack, onPreview }) {
         </div>
 
         {/* ── 편집 패널 ── */}
-        <div style={S.editor}>
+        <div style={S.editor} className="qm-ed-editor">
           {!form ? (
             <div style={S.idle}>
               위에서 유형을 선택해 새 문항을 작성하거나,<br />
@@ -536,6 +581,9 @@ export default function EditorView({ set, onBack, onPreview }) {
             </div>
           ) : (
             <>
+              <button className="qm-ed-back" style={S.edBackBtn} onClick={() => setForm(null)}>
+                ← 문항 목록
+              </button>
               <div style={S.typeBadge(form.type)}>{TYPE_LABEL[form.type]}</div>
               <div style={S.modeLabel}>{isEdit ? "문항 편집" : "새 문항 작성"}</div>
 
@@ -561,7 +609,10 @@ export default function EditorView({ set, onBack, onPreview }) {
                     : "문제를 입력하세요"
                 }
               />
-              <div style={{ fontSize: 11, color: "#3a3a3a", textAlign: "right", marginTop: -12, marginBottom: 12 }}>
+              <div
+                className="qm-fine-only"
+                style={{ fontSize: 11, color: "#3a3a3a", textAlign: "right", marginTop: -12, marginBottom: 12 }}
+              >
                 ↕ 우하단 모서리를 드래그하여 크기 조절
               </div>
 
@@ -570,8 +621,8 @@ export default function EditorView({ set, onBack, onPreview }) {
                 type="button"
                 style={S.tableInsertBtn}
                 onClick={() => setShowTableInsert((v) => !v)}
-                onMouseOver={(e) => { e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
-                onMouseOut={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
+                onPointerEnter={(e) => { if (e.pointerType !== "mouse") return; e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
               >
                 🔲 표 삽입
               </button>
@@ -627,8 +678,8 @@ export default function EditorView({ set, onBack, onPreview }) {
                 ) : (
                   <label
                     style={S.imgUploadLabel}
-                    onMouseOver={(e) => { e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
-                    onMouseOut={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
+                    onPointerEnter={(e) => { if (e.pointerType !== "mouse") return; e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
+                    onPointerLeave={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
                   >
                     {uploadingQ ? "⏳ 업로드 중..." : "📷 이미지 업로드"}
                     <input
@@ -667,8 +718,8 @@ export default function EditorView({ set, onBack, onPreview }) {
                   ) : (
                     <label
                       style={S.imgUploadLabel}
-                      onMouseOver={(e) => { e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
-                      onMouseOut={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
+                      onPointerEnter={(e) => { if (e.pointerType !== "mouse") return; e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
                     >
                       {uploadingA ? "⏳ 업로드 중..." : "📷 답안 이미지 업로드"}
                       <input
@@ -687,18 +738,22 @@ export default function EditorView({ set, onBack, onPreview }) {
                   <label style={S.fieldLabel}>보기 (정답 라디오 선택)</label>
                   {opts.map((opt, i) => (
                     <div key={i} style={S.optionRow}>
-                      <input
-                        type="radio"
-                        name="answerIndex"
-                        checked={form.answerIndex === i}
-                        onChange={() => setForm((f) => ({ ...f, answerIndex: i }))}
-                        style={{ accentColor: "#60a5fa", cursor: "pointer" }}
-                      />
-                      <span style={S.optionNum}>{"①②③④"[i]}</span>
-                      <input
-                        style={S.optionInput(form.answerIndex === i)}
+                      <label style={S.optionPick}>
+                        <input
+                          type="radio"
+                          name="answerIndex"
+                          checked={form.answerIndex === i}
+                          onChange={() => setForm((f) => ({ ...f, answerIndex: i }))}
+                          style={S.optionRadio}
+                        />
+                        <span style={S.optionNum}>{"①②③④"[i]}</span>
+                      </label>
+                      <textarea
+                        rows={1}
+                        style={{ ...S.optionInput(form.answerIndex === i), ...S.oneLineArea }}
                         value={opt}
-                        onChange={(e) => setOpt(i, e.target.value)}
+                        onChange={(e) => setOpt(i, oneLine(e.target.value))}
+                        onKeyDown={blockEnter}
                         placeholder={`보기 ${i + 1}`}
                         onFocus={(e) => { e.target.style.borderColor = "#60a5fa"; }}
                         onBlur={(e) => {
@@ -714,10 +769,12 @@ export default function EditorView({ set, onBack, onPreview }) {
               {form.type === "short" && form.answerMode !== "image" && (
                 <>
                   <label style={S.fieldLabel}>모범 답안</label>
-                  <input
-                    style={S.input}
+                  <textarea
+                    rows={1}
+                    style={{ ...S.input, ...S.oneLineArea }}
                     value={form.answer}
-                    onChange={(e) => setForm((f) => ({ ...f, answer: e.target.value }))}
+                    onChange={(e) => setForm((f) => ({ ...f, answer: oneLine(e.target.value) }))}
+                    onKeyDown={blockEnter}
                     onFocus={focusGold}
                     onBlur={blurGray}
                     placeholder="모범 답안을 입력하세요"
@@ -758,14 +815,16 @@ export default function EditorView({ set, onBack, onPreview }) {
                       {(form.answers || []).map((ans, i) => (
                         <div key={i} style={S.fillAnswerRow}>
                           <span style={S.fillAnswerLabel}>빈칸{i + 1}</span>
-                          <input
-                            style={{ ...S.input, marginBottom: 0, flex: 1 }}
+                          <textarea
+                            rows={1}
+                            style={{ ...S.input, ...S.oneLineArea, marginBottom: 0, flex: 1, minWidth: 0 }}
                             value={ans}
                             onChange={(e) => {
                               const next = [...(form.answers || [])];
-                              next[i] = e.target.value;
+                              next[i] = oneLine(e.target.value);
                               setForm((f) => ({ ...f, answers: next }));
                             }}
+                            onKeyDown={blockEnter}
                             onFocus={focusGold}
                             onBlur={blurGray}
                             placeholder={`빈칸 ${i + 1}의 정답`}
@@ -799,10 +858,12 @@ export default function EditorView({ set, onBack, onPreview }) {
 
               {/* ── 해설 (공통) ── */}
               <label style={S.fieldLabel}>해설 (선택)</label>
-              <input
-                style={{ ...S.input, marginBottom: 20 }}
+              <textarea
+                rows={1}
+                style={{ ...S.input, ...S.oneLineArea, marginBottom: 20 }}
                 value={form.explanation}
-                onChange={(e) => setForm((f) => ({ ...f, explanation: e.target.value }))}
+                onChange={(e) => setForm((f) => ({ ...f, explanation: oneLine(e.target.value) }))}
+                onKeyDown={blockEnter}
                 onFocus={focusGold}
                 onBlur={blurGray}
                 placeholder="해설을 입력하세요 (선택)"
@@ -813,15 +874,15 @@ export default function EditorView({ set, onBack, onPreview }) {
                 <button
                   style={S.cancelBtn}
                   onClick={() => setForm(null)}
-                  onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                  onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                 >취소</button>
                 <button
                   style={S.saveBtn}
                   onClick={handleSave}
                   disabled={saving}
-                  onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                  onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                 >{saving ? "저장 중..." : "저장"}</button>
               </div>
             </>
@@ -859,15 +920,15 @@ export default function EditorView({ set, onBack, onPreview }) {
               <button
                 style={S.modalCancelBtn}
                 onClick={() => setShowAI(false)}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >취소</button>
               <button
                 style={S.confirmBtn}
                 onClick={handleAIGenerate}
                 disabled={aiLoading}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >{aiLoading ? "생성 중..." : "생성"}</button>
             </div>
           </div>

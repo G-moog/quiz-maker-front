@@ -4,6 +4,7 @@ import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
 
 const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
+const NBSP = String.fromCharCode(0xa0); // 줄이 바뀌지 않는 공백
 
 // 백엔드 타입명(short_answer, multiple_choice 등)을 프론트엔드 내부명으로 정규화
 function normalizeType(type) {
@@ -27,21 +28,25 @@ const S = {
     padding: "0 24px", height: 52,
   },
   toolbarLeft: { display: "flex", alignItems: "center", gap: 12 },
-  backBtn: { background: "none", border: "none", color: "#a0a0a0", fontSize: 20, cursor: "pointer", transition: "color 0.15s ease" },
+  // 여백 10 + 음수 여백 -10: 보이는 자리는 그대로, 누르는 자리만 넓게
+  backBtn: {
+    background: "none", border: "none", color: "#a0a0a0", padding: 10, margin: -10,
+    fontSize: 20, cursor: "pointer", transition: "color 0.15s ease",
+  },
   toolbarTitle: { fontWeight: 700, fontSize: 16, color: "#f1f1f1" },
   printBtn: {
     background: "#f59e0b", color: "#000000", border: "none",
-    padding: "7px 22px", borderRadius: 6, fontWeight: 700, cursor: "pointer", fontSize: 13,
+    padding: "7px 22px", minHeight: 36, borderRadius: 6, fontWeight: 700, cursor: "pointer", fontSize: 13,
     transition: "opacity 0.15s ease",
   },
+  // 바깥 여백·안쪽 여백·테두리는 index.css 의 .qm-sheet (휴대폰에서는 화면 폭에 맞춰 줄임)
   sheet: {
-    maxWidth: 800, margin: "32px auto 60px", background: "#1a1a1a",
-    borderRadius: 10, border: "1px solid #2e2e2e",
-    boxShadow: "0 4px 24px rgba(0,0,0,0.3)", padding: "48px 56px",
+    maxWidth: 800, background: "#1a1a1a",
+    boxShadow: "0 4px 24px rgba(0,0,0,0.3)",
   },
   docTitle: {
-    textAlign: "center", fontSize: 22, fontWeight: 800,
-    color: "#f59e0b", marginBottom: 6, letterSpacing: 1,
+    textAlign: "center", fontWeight: 800,
+    color: "#f59e0b", marginBottom: 6,
   },
   docSub: { textAlign: "center", fontSize: 14, color: "#a0a0a0", marginBottom: 36 },
   divider: { border: "none", borderTop: "1px solid #2e2e2e", marginBottom: 32 },
@@ -62,9 +67,9 @@ const S = {
     borderTop: "2px dashed #2e2e2e",
   },
   answerTitle: { fontWeight: 800, fontSize: 16, color: "#f1f1f1", marginBottom: 16 },
-  answerItem: { fontSize: 14, color: "#a0a0a0", marginBottom: 8, lineHeight: 1.6 },
+  answerItem: { fontSize: 14, color: "#a0a0a0", marginBottom: 8, lineHeight: 1.6, overflowWrap: "anywhere" },
   answerNum: { fontWeight: 700, color: "#34d399" },
-  explanation: { color: "#555555", marginLeft: 20, fontSize: 13 },
+  explanation: { color: "#8a8a8a", marginLeft: 20, fontSize: 13, overflowWrap: "anywhere" },
 };
 
 const printStyle = `
@@ -83,6 +88,7 @@ const printStyle = `
   .print-sheet * { color: #111 !important; border-color: #ccc !important; }
   .print-doc-title { color: #1e2d5a !important; }
   .print-answer-num { color: #1e2d5a !important; }
+  .qm-table tr { break-inside: avoid; }
 }
 `;
 
@@ -110,8 +116,8 @@ export default function PreviewView({ set, onBack }) {
           <button
             style={S.backBtn}
             onClick={onBack}
-            onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-            onMouseOut={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
           >
             ←
           </button>
@@ -120,15 +126,15 @@ export default function PreviewView({ set, onBack }) {
         <button
           style={S.printBtn}
           onClick={() => window.print()}
-          onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-          onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
         >
           🖨 인쇄
         </button>
       </div>
 
-      <div className="print-sheet" style={S.sheet}>
-        <div className="print-doc-title" style={S.docTitle}>{set.title}</div>
+      <div className="print-sheet qm-sheet" style={S.sheet}>
+        <div className="print-doc-title qm-doc-title" style={S.docTitle}>{set.title}</div>
         {set.subject && <div style={S.docSub}>{set.subject}</div>}
         <hr style={S.divider} />
 
@@ -184,10 +190,11 @@ export default function PreviewView({ set, onBack }) {
                 const options = parseOptions(q.options);
                 ans = `${CIRCLE[q.answerIndex] ?? ""} ${options[q.answerIndex] ?? ""}`;
               } else if (type === "fill") {
-                // 빈칸이 여러 개면 순서 번호를 붙여 표시
+                // 빈칸이 여러 개면 순서 번호를 붙여 표시. 번호와 답 사이는 줄이 바뀌지 않는 공백(NBSP)
+                // — '(31)' 끝에서 줄이 바뀌어 '0.44' 가 다음 줄로 떨어지지 않게
                 const answers = parseAnswers(q.answers);
                 ans = answers.length > 1
-                  ? answers.map((a, ai) => `(${ai + 1}) ${a}`).join(", ")
+                  ? answers.map((a, ai) => `(${ai + 1})${NBSP}${a}`).join(", ")
                   : (answers[0] ?? "");
               } else {
                 ans = q.answer || "";

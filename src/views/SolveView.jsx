@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
 import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
+import { plainPreview } from "../utils/textBlocks";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
@@ -50,28 +51,37 @@ function scoreColor(rate) {
   return "#f87171";
 }
 
+// 화면 폭에 따라 바뀌는 여백·글자 크기(.qm-solve-*, .qm-result-*, .qm-mode-page)는 index.css 참고.
+// 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType) — 휴대폰에서 누른 뒤 흐린 채 남지 않게.
 const S = {
   page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
+  // 머리줄: ← 목록으로 | 제목(가운데, 최대 두 줄) | 진행. 세 덩어리가 맞닿거나 쪼개지지 않게
   nav: {
     background: "#1a1a1a", borderBottom: "1px solid #2e2e2e",
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "0 24px", height: 52, position: "sticky", top: 0, zIndex: 10,
+    display: "flex", alignItems: "center", gap: 8,
+    minHeight: 52, position: "sticky", top: 0, zIndex: 10,
   },
-  navLeft: { display: "flex", alignItems: "center", gap: 10 },
+  navLeft: { display: "flex", alignItems: "center", flexShrink: 0 },
   backBtn: {
     background: "none", border: "none", color: "#a0a0a0",
     fontSize: 14, fontWeight: 600, cursor: "pointer",
     display: "flex", alignItems: "center", gap: 6,
+    minHeight: 44, whiteSpace: "nowrap",
     transition: "color 0.15s ease",
   },
-  navTitle: { fontWeight: 700, fontSize: 15, color: "#f1f1f1" },
-  navProgress: { fontSize: 13, color: "#a0a0a0", fontWeight: 600 },
+  navTitle: {
+    flex: "1 1 0", minWidth: 0, textAlign: "center",
+    fontWeight: 700, color: "#f1f1f1", lineHeight: 1.3,
+    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+    overflowWrap: "anywhere",
+  },
+  navProgress: { fontSize: 13, color: "#a0a0a0", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 },
   progressBar: { height: 3, background: "#2e2e2e" },
   progressFill: (pct) => ({
     height: "100%", background: "#f59e0b",
     width: `${pct}%`, transition: "width 0.3s ease",
   }),
-  body: { maxWidth: 680, margin: "0 auto", padding: "32px 20px 60px" },
+  body: { maxWidth: 680, margin: "0 auto" },
   card: {
     background: "#1a1a1a", borderRadius: 12,
     border: "1px solid #2e2e2e",
@@ -86,8 +96,15 @@ const S = {
     fontWeight: 700, fontSize: 14,
     display: "flex", alignItems: "center", gap: 8,
   }),
-  cardBody: { padding: "24px" },
   qMeta: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16 },
+  // 빈칸 문항: 본문 위에서도 모두 보기/가리기 (긴 페이지 끝까지 내려가지 않아도 되게)
+  revealToggleBtn: {
+    marginLeft: "auto", padding: "6px 12px", minHeight: 36,
+    background: "transparent", color: "#f59e0b",
+    border: "1px solid #f59e0b", borderRadius: 7,
+    fontWeight: 700, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
+    transition: "opacity 0.15s ease",
+  },
   qNum: { fontWeight: 800, fontSize: 15, color: "#f59e0b" },
   typeBadge: (type) => ({
     display: "inline-block", fontSize: 11, fontWeight: 700,
@@ -121,13 +138,13 @@ const S = {
   // 주관식
   shortRow: { display: "flex", gap: 10, marginBottom: 8 },
   shortInput: {
-    flex: 1, padding: "10px 14px",
+    flex: 1, minWidth: 0, padding: "10px 14px",
     background: "#242424", border: "1px solid #2e2e2e",
     borderRadius: 8, fontSize: 14, color: "#f1f1f1", outline: "none",
     transition: "border-color 0.15s ease",
   },
   submitBtn: {
-    padding: "10px 20px",
+    padding: "10px 20px", flexShrink: 0, whiteSpace: "nowrap",
     background: "#f59e0b", color: "#000000",
     border: "none", borderRadius: 8,
     fontWeight: 700, fontSize: 14, cursor: "pointer",
@@ -172,16 +189,16 @@ const S = {
     background: "rgba(245,158,11,0.08)",
     border: "1px solid #f59e0b",
     borderRadius: 8, padding: "12px 16px",
-    color: "#a0a0a0", fontSize: 14, lineHeight: 1.6,
+    color: "#a0a0a0", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap",
   },
   // 로딩/빈 문항
   center: { textAlign: "center", padding: "80px 20px", color: "#555555", fontSize: 15 },
 
   // ── 결과 화면 ──
-  resultPage: { maxWidth: 680, margin: "0 auto", padding: "48px 20px 60px" },
+  resultPage: { maxWidth: 680, margin: "0 auto" },
   resultCard: {
     background: "#1a1a1a", border: "1px solid #2e2e2e",
-    borderRadius: 16, padding: "40px 36px",
+    borderRadius: 16,
     boxShadow: "0 4px 24px rgba(0,0,0,0.3)",
   },
   resultTop: { textAlign: "center", marginBottom: 32 },
@@ -194,6 +211,10 @@ const S = {
   scoreRate: (rate) => ({
     fontSize: 18, fontWeight: 700, color: scoreColor(rate), marginBottom: 32,
   }),
+  // 채점할 문항이 없을 때(페이지 빈칸 문제집 등): 빨간 '0 / 0' 대신
+  studyDone: { fontSize: 28, fontWeight: 800, color: "#f59e0b", lineHeight: 1.2, marginBottom: 8 },
+  studySub: { fontSize: 14, fontWeight: 600, color: "#a0a0a0", marginBottom: 24 },
+  noGradeNote: { fontSize: 12, color: "#8a8a8a", marginTop: 4 },
   resultList: { marginBottom: 32 },
   resultListTitle: { fontSize: 14, fontWeight: 600, color: "#a0a0a0", marginBottom: 12 },
   resultItem: { display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 },
@@ -221,10 +242,10 @@ const S = {
     transition: "opacity 0.15s ease",
   },
   // ── 모드 선택 화면 ──
-  modeSelectPage: { maxWidth: 480, margin: "0 auto", padding: "60px 20px" },
+  modeSelectPage: { maxWidth: 480, margin: "0 auto" },
   modeSelectTitle: { fontSize: 13, color: "#a0a0a0", fontWeight: 600, marginBottom: 6 },
-  modeSelectSetName: { fontSize: 22, fontWeight: 800, color: "#f1f1f1", marginBottom: 8 },
-  modeSelectCount: { fontSize: 13, color: "#555", marginBottom: 40 },
+  modeSelectSetName: { fontSize: 22, fontWeight: 800, color: "#f1f1f1", marginBottom: 8, overflowWrap: "anywhere" },
+  modeSelectCount: { fontSize: 13, color: "#8a8a8a", marginBottom: 40 },
   modeCards: { display: "flex", gap: 14 },
   modeCard: (active) => ({
     flex: 1, padding: "24px 20px", borderRadius: 12, cursor: "pointer",
@@ -235,7 +256,7 @@ const S = {
   }),
   modeCardIcon: { fontSize: 32, marginBottom: 12 },
   modeCardTitle: { fontSize: 15, fontWeight: 800, color: "#f1f1f1", marginBottom: 6 },
-  modeCardDesc: { fontSize: 12, color: "#666", lineHeight: 1.5 },
+  modeCardDesc: { fontSize: 12, color: "#8a8a8a", lineHeight: 1.5, whiteSpace: "pre-line" },
   modeStartBtn: {
     width: "100%", marginTop: 28, padding: "14px 0",
     background: "#f59e0b", color: "#000",
@@ -258,25 +279,28 @@ const S = {
     color: open ? "#f59e0b" : "#a0a0a0", cursor: "pointer",
     transition: "all 0.15s ease",
   }),
+  // 열고 닫기: 줄 높이 0fr ↔ 1fr 로 펼쳐 세로로 긴 이미지(휴대폰 화면 사진)도 끝까지 보이게
+  // (예전 max-height 600 은 그보다 긴 이미지 아래를 잘랐다)
   answerImgBox: (open) => ({
-    overflow: "hidden",
-    maxHeight: open ? 600 : 0,
-    transition: "max-height 0.35s ease",
+    display: "grid",
+    gridTemplateRows: open ? "1fr" : "0fr",
+    transition: "grid-template-rows 0.35s ease",
   }),
+  answerImgInner: { overflow: "hidden", minHeight: 0 },
   answerImg: {
     display: "block", maxWidth: "100%", borderRadius: 8,
     border: "1px solid #2e2e2e", marginBottom: 8,
   },
   // FILL 학습 모드 버튼
   revealAllBtn: {
-    padding: "8px 20px",
+    padding: "10px 16px", minHeight: 40,
     background: "#f59e0b", color: "#000000",
     border: "none", borderRadius: 7,
     fontWeight: 700, fontSize: 13, cursor: "pointer",
     transition: "opacity 0.15s ease",
   },
   hideAllBtn: {
-    padding: "8px 20px",
+    padding: "10px 16px", minHeight: 40,
     background: "#242424", color: "#a0a0a0",
     border: "1px solid #2e2e2e", borderRadius: 7,
     fontWeight: 700, fontSize: 13, cursor: "pointer",
@@ -314,9 +338,11 @@ export default function SolveView({ set, onBack }) {
   const current = questions[currentIndex];
   const answered = results[currentIndex] !== undefined;
   const result = results[currentIndex];
-  const answeredCount = Object.keys(results).length;
+  // 진행 표시: 머리줄 숫자는 지금 보는 문항 번호, 막대는 끝낸 문항 수(지나온 문항 + 지금 문항을 채점했으면 1).
+  // 빈칸·답안 이미지 문항은 채점 기록이 없어 예전 '채점한 수' 기준으로는 '0 / 1'·0% 에 멈춰 있었다
+  const doneCount = currentIndex + (answered ? 1 : 0);
   const progressPct = questions.length > 0
-    ? Math.round((answeredCount / questions.length) * 100)
+    ? Math.round((doneCount / questions.length) * 100)
     : 0;
 
   function recordAnswer(correct, userAnswer) {
@@ -391,21 +417,21 @@ export default function SolveView({ set, onBack }) {
   if (!loadingQ && questions.length > 0 && mode === null) {
     return (
       <div style={S.page}>
-        <nav style={S.nav}>
+        <nav style={S.nav} className="qm-solve-nav">
           <div style={S.navLeft}>
             <button
               style={S.backBtn}
               onClick={onBack}
-              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-              onMouseOut={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
             >← 목록으로</button>
           </div>
-          <span style={S.navTitle}>{set.title}</span>
-          <div style={{ width: 80 }} />
+          <span style={S.navTitle} className="qm-solve-title">{set.title}</span>
+          <div className="qm-solve-spacer" />
         </nav>
         <div style={S.progressBar}><div style={S.progressFill(0)} /></div>
 
-        <div style={S.modeSelectPage}>
+        <div style={S.modeSelectPage} className="qm-mode-page">
           <div style={S.modeSelectTitle}>문제 풀기</div>
           <div style={S.modeSelectSetName}>{set.title}</div>
           <div style={S.modeSelectCount}>총 {questions.length}문항</div>
@@ -419,8 +445,8 @@ export default function SolveView({ set, onBack }) {
                 key={key}
                 style={S.modeCard(modeChoice === key)}
                 onClick={() => setModeChoice(key)}
-                onMouseOver={(e) => { if (modeChoice !== key) e.currentTarget.style.borderColor = "#555"; }}
-                onMouseOut={(e) => { if (modeChoice !== key) e.currentTarget.style.borderColor = "#2e2e2e"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse" && modeChoice !== key) e.currentTarget.style.borderColor = "#555"; }}
+                onPointerLeave={(e) => { if (modeChoice !== key) e.currentTarget.style.borderColor = "#2e2e2e"; }}
               >
                 <div style={S.modeCardIcon}>{icon}</div>
                 <div style={S.modeCardTitle}>{title}</div>
@@ -432,8 +458,8 @@ export default function SolveView({ set, onBack }) {
           <button
             style={S.modeStartBtn}
             onClick={() => startQuiz(modeChoice)}
-            onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-            onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           >
             {modeChoice === "random" ? "🔀 랜덤으로 시작" : "📋 순번대로 시작"}
           </button>
@@ -452,36 +478,51 @@ export default function SolveView({ set, onBack }) {
       ([i, r]) => !isNoGrade(questions[parseInt(i)]) && r.correct
     ).length;
     const rate = total > 0 ? Math.round((gradableCorrect / total) * 100) : 0;
+    const blankTotal = questions
+      .filter((q) => normalizeType(q.type) === "fill")
+      .reduce((n, q) => n + ((q.text || "").match(/___/g) || []).length, 0);
     return (
       <div style={S.page}>
-        <nav style={S.nav}>
+        <nav style={S.nav} className="qm-solve-nav">
           <div style={S.navLeft}>
             <button
               style={S.backBtn}
               onClick={onBack}
-              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-              onMouseOut={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
             >
               ← 목록으로
             </button>
           </div>
-          <span style={S.navTitle}>{set.title}</span>
-          <div style={{ width: 80 }} />
+          <span style={S.navTitle} className="qm-solve-title">{set.title}</span>
+          <div className="qm-solve-spacer" />
         </nav>
         <div style={S.progressBar}>
           <div style={S.progressFill(100)} />
         </div>
 
-        <div style={S.resultPage}>
-          <div style={S.resultCard}>
+        <div style={S.resultPage} className="qm-result-page">
+          <div style={S.resultCard} className="qm-result-card">
             <div style={S.resultTop}>
               <div style={S.resultEmoji}>🎉</div>
               <div style={S.resultHeading}>풀이 완료!</div>
-              <div style={S.scoreNum(rate)}>{gradableCorrect} / {total}</div>
-              <div style={S.scoreRate(rate)}>정답률 {rate}%</div>
-              {total < questions.length && (
-                <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>
-                  (빈칸 채우기 {questions.length - total}문항은 채점 제외)
+              {total > 0 ? (
+                <>
+                  <div style={S.scoreNum(rate)}>{gradableCorrect} / {total}</div>
+                  <div style={S.scoreRate(rate)}>정답률 {rate}%</div>
+                </>
+              ) : (
+                // 채점할 문항이 없으면(빈칸·답안 이미지 문항만) 점수 대신 학습 완료로 — 빨간 '0 / 0' 은 다 틀린 것처럼 보였다
+                <>
+                  <div style={S.studyDone}>학습 완료</div>
+                  <div style={S.studySub}>
+                    {blankTotal > 0 ? `빈칸 ${blankTotal}개 · ` : ""}학습 문항 {questions.length}개
+                  </div>
+                </>
+              )}
+              {total > 0 && total < questions.length && (
+                <div style={S.noGradeNote}>
+                  (채점 없는 학습 문항 {questions.length - total}개 제외)
                 </div>
               )}
             </div>
@@ -502,8 +543,7 @@ export default function SolveView({ set, onBack }) {
                       </div>
                       <div style={S.resultItemText}>
                         <strong style={{ color: "#f59e0b" }}>{i + 1}번</strong>
-                        {" "}— {q.text?.slice(0, 50) || "(내용 없음)"}
-                        {q.text?.length > 50 ? "…" : ""}
+                        {" "}— {plainPreview(q.text, 50) || "(내용 없음)"}
                       </div>
                     </div>
                   );
@@ -519,8 +559,7 @@ export default function SolveView({ set, onBack }) {
                       <strong style={{ color: correct ? "#34d399" : "#f87171" }}>
                         {i + 1}번
                       </strong>
-                      {" "}— {q.text?.slice(0, 50) || "(내용 없음)"}
-                      {q.text?.length > 50 ? "…" : ""}
+                      {" "}— {plainPreview(q.text, 50) || "(내용 없음)"}
                     </div>
                   </div>
                 );
@@ -531,16 +570,16 @@ export default function SolveView({ set, onBack }) {
               <button
                 style={S.retryBtn}
                 onClick={handleRetry}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >
                 다시 풀기
               </button>
               <button
                 style={S.backToDashBtn}
                 onClick={onBack}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >
                 목록으로
               </button>
@@ -586,20 +625,20 @@ export default function SolveView({ set, onBack }) {
 
   return (
     <div style={S.page}>
-      <nav style={S.nav}>
+      <nav style={S.nav} className="qm-solve-nav">
         <div style={S.navLeft}>
           <button
             style={S.backBtn}
             onClick={onBack}
-            onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-            onMouseOut={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
           >
             ← 목록으로
           </button>
         </div>
-        <span style={S.navTitle}>{set.title}</span>
+        <span style={S.navTitle} className="qm-solve-title">{set.title}</span>
         <span style={S.navProgress}>
-          {answeredCount} / {questions.length}
+          {questions.length > 0 ? currentIndex + 1 : 0} / {questions.length}
         </span>
       </nav>
 
@@ -607,7 +646,7 @@ export default function SolveView({ set, onBack }) {
         <div style={S.progressFill(progressPct)} />
       </div>
 
-      <div style={S.body}>
+      <div style={S.body} className="qm-solve-body">
         {loadingQ ? (
           <div style={S.center}>불러오는 중...</div>
         ) : questions.length === 0 ? (
@@ -621,11 +660,21 @@ export default function SolveView({ set, onBack }) {
               </div>
             )}
 
-            <div style={S.cardBody}>
-              {/* 문항 번호 + 유형 */}
+            <div className="qm-solve-card-body">
+              {/* 문항 번호 + 유형 (+ 빈칸 문항은 모두 보기/가리기 — 긴 본문 끝까지 내려가지 않아도 되게) */}
               <div style={S.qMeta}>
                 <span style={S.qNum}>Q{currentIndex + 1}</span>
                 <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype]}</span>
+                {!current.answerImageUrl && qtype === "fill" && fillBlankCount > 0 && (
+                  <button
+                    style={S.revealToggleBtn}
+                    onClick={() => setFillRevealed(Array(fillBlankCount).fill(!fillRev.every(Boolean)))}
+                    onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                    onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                  >
+                    {fillRev.every(Boolean) ? "모두 가리기" : "모두 보기"}
+                  </button>
+                )}
               </div>
 
               {/* 문제 텍스트 (빈칸 채우기는 아래 토글 UI에서 렌더링) */}
@@ -648,7 +697,9 @@ export default function SolveView({ set, onBack }) {
                     {showAnswerImage ? "▲ 답안 닫기" : "▼ 답안 보기"}
                   </button>
                   <div style={S.answerImgBox(showAnswerImage)}>
-                    <img src={current.answerImageUrl} style={S.answerImg} alt="답안 이미지" />
+                    <div style={S.answerImgInner}>
+                      <img src={current.answerImageUrl} style={S.answerImg} alt="답안 이미지" />
+                    </div>
                   </div>
                 </div>
               )}
@@ -661,10 +712,10 @@ export default function SolveView({ set, onBack }) {
                       key={i}
                       style={S.optionBtn(answered ? getOptionState(i) : "default")}
                       onClick={() => handleMultiple(i)}
-                      onMouseOver={(e) => {
-                        if (!answered) e.currentTarget.style.borderColor = "#f59e0b";
+                      onPointerEnter={(e) => {
+                        if (e.pointerType === "mouse" && !answered) e.currentTarget.style.borderColor = "#f59e0b";
                       }}
-                      onMouseOut={(e) => {
+                      onPointerLeave={(e) => {
                         if (!answered) e.currentTarget.style.borderColor = "#2e2e2e";
                       }}
                     >
@@ -693,8 +744,8 @@ export default function SolveView({ set, onBack }) {
                       <button
                         style={S.submitBtn}
                         onClick={handleShort}
-                        onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                        onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                        onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                       >
                         제출
                       </button>
@@ -734,12 +785,14 @@ export default function SolveView({ set, onBack }) {
               {!current.answerImageUrl && qtype === "fill" && (
                 <div>
                   {/* 문제 텍스트 + 빈칸 토글 버튼 (표 문법 포함 가능)
-                      가린 빈칸에는 번호(i + 1)를 표시 — 글·표 칸을 통틀어 읽는 순서대로 answers[i] 와 같은 번호 */}
-                  <div style={{ fontSize: 15, lineHeight: 2.8, color: "#f1f1f1", wordBreak: "keep-all" }}>
+                      가린 빈칸에는 번호(i + 1)를 표시 — 글·표 칸을 통틀어 읽는 순서대로 answers[i] 와 같은 번호.
+                      줄 간격 2.1: 번호 단추(높이 약 28px)가 줄(31.5px) 안에 들어가 줄이 들쭉날쭉하지 않는 가장 촘촘한 값 */}
+                  <div style={{ fontSize: 15, lineHeight: 2.1, color: "#f1f1f1", wordBreak: "keep-all" }}>
                     <TableAwareText
                       text={current.text}
                       renderBlank={(i, { inTable }) => (
                         <button
+                          className="qm-blank"
                           style={fillBlankBtnStyle(fillRev[i], inTable)}
                           onClick={() => toggleFill(i)}
                           title={fillRev[i] ? "클릭하여 가리기" : `클릭하여 ${i + 1}번 빈칸 정답 확인`}
@@ -754,16 +807,16 @@ export default function SolveView({ set, onBack }) {
                     <button
                       style={S.revealAllBtn}
                       onClick={() => setFillRevealed(Array(fillBlankCount).fill(true))}
-                      onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                      onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                     >
                       모두 보기
                     </button>
                     <button
                       style={S.hideAllBtn}
                       onClick={() => setFillRevealed(Array(fillBlankCount).fill(false))}
-                      onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                      onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                     >
                       모두 가리기
                     </button>
@@ -779,8 +832,8 @@ export default function SolveView({ set, onBack }) {
                       <button
                         style={S.hintBtn}
                         onClick={() => setShowExplanation((v) => !v)}
-                        onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                        onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                        onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                       >
                         💡 해설 {showExplanation ? "닫기" : "보기"}
                       </button>
@@ -788,8 +841,8 @@ export default function SolveView({ set, onBack }) {
                     <button
                       style={S.nextBtn}
                       onClick={handleNext}
-                      onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                      onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                     >
                       {isLast ? "결과 보기" : "다음 문제 →"}
                     </button>

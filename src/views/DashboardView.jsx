@@ -2,16 +2,24 @@ import { useState, useEffect, useRef } from "react";
 import { getSets, createSet, updateSet, deleteSet } from "../api/quiz";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
 
+// 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType). 휴대폰에서 누른 뒤
+// 흐리거나 떠오른 모양이 그대로 남지 않게.
+const ICON_GRAY = "#6b6b6b";
+
 const S = {
   page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
+  // 머리: 여백·줄 배치(넓은 화면 한 줄, 휴대폰 두 줄)는 index.css 의 .qm-nav 참고. 높이는 고정하지 않음(줄이 늘면 같이 늘어남)
   nav: {
     background: "#1a1a1a", borderBottom: "1px solid #2e2e2e",
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "0 24px", height: 56,
+    display: "flex", alignItems: "center", minHeight: 56,
   },
-  navTitle: { fontWeight: 700, fontSize: 18, letterSpacing: 1, color: "#f59e0b" },
-  navRight: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  username: { fontSize: 14, color: "#a0a0a0" },
+  navTitle: { fontWeight: 700, color: "#f59e0b", whiteSpace: "nowrap", flexShrink: 0 },
+  navGroup: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 },
+  // 이름 + 역할 배지의 배치는 index.css 의 .qm-nav-who (휴대폰에서는 위아래 두 줄로 쌓아 이름 자리를 넓힘)
+  username: {
+    fontSize: 14, color: "#a0a0a0", maxWidth: "100%",
+    minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+  },
   roleBadge: (role) => {
     const map = {
       ADMIN:   { bg: "rgba(248,113,113,0.15)", color: "#f87171" },
@@ -19,24 +27,26 @@ const S = {
       USER:    { bg: "rgba(96,165,250,0.15)",  color: "#60a5fa" },
     };
     const { bg, color } = map[role] ?? map.USER;
-    return { display: "inline-block", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: bg, color };
+    return {
+      display: "inline-block", fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+      background: bg, color, whiteSpace: "nowrap", flexShrink: 0,
+    };
   },
   navIconBtn: {
     background: "#242424", border: "1px solid #2e2e2e", color: "#a0a0a0",
-    padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 13,
+    padding: "6px 14px", minHeight: 36, borderRadius: 6, cursor: "pointer", fontSize: 13,
     fontWeight: 600, transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
   navUploadBtn: {
     background: "#f59e0b", border: "none", color: "#000000",
-    padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 13,
+    padding: "6px 14px", minHeight: 36, borderRadius: 6, cursor: "pointer", fontSize: 13,
     fontWeight: 700, transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
   logoutBtn: {
     background: "#242424", border: "1px solid #2e2e2e", color: "#a0a0a0",
-    padding: "6px 16px", borderRadius: 6, cursor: "pointer", fontSize: 13,
-    transition: "opacity 0.15s ease",
+    padding: "6px 14px", minHeight: 36, borderRadius: 6, cursor: "pointer", fontSize: 13,
+    transition: "opacity 0.15s ease", whiteSpace: "nowrap", flexShrink: 0,
   },
-  body: { padding: "32px 40px" },
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
   h2: { color: "#f1f1f1", fontSize: 20, fontWeight: 700, margin: 0 },
   addBtn: {
@@ -44,47 +54,54 @@ const S = {
     padding: "10px 22px", borderRadius: 7, fontWeight: 700, fontSize: 14,
     cursor: "pointer", transition: "opacity 0.15s ease",
   },
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 },
+  // 본문·카드 여백과 카드 사이 간격은 index.css 의 .qm-dash-body / .qm-dash-grid / .qm-card (휴대폰에서 촘촘하게)
+  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))" },
   card: {
     background: "#1a1a1a", borderRadius: 10, border: "1px solid #2e2e2e",
-    padding: "22px 24px 18px", position: "relative", display: "flex",
+    position: "relative", display: "flex",
     flexDirection: "column", transition: "border-color 0.15s ease, transform 0.15s ease",
   },
-  cardTitle: { fontWeight: 700, fontSize: 16, color: "#f1f1f1", marginBottom: 8, paddingRight: 24 },
+  // 카드 머리: 제목 | ✏ ✕ — 아이콘 자리를 따로 잡아 제목이 아이콘 밑으로 들어가지 않게
+  cardHead: { display: "flex", alignItems: "flex-start", gap: 4, marginBottom: 8 },
+  cardTitle: {
+    flex: 1, minWidth: 0, fontWeight: 700, fontSize: 16, lineHeight: 1.45, color: "#f1f1f1",
+    overflowWrap: "anywhere",
+  },
+  // 음수 여백: 누르는 자리(36×36)는 넓히고 눈에 보이는 아이콘 위치는 카드 모서리 가까이 그대로
+  cardIcons: { display: "flex", flexShrink: 0, margin: "-8px -10px -6px 0" },
   subjectBadge: {
-    display: "inline-block", background: "#242424", color: "#a0a0a0",
+    display: "inline-block", alignSelf: "flex-start", maxWidth: "100%",
+    background: "#242424", color: "#a0a0a0",
     fontSize: 12, padding: "3px 10px", borderRadius: 20, marginBottom: 10,
   },
   cardMeta: { fontSize: 12, color: "#555555", marginBottom: 16 },
   cardBtns: { display: "flex", gap: 8, marginTop: "auto" },
   editBtn: {
-    flex: 1, padding: "8px 0", background: "#242424", color: "#a0a0a0",
+    flex: 1, padding: "8px 0", minHeight: 40, background: "#242424", color: "#a0a0a0",
     border: "1px solid #2e2e2e", borderRadius: 6, fontWeight: 600, fontSize: 13,
     cursor: "pointer", transition: "opacity 0.15s ease",
   },
   solveBtn: {
-    flex: 1, padding: "8px 0", background: "#f59e0b", color: "#000000",
+    flex: 1, padding: "8px 0", minHeight: 40, background: "#f59e0b", color: "#000000",
     border: "none", borderRadius: 6, fontWeight: 700, fontSize: 13,
     cursor: "pointer", transition: "opacity 0.15s ease",
   },
   excelBtn: {
-    padding: "8px 12px", background: "#242424", color: "#a0a0a0",
+    padding: "8px 12px", minHeight: 40, background: "#242424", color: "#a0a0a0",
     border: "1px solid #2e2e2e", borderRadius: 6, fontWeight: 600, fontSize: 12,
     cursor: "pointer", transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
-  delBtn: {
-    position: "absolute", top: 14, right: 14, background: "none",
-    border: "none", color: "#555555", fontSize: 16, cursor: "pointer",
-    lineHeight: 1, transition: "color 0.15s ease",
+  iconBtn: {
+    width: 36, height: 36, display: "inline-flex", alignItems: "center", justifyContent: "center",
+    background: "none", border: "none", borderRadius: 6, color: ICON_GRAY, fontSize: 15,
+    cursor: "pointer", lineHeight: 1, transition: "color 0.15s ease",
   },
-  renameBtn: {
-    position: "absolute", top: 14, right: 40, background: "none",
-    border: "none", color: "#555555", fontSize: 14, cursor: "pointer",
-    lineHeight: 1, transition: "color 0.15s ease",
+  emptyWrap: {
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    marginTop: 80, gap: 12, padding: "0 16px",
   },
-  emptyWrap: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", marginTop: 80, gap: 12 },
   emptyIcon: { fontSize: 48, color: "#555555" },
-  emptyText: { color: "#555555", fontSize: 15 },
+  emptyText: { color: "#777777", fontSize: 15, textAlign: "center" },
   loadError: {
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
     padding: "12px 16px", marginBottom: 20, borderRadius: 8,
@@ -96,23 +113,27 @@ const S = {
     background: "none", color: "#f87171", fontSize: 13, fontWeight: 600, cursor: "pointer",
   },
 
-  // 공통 모달
+  // 공통 모달: 휴대폰에서도 화면 끝에서 16px 띄우고, 좁으면 안쪽 여백을 줄인다(clamp)
   overlay: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)",
+    position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", padding: 16,
     display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
   },
   modal: {
     background: "#1a1a1a", borderRadius: 12, border: "1px solid #2e2e2e",
-    padding: "32px 36px", width: 360, boxShadow: "0 16px 48px rgba(0,0,0,0.6)", position: "relative",
+    padding: "clamp(22px, 6vw, 32px) clamp(18px, 6vw, 36px)", width: "100%", maxWidth: 360,
+    boxShadow: "0 16px 48px rgba(0,0,0,0.6)", position: "relative",
   },
   uploadModal: {
     background: "#1a1a1a", borderRadius: 12, border: "1px solid #2e2e2e",
-    padding: "32px 36px", width: 420, boxShadow: "0 16px 48px rgba(0,0,0,0.6)", position: "relative",
-    maxHeight: "90vh", overflowY: "auto",
+    padding: "clamp(22px, 6vw, 32px) clamp(18px, 6vw, 36px)", width: "100%", maxWidth: 420,
+    boxShadow: "0 16px 48px rgba(0,0,0,0.6)", position: "relative",
+    maxHeight: "100%", overflowY: "auto",
   },
-  modalTitle: { fontWeight: 700, fontSize: 17, color: "#f1f1f1", marginBottom: 20 },
+  modalTitle: { fontWeight: 700, fontSize: 17, color: "#f1f1f1", marginBottom: 20, paddingRight: 32 },
   modalClose: {
-    position: "absolute", top: 16, right: 18, background: "none", border: "none",
+    position: "absolute", top: 8, right: 8, width: 40, height: 40,
+    display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8,
+    background: "none", border: "none",
     color: "#555555", fontSize: 20, cursor: "pointer", lineHeight: 1, transition: "color 0.15s ease",
   },
   label: { display: "block", fontSize: 13, fontWeight: 600, color: "#a0a0a0", marginBottom: 6 },
@@ -133,7 +154,7 @@ const S = {
   },
   templateLink: {
     fontSize: 12, color: "#f59e0b", cursor: "pointer", background: "none", border: "none",
-    padding: 0, marginBottom: 16, textDecoration: "underline", display: "block",
+    padding: "10px 0", margin: "-2px 0 6px", textDecoration: "underline", display: "block",
     transition: "opacity 0.15s ease",
   },
   modalBtns: { display: "flex", gap: 10, marginTop: 8 },
@@ -341,50 +362,52 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
 
   return (
     <div style={S.page}>
-      <nav style={S.nav}>
-        <span style={S.navTitle}>📝 Quiz Maker</span>
-        <div style={S.navRight}>
-          {canExcel && (
-            <>
-              <button
-                style={S.navIconBtn}
-                onClick={handleDownloadAll}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
-              >
-                ⬇ 전체 다운로드
-              </button>
-              <button
-                style={S.navUploadBtn}
-                onClick={openUploadModal}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
-              >
-                ⬆ 엑셀 업로드
-              </button>
-            </>
-          )}
-          <span style={S.username}>{username}</span>
-          <span style={S.roleBadge(role)}>{ROLE_LABEL[role] ?? "일반사용자"}</span>
+      <nav style={S.nav} className="qm-nav">
+        <span style={S.navTitle} className="qm-nav-title">📝 Quiz Maker</span>
+        {canExcel && (
+          <div style={S.navGroup} className="qm-nav-excel">
+            <button
+              style={S.navIconBtn}
+              onClick={handleDownloadAll}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            >
+              ⬇ 전체 다운로드
+            </button>
+            <button
+              style={S.navUploadBtn}
+              onClick={openUploadModal}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            >
+              ⬆ 엑셀 업로드
+            </button>
+          </div>
+        )}
+        <div style={S.navGroup} className="qm-nav-user">
+          <span className="qm-nav-who">
+            <span style={S.username} title={username}>{username}</span>
+            <span style={S.roleBadge(role)}>{ROLE_LABEL[role] ?? "일반사용자"}</span>
+          </span>
           <button
             style={S.logoutBtn}
             onClick={onLogout}
-            onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-            onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           >
             로그아웃
           </button>
         </div>
       </nav>
 
-      <div style={S.body}>
+      <div className="qm-dash-body">
         <div style={S.header}>
           <h2 style={S.h2}>내 문제집</h2>
           <button
             style={S.addBtn}
             onClick={() => setShowCreateModal(true)}
-            onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-            onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           >
             + 새 세트 만들기
           </button>
@@ -394,7 +417,13 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
           <div style={S.loadError} role="alert">
             <span>
               문제집 목록을 불러오지 못했습니다.
-              {loadError && loadError.length <= 80 ? ` (${loadError})` : ""}
+              {/* 짧은 오류 내용('HTTP 500')은 괄호째 한 줄로 — '(HTTP' / '500)' 처럼 갈리지 않게 */}
+              {loadError && loadError.length <= 80 && (
+                <>
+                  {" "}
+                  <span style={loadError.length <= 24 ? { whiteSpace: "nowrap" } : undefined}>({loadError})</span>
+                </>
+              )}
             </span>
             <button style={S.retryBtn} onClick={retryLoad}>다시 시도</button>
           </div>
@@ -412,55 +441,62 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
             </div>
           ) : null
         ) : (
-          <div style={S.grid}>
+          <div style={S.grid} className="qm-dash-grid">
             {sets.map((s) => (
               <div
                 key={s.id}
                 style={S.card}
-                onMouseOver={(e) => {
+                className="qm-card"
+                onPointerEnter={(e) => {
+                  if (e.pointerType !== "mouse") return;
                   e.currentTarget.style.borderColor = "#f59e0b";
                   e.currentTarget.style.transform = "translateY(-2px)";
                 }}
-                onMouseOut={(e) => {
+                onPointerLeave={(e) => {
                   e.currentTarget.style.borderColor = "#2e2e2e";
                   e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
-                <button
-                  style={S.renameBtn}
-                  onClick={(e) => openEditModal(e, s)}
-                  onMouseOver={(e) => { e.currentTarget.style.color = "#f59e0b"; }}
-                  onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
-                  title="제목/과목 수정"
-                >✏</button>
-                <button
-                  style={S.delBtn}
-                  onClick={(e) => handleDelete(e, s.id)}
-                  onMouseOver={(e) => { e.currentTarget.style.color = "#f87171"; }}
-                  onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
-                >✕</button>
-                <div style={S.cardTitle}>{s.title}</div>
+                <div style={S.cardHead}>
+                  <div style={S.cardTitle}>{s.title}</div>
+                  <div style={S.cardIcons}>
+                    <button
+                      style={S.iconBtn}
+                      onClick={(e) => openEditModal(e, s)}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f59e0b"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
+                      title="제목/과목 수정"
+                    >✏</button>
+                    <button
+                      style={S.iconBtn}
+                      onClick={(e) => handleDelete(e, s.id)}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
+                      title="삭제"
+                    >✕</button>
+                  </div>
+                </div>
                 {s.subject && <div style={S.subjectBadge}>📚 {s.subject}</div>}
                 <div style={S.cardMeta}>문항 {s.questionCount}개</div>
                 <div style={S.cardBtns}>
                   <button
                     style={S.editBtn}
                     onClick={(e) => { e.stopPropagation(); onOpenEditor(s); }}
-                    onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                    onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                    onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                    onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                   >편집</button>
                   <button
                     style={S.solveBtn}
                     onClick={(e) => { e.stopPropagation(); onSolve(s); }}
-                    onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                    onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                    onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                    onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                   >풀기</button>
                   {canExcel && (
                     <button
                       style={S.excelBtn}
                       onClick={(e) => handleDownloadSet(e, s.id)}
-                      onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                      onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                     >
                       ⬇ 엑셀
                     </button>
@@ -479,8 +515,8 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
             <button
               style={S.modalClose}
               onClick={() => setShowCreateModal(false)}
-              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-              onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
             >✕</button>
             <div style={S.modalTitle}>새 문제집 만들기</div>
             <label style={S.label}>제목 *</label>
@@ -500,13 +536,13 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
             <div style={S.modalBtns}>
               <button
                 style={S.cancelBtn} onClick={() => setShowCreateModal(false)}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >취소</button>
               <button
                 style={S.confirmBtn} onClick={handleCreate} disabled={creating}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >{creating ? "생성 중..." : "만들기"}</button>
             </div>
           </div>
@@ -520,8 +556,8 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
             <button
               style={S.modalClose}
               onClick={() => setShowEditModal(false)}
-              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-              onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
             >✕</button>
             <div style={S.modalTitle}>문제집 수정</div>
             <label style={S.label}>제목 *</label>
@@ -546,15 +582,15 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
               <button
                 style={S.cancelBtn}
                 onClick={() => setShowEditModal(false)}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >취소</button>
               <button
                 style={S.confirmBtn}
                 onClick={handleEditSave}
                 disabled={editSaving}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >{editSaving ? "저장 중..." : "저장"}</button>
             </div>
           </div>
@@ -568,8 +604,8 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
             <button
               style={S.modalClose}
               onClick={closeUploadModal}
-              onMouseOver={(e) => { e.currentTarget.style.color = "#f1f1f1"; }}
-              onMouseOut={(e) => { e.currentTarget.style.color = "#555555"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
             >✕</button>
             <div style={S.modalTitle}>엑셀로 문제 업로드</div>
 
@@ -643,8 +679,8 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
             <button
               style={S.templateLink}
               onClick={handleDownloadTemplate}
-              onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-              onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
             >
               📥 업로드 양식 다운로드
             </button>
@@ -654,13 +690,13 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
             <div style={S.modalBtns}>
               <button
                 style={S.cancelBtn} onClick={closeUploadModal}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >취소</button>
               <button
                 style={S.confirmBtn} onClick={handleUpload} disabled={uploading}
-                onMouseOver={(e) => { e.currentTarget.style.opacity = "0.85"; }}
-                onMouseOut={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
               >{uploading ? "업로드 중..." : "업로드"}</button>
             </div>
           </div>

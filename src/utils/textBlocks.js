@@ -28,6 +28,14 @@ export function parseTextBlocks(text) {
   return blocks;
 }
 
+// 목록에 보이는 문항 앞부분: 표 칸 구분선(|)과 줄바꿈은 띄어쓰기로, 빈칸(___)은 "( )" 로 바꾼 뒤 max 글자까지
+// (결과 화면 문항별 목록, 편집기 문항 목록에서 '| 단계 | 기간 |' 같은 표 문법이 그대로 보이지 않게)
+export function plainPreview(text, max) {
+  const t = (text || "").replace(/___/g, "( )").replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
 // 행×열 크기의 표 템플릿 문자열 생성 (커서 위치에 삽입용)
 export function buildTableTemplate(rows, cols) {
   let counter = 1;
