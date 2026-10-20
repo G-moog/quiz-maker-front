@@ -47,11 +47,11 @@ const S = {
     padding: "6px 14px", minHeight: 36, borderRadius: 6, cursor: "pointer", fontSize: 13,
     transition: "opacity 0.15s ease", whiteSpace: "nowrap", flexShrink: 0,
   },
-  header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
-  h2: { color: "#f1f1f1", fontSize: 20, fontWeight: 700, margin: 0 },
+  header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
+  h2: { color: "#f1f1f1", fontSize: 18, fontWeight: 700, margin: 0 },
   addBtn: {
     background: "#f59e0b", color: "#000000", border: "none",
-    padding: "10px 22px", borderRadius: 7, fontWeight: 700, fontSize: 14,
+    padding: "8px 16px", borderRadius: 7, fontWeight: 700, fontSize: 13,
     cursor: "pointer", transition: "opacity 0.15s ease",
   },
   // 본문·카드 여백과 카드 사이 간격은 index.css 의 .qm-dash-body / .qm-dash-grid / .qm-card (휴대폰에서 촘촘하게)
@@ -61,41 +61,45 @@ const S = {
     position: "relative", display: "flex",
     flexDirection: "column", transition: "border-color 0.15s ease, transform 0.15s ease",
   },
-  // 카드 제목: ✏ ✕ 를 제목 글 안에서 오른쪽으로 띄움(float) — 첫 줄만 아이콘 폭만큼 줄고 둘째 줄부터는
-  // 카드 폭 전체를 써서, 제목이 아이콘 밑으로 들어가지도 않고 쓸데없이 줄이 늘지도 않게
+  // 카드는 두 줄: ① 제목 + ✏ ✕  ② 과목·문항 수 + 작은 단추들 (사용자 요청: 칩을 낮고 촘촘하게)
+  // 제목 글자 크기·줄 간격은 index.css 의 .qm-card-title (휴대폰에서 한 단계 작게)
+  // ✏ ✕ 는 제목 글 안에서 오른쪽으로 띄움(float) — 첫 줄만 아이콘 폭만큼 줄고 둘째 줄부터는 카드 폭 전체를 씀
   cardTitle: {
-    fontWeight: 700, fontSize: 16, lineHeight: 1.45, color: "#f1f1f1",
-    overflowWrap: "anywhere", marginBottom: 8,
+    fontWeight: 700, color: "#f1f1f1", overflowWrap: "anywhere", marginBottom: 6,
   },
-  // 음수 여백: 누르는 자리(36×36)는 넓히고 눈에 보이는 아이콘 위치는 카드 모서리 가까이 그대로.
-  // 위아래 여백(-8/-6)으로 float 가 차지하는 높이를 22px(제목 한 줄 23px 안)로 맞춰 첫 줄만 비켜 가게.
-  // position: relative — 둘째 줄 위로 살짝(약 5px) 걸친 누르는 자리가 글자보다 위에 놓여 그대로 눌리게
-  cardIcons: { float: "right", display: "flex", position: "relative", margin: "-8px -10px -6px 0" },
+  // 음수 여백: 누르는 자리(28×28)는 넓히고 float 가 차지하는 높이는 제목 한 줄(약 20px) 안으로 맞춰
+  // 첫 줄만 비켜 가게. position: relative — 둘째 줄 위로 살짝 걸친 누르는 자리가 글자보다 위에 놓여 그대로 눌리게
+  cardIcons: { float: "right", display: "flex", position: "relative", margin: "-5px -7px -4px 4px" },
+  cardFoot: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: "auto",
+  },
+  cardMeta: {
+    display: "flex", alignItems: "center", gap: 6, minWidth: 0,
+    fontSize: 12, color: "#7a7a7a", whiteSpace: "nowrap",
+  },
   subjectBadge: {
-    display: "inline-block", alignSelf: "flex-start", maxWidth: "100%",
-    background: "#242424", color: "#a0a0a0",
-    fontSize: 12, padding: "3px 10px", borderRadius: 20, marginBottom: 10,
+    minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+    background: "#242424", color: "#a0a0a0", fontSize: 11, padding: "1px 6px", borderRadius: 4,
   },
-  cardMeta: { fontSize: 12, color: "#555555", marginBottom: 16 },
-  cardBtns: { display: "flex", gap: 8, marginTop: "auto" },
+  cardBtns: { display: "flex", gap: 6, flexShrink: 0 },
   editBtn: {
-    flex: 1, padding: "8px 0", minHeight: 40, background: "#242424", color: "#a0a0a0",
-    border: "1px solid #2e2e2e", borderRadius: 6, fontWeight: 600, fontSize: 13,
-    cursor: "pointer", transition: "opacity 0.15s ease",
+    height: 30, padding: "0 12px", background: "#242424", color: "#a0a0a0",
+    border: "1px solid #2e2e2e", borderRadius: 6, fontWeight: 600, fontSize: 12,
+    cursor: "pointer", transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
   solveBtn: {
-    flex: 1, padding: "8px 0", minHeight: 40, background: "#f59e0b", color: "#000000",
-    border: "none", borderRadius: 6, fontWeight: 700, fontSize: 13,
-    cursor: "pointer", transition: "opacity 0.15s ease",
+    height: 30, padding: "0 18px", background: "#f59e0b", color: "#000000",
+    border: "none", borderRadius: 6, fontWeight: 700, fontSize: 12,
+    cursor: "pointer", transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
   excelBtn: {
-    padding: "8px 12px", minHeight: 40, background: "#242424", color: "#a0a0a0",
+    height: 30, padding: "0 10px", background: "#242424", color: "#a0a0a0",
     border: "1px solid #2e2e2e", borderRadius: 6, fontWeight: 600, fontSize: 12,
     cursor: "pointer", transition: "opacity 0.15s ease", whiteSpace: "nowrap",
   },
   iconBtn: {
-    width: 36, height: 36, display: "inline-flex", alignItems: "center", justifyContent: "center",
-    background: "none", border: "none", borderRadius: 6, color: ICON_GRAY, fontSize: 15,
+    width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center",
+    background: "none", border: "none", borderRadius: 6, color: ICON_GRAY, fontSize: 14,
     cursor: "pointer", lineHeight: 1, transition: "color 0.15s ease",
   },
   emptyWrap: {
@@ -459,7 +463,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                   e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
-                <div style={S.cardTitle}>
+                <div style={S.cardTitle} className="qm-card-title">
                   <div style={S.cardIcons}>
                     <button
                       style={S.iconBtn}
@@ -478,31 +482,35 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                   </div>
                   {s.title}
                 </div>
-                {s.subject && <div style={S.subjectBadge}>📚 {s.subject}</div>}
-                <div style={S.cardMeta}>문항 {s.questionCount}개</div>
-                <div style={S.cardBtns}>
-                  <button
-                    style={S.editBtn}
-                    onClick={(e) => { e.stopPropagation(); onOpenEditor(s); }}
-                    onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
-                    onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                  >편집</button>
-                  <button
-                    style={S.solveBtn}
-                    onClick={(e) => { e.stopPropagation(); onSolve(s); }}
-                    onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
-                    onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                  >풀기</button>
-                  {canExcel && (
+                <div style={S.cardFoot}>
+                  <div style={S.cardMeta}>
+                    {s.subject && <span style={S.subjectBadge}>📚 {s.subject}</span>}
+                    <span>문항 {s.questionCount}개</span>
+                  </div>
+                  <div style={S.cardBtns}>
                     <button
-                      style={S.excelBtn}
-                      onClick={(e) => handleDownloadSet(e, s.id)}
+                      style={S.editBtn}
+                      onClick={(e) => { e.stopPropagation(); onOpenEditor(s); }}
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
                       onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                    >
-                      ⬇ 엑셀
-                    </button>
-                  )}
+                    >편집</button>
+                    <button
+                      style={S.solveBtn}
+                      onClick={(e) => { e.stopPropagation(); onSolve(s); }}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                    >풀기</button>
+                    {canExcel && (
+                      <button
+                        style={S.excelBtn}
+                        onClick={(e) => handleDownloadSet(e, s.id)}
+                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                        onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      >
+                        ⬇ 엑셀
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
