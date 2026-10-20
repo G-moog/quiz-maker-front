@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "../api/quiz";
 import { uploadImage } from "../api/image";
 import FillText from "../components/FillText";
@@ -320,10 +320,21 @@ export default function EditorView({ set, onBack, onPreview }) {
     try { setQuestions(await getQuestions(set.id)); } catch (e) { console.error(e); }
   }
 
-  // 휴대폰(목록·편집을 한 화면에 하나씩)에서 편집 폼을 맨 위부터 보이게. 넓은 화면은 페이지가 스크롤되지 않아 영향 없음
+  // 휴대폰(목록·편집을 한 화면에 하나씩)에서 편집 폼을 맨 위부터 보이게. 목록에서 폼을 열 때는 목록의 스크롤 위치를
+  // 기억해 두었다가, 폼을 닫으면(취소·← 문항 목록·새 문항 저장) 아래 효과가 그 자리로 되돌린다.
+  // 넓은 화면은 페이지가 스크롤되지 않아(scrollY 0) 영향 없음
+  const listScrollY = useRef(0);
   function scrollPageTop() {
+    if (!form) listScrollY.current = window.scrollY;
     window.scrollTo(0, 0);
   }
+  const editing = form !== null;
+  const wasEditing = useRef(false);
+  useLayoutEffect(() => {
+    // 화면을 그리기 전에 되돌려 목록 맨 위가 잠깐 보였다가 튀지 않게. 처음 열 때(폼을 연 적 없음)는 건드리지 않음
+    if (wasEditing.current && !editing) window.scrollTo(0, listScrollY.current);
+    wasEditing.current = editing;
+  }, [editing]);
 
   // 유형 버튼 클릭 → 빈 폼 표시 (API 호출 없음)
   function handleSelectType(type) {

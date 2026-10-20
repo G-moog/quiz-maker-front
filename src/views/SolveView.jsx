@@ -6,6 +6,10 @@ import { plainPreview } from "../utils/textBlocks";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
+// 빈칸 문항 본문이 이 글자 수보다 길면(휴대폰 한 화면을 넘는 정도) 문항 머리에도 '모두 보기/가리기' 토글을 둔다.
+// 짧은 문항은 본문 바로 아래 단추 두 개로 충분 — 작은 카드에 같은 일을 하는 단추가 셋이 되지 않게
+const LONG_FILL_CHARS = 500;
+
 const TYPE_COLOR = {
   multiple: { text: "#60a5fa", bg: "rgba(96,165,250,0.1)" },
   short:    { text: "#34d399", bg: "rgba(52,211,153,0.1)" },
@@ -97,7 +101,7 @@ const S = {
     display: "flex", alignItems: "center", gap: 8,
   }),
   qMeta: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16 },
-  // 빈칸 문항: 본문 위에서도 모두 보기/가리기 (긴 페이지 끝까지 내려가지 않아도 되게)
+  // 본문이 긴 빈칸 문항(LONG_FILL_CHARS): 본문 위에서도 모두 보기/가리기 (긴 페이지 끝까지 내려가지 않아도 되게)
   revealToggleBtn: {
     marginLeft: "auto", padding: "6px 12px", minHeight: 36,
     background: "transparent", color: "#f59e0b",
@@ -601,6 +605,7 @@ export default function SolveView({ set, onBack }) {
   // 비-fill 문항에서는 [""] 로 초기화하여 fillBlankCount 가 절대 음수가 되지 않도록 함
   const fillParts  = qtype === "fill" ? (current?.text || "").split("___") : [""];
   const fillBlankCount = Math.max(0, fillParts.length - 1);
+  const fillLong = qtype === "fill" && (current?.text || "").length > LONG_FILL_CHARS;
   // fillRevealed 길이가 문항 빈칸 수와 다를 경우 자동 보정
   const fillRev = fillRevealed.length === fillBlankCount
     ? fillRevealed
@@ -661,11 +666,11 @@ export default function SolveView({ set, onBack }) {
             )}
 
             <div className="qm-solve-card-body">
-              {/* 문항 번호 + 유형 (+ 빈칸 문항은 모두 보기/가리기 — 긴 본문 끝까지 내려가지 않아도 되게) */}
+              {/* 문항 번호 + 유형 (+ 본문이 긴 빈칸 문항은 모두 보기/가리기 — 긴 본문 끝까지 내려가지 않아도 되게) */}
               <div style={S.qMeta}>
                 <span style={S.qNum}>Q{currentIndex + 1}</span>
                 <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype]}</span>
-                {!current.answerImageUrl && qtype === "fill" && fillBlankCount > 0 && (
+                {!current.answerImageUrl && fillLong && fillBlankCount > 0 && (
                   <button
                     style={S.revealToggleBtn}
                     onClick={() => setFillRevealed(Array(fillBlankCount).fill(!fillRev.every(Boolean)))}

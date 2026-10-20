@@ -61,14 +61,16 @@ const S = {
     position: "relative", display: "flex",
     flexDirection: "column", transition: "border-color 0.15s ease, transform 0.15s ease",
   },
-  // 카드 머리: 제목 | ✏ ✕ — 아이콘 자리를 따로 잡아 제목이 아이콘 밑으로 들어가지 않게
-  cardHead: { display: "flex", alignItems: "flex-start", gap: 4, marginBottom: 8 },
+  // 카드 제목: ✏ ✕ 를 제목 글 안에서 오른쪽으로 띄움(float) — 첫 줄만 아이콘 폭만큼 줄고 둘째 줄부터는
+  // 카드 폭 전체를 써서, 제목이 아이콘 밑으로 들어가지도 않고 쓸데없이 줄이 늘지도 않게
   cardTitle: {
-    flex: 1, minWidth: 0, fontWeight: 700, fontSize: 16, lineHeight: 1.45, color: "#f1f1f1",
-    overflowWrap: "anywhere",
+    fontWeight: 700, fontSize: 16, lineHeight: 1.45, color: "#f1f1f1",
+    overflowWrap: "anywhere", marginBottom: 8,
   },
-  // 음수 여백: 누르는 자리(36×36)는 넓히고 눈에 보이는 아이콘 위치는 카드 모서리 가까이 그대로
-  cardIcons: { display: "flex", flexShrink: 0, margin: "-8px -10px -6px 0" },
+  // 음수 여백: 누르는 자리(36×36)는 넓히고 눈에 보이는 아이콘 위치는 카드 모서리 가까이 그대로.
+  // 위아래 여백(-8/-6)으로 float 가 차지하는 높이를 22px(제목 한 줄 23px 안)로 맞춰 첫 줄만 비켜 가게.
+  // position: relative — 둘째 줄 위로 살짝(약 5px) 걸친 누르는 자리가 글자보다 위에 놓여 그대로 눌리게
+  cardIcons: { float: "right", display: "flex", position: "relative", margin: "-8px -10px -6px 0" },
   subjectBadge: {
     display: "inline-block", alignSelf: "flex-start", maxWidth: "100%",
     background: "#242424", color: "#a0a0a0",
@@ -457,8 +459,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                   e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
-                <div style={S.cardHead}>
-                  <div style={S.cardTitle}>{s.title}</div>
+                <div style={S.cardTitle}>
                   <div style={S.cardIcons}>
                     <button
                       style={S.iconBtn}
@@ -475,6 +476,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
                       title="삭제"
                     >✕</button>
                   </div>
+                  {s.title}
                 </div>
                 {s.subject && <div style={S.subjectBadge}>📚 {s.subject}</div>}
                 <div style={S.cardMeta}>문항 {s.questionCount}개</div>
