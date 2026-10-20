@@ -4,6 +4,7 @@ import { listNotes } from "../api/notes";
 import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
 import QuestionNoteSheet from "../components/QuestionNoteSheet";
+import { PencilIcon } from "../components/NoteIcons";
 import { plainPreview } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
 
@@ -314,10 +315,10 @@ const S = {
     transition: "opacity 0.15s ease",
   },
   // 질문 메모: 오른쪽 아래에 떠 있는 단추(자리·안전 여백은 index.css 의 .qm-note-fab)
-  // 높이 40: 손가락으로 누르기 넉넉하면서 본문을 덜 가리게
+  // 높이 40: 손가락으로 누르기 넉넉하면서 본문을 덜 가리게(휴대폰에서는 글자를 숨겨 아이콘·수만)
   noteFab: {
-    display: "inline-flex", alignItems: "center", gap: 6,
-    height: 40, padding: "0 12px", borderRadius: 8,
+    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+    height: 40, minWidth: 42, borderRadius: 8, // 좌우 여백은 index.css .qm-note-fab(화면 폭마다 다름)
     background: "#242424", border: "1px solid #f59e0b", color: "#f59e0b",
     fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap",
     boxShadow: "0 6px 18px rgba(0,0,0,0.55)",
@@ -693,7 +694,7 @@ export default function SolveView({ set, onBack }) {
         info.context = blankContext(current.text, lastBlank.i, fillAnswers) || null;
       }
     } else if (current) {
-      info.context = questionContext(current.text) || null;
+      info.context = questionContext(current.text, qtype === "multiple" ? opts : []) || null;
     }
     setNoteInfo(info);
   }
@@ -952,8 +953,11 @@ export default function SolveView({ set, onBack }) {
           onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
           onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           title={noteCount ? `이 문제집의 미해결 메모 ${noteCount}개` : "읽다가 든 질문 적기"}
+          aria-label={noteCount ? `질문 메모 (이 문제집의 미해결 ${noteCount}개)` : "질문 메모"}
         >
-          ✎ 질문 메모
+          <PencilIcon size={16} />
+          {/* 휴대폰(480px 이하)에서는 글자를 숨겨 본문을 덜 가린다(index.css) */}
+          <span className="qm-note-fab-label">질문 메모</span>
           {noteCount > 0 && <span style={S.noteFabCount}>{noteCount}</span>}
         </button>
       )}

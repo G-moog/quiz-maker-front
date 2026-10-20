@@ -1,19 +1,31 @@
 // 질문 메모 도우미: 풀기 화면의 맥락 글, 목록 묶기·복사 글, 시각 표시, 저장하지 못한 초안 보관
-import { plainPreview } from "./textBlocks";
-
 export const NOTE_CONTENT_MAX = 2000;
 export const NOTE_CONTEXT_MAX = 1000; // 서버 한도
 const CONTEXT_CHARS = 300; // 화면에서 만드는 맥락 길이(이 안팎)
 const TABLE_LINE = /^\s*\|.*\|\s*$/;
+const HEAD_LABEL_MAX = 24; // 표 칸 앞에 붙이는 열 이름 길이
+const OPTION_MAX = 40; // 객관식 보기 하나의 길이
+const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩";
+
+const tableCells = (line) => line.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+const clipEnd = (s, max) => (s.length > max ? `${s.slice(0, max)}…` : s);
 
 // 빈칸 문항 본문에서 blankIndex(0부터) 번째 빈칸이 있는 줄을 맥락 글로 만든다.
 // 빈칸 순서는 TableAwareText 와 같다(줄 순서 → 표는 칸 순서 → 칸 안 왼쪽부터).
-// 표 줄은 칸을 ' · ' 로 잇고, 그 빈칸은 '[N: 정답]', 다른 빈칸은 '___'. 길면 그 빈칸 둘레로 300자 안팎만.
+// 표 줄은 칸을 ' · ' 로 잇고, 머리 행(그 표의 첫 행)이 따로 있으면 칸마다 열 이름을 붙인다
+// ('기온: 24도 · RH 40%: 13.1 / 1.79 · 60%: [13: 8.7] / 1.19 …') — 메모만 읽어도 어느 열 값인지 알게.
+// 그 빈칸은 '[N: 정답]', 다른 빈칸은 '___'. 길면 그 빈칸 둘레로 300자 안팎만.
 export function blankContext(text, blankIndex, answers = []) {
   const lines = (text || "").split("\n");
   const mark = `[${blankIndex + 1}: ${answers[blankIndex] ?? "?"}]`;
   let seen = 0;
-  for (const line of lines) {
+  let tableStart = -1; // 지금 줄이 든 표의 첫 행 번호(표가 아니면 -1)
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const isTable = TABLE_LINE.test(line);
+    if (!isTable) tableStart = -1;
+    else if (tableStart < 0) tableStart = li;
     const count = line.split("___").length - 1;
     if (blankIndex >= seen + count) {
       seen += count;
@@ -27,10 +39,17 @@ export function blankContext(text, blankIndex, answers = []) {
         k += 1;
         return out;
       }, "");
-    const body = TABLE_LINE.test(line)
-      ? line.trim().replace(/^\||\|$/g, "").split("|").map((c) => fill(c.trim())).join(" · ")
-      : fill(line);
-    return clipAround(body.replace(/\s+/g, " ").trim(), mark, CONTEXT_CHARS);
+    let body;
+    if (isTable) {
+      const head = li > tableStart ? tableCells(lines[tableStart]).map((h) => clipEnd(oneLine(h), HEAD_LABEL_MAX)) : null;
+      body = tableCells(line)
+        .map(fill) // 칸 순서대로 불러야 빈칸 번호(k)가 맞는다
+        .map((c, ci) => (head && head[ci] && c ? `${head[ci]}: ${c}` : c))
+        .join(" · ");
+    } else {
+      body = fill(line);
+    }
+    return clipAround(oneLine(body), mark, CONTEXT_CHARS);
   }
   return "";
 }
@@ -44,9 +63,31 @@ function clipAround(s, focus, max) {
   return (start > 0 ? "…" : "") + s.slice(start, end) + (end < s.length ? "…" : "");
 }
 
-// 빈칸 문항이 아닌 문항(객관식·주관식·O/X)의 맥락: 문제 본문 앞부분
-export function questionContext(text) {
-  return plainPreview(text, CONTEXT_CHARS);
+// 빈칸 문항이 아닌 문항(객관식·주관식·O/X)의 맥락: 문제 본문 앞부분(+ 객관식이면 보기).
+// 표는 칸을 ' · ', 행을 ' / ' 로 잇는다('구분 · 특징 / 성충 · 잎 뒷면'). 정답은 넣지 않는다(풀기 전에 창을 열 수 있어서).
+export function questionContext(text, options = []) {
+  const parts = [];
+  let rows = [];
+  const flush = () => {
+    if (rows.length) parts.push(rows.join(" / "));
+    rows = [];
+  };
+  for (const line of (text || "").split("\n")) {
+    if (TABLE_LINE.test(line)) {
+      rows.push(tableCells(line).join(" · "));
+    } else {
+      flush();
+      if (line.trim()) parts.push(line.trim());
+    }
+  }
+  flush();
+  const body = oneLine(parts.join(" "));
+  const opts = (Array.isArray(options) ? options : [])
+    .map((o, i) => `${CIRCLED[i] ?? `(${i + 1})`} ${clipEnd(oneLine(o), OPTION_MAX)}`)
+    .join(" ");
+  const optText = opts ? `보기: ${opts}` : "";
+  const room = Math.max(120, CONTEXT_CHARS - (optText ? optText.length + 3 : 0));
+  return [body ? clipEnd(body, room) : "", optText].filter(Boolean).join(" — ");
 }
 
 // "2026-10-20T22:15:30" · "…Z" · "…+09:00" · [2026,10,20,22,15] → "10/20 22:15"
@@ -137,10 +178,15 @@ export async function copyToClipboard(text) {
 // 저장하지 못한 메모 초안(이 기기에 하나). { user, info, withCtx, content, at }
 export const NOTE_DRAFT_KEY = "qm:note-draft:v1";
 
+// 글이 빈 초안은 버린다 — 옛 문제집·빈칸 정보만 남아 다음 메모가 엉뚱한 빈칸에 붙지 않게
 export function loadNoteDraft(user) {
   try {
     const d = JSON.parse(localStorage.getItem(NOTE_DRAFT_KEY) || "null");
     if (!d || typeof d.content !== "string" || !d.info || d.user !== user) return null;
+    if (!d.content.trim()) {
+      clearNoteDraft();
+      return null;
+    }
     return d;
   } catch {
     return null;

@@ -305,6 +305,7 @@ textarea::-webkit-resizer {
   z-index: 20;
   right: calc(24px + env(safe-area-inset-right, 0px));
   bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  padding: 0 12px;
 }
 .qm-solve-body.qm-solve-body--fab {
   padding-bottom: 104px;
@@ -508,9 +509,14 @@ textarea::-webkit-resizer {
   .qm-result-card {
     padding: 28px 16px;
   }
+  /* 휴대폰: 글자 없이 연필·수만(약 60×40) — 읽는 동안 오른쪽 아래 표 칸·빈칸을 덜 가리게 */
   .qm-note-fab {
     right: calc(12px + env(safe-area-inset-right, 0px));
     bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    padding: 0 10px;
+  }
+  .qm-note-fab-label {
+    display: none;
   }
   .qm-solve-body.qm-solve-body--fab {
     padding-bottom: 84px;

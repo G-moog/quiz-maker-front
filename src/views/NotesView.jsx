@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listNotes, updateNote, deleteNote } from "../api/notes";
 import { getSets } from "../api/quiz";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
@@ -6,6 +6,7 @@ import {
   NOTE_CONTENT_MAX, buildCopyText, copyToClipboard, formatNoteTime, groupLabel, groupNotes,
 } from "../utils/notes";
 import NoteContextText from "../components/NoteContextText";
+import { PencilIcon, TrashIcon } from "../components/NoteIcons";
 
 // 질문 메모 목록: 문제를 풀다가 적어 둔 질문을 문제집별로 모아 보고, 해결 표시·고치기·지우기,
 // 미해결 메모를 한꺼번에 복사(Claude 에게 붙여 넣어 답을 조사하게)한다.
@@ -86,15 +87,18 @@ const S = {
     fontSize: 12, lineHeight: 1.5, color: "#8a8a8a", cursor: "pointer", overflowWrap: "anywhere",
     ...(open ? { whiteSpace: "pre-wrap" } : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }),
   }),
-  metaRow: { display: "flex", alignItems: "center", gap: 2, minHeight: 28 },
+  metaRow: { display: "flex", alignItems: "center", gap: 4, minHeight: 32 },
   meta: { flex: 1, minWidth: 0, fontSize: 11.5, color: "#6f6f6f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  // 고치기·지우기: SVG 아이콘, 누르는 자리 36×32, 둘 사이 6px(잘못 누르지 않게)
+  actions: { display: "flex", gap: 6, flexShrink: 0 },
   iconBtn: {
-    width: 32, height: 28, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center",
-    background: "none", border: "none", borderRadius: 6, color: "#6b6b6b", fontSize: 14, cursor: "pointer",
+    width: 36, height: 32, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center",
+    background: "none", border: "none", borderRadius: 6, color: "#7a7a7a", cursor: "pointer",
   },
+  // 고치기 입력칸: 글 길이만큼 자동으로 늘어난다(EditBox) — 화면 60% 를 넘으면 그때부터 칸 안에서 스크롤
   editArea: {
-    display: "block", width: "100%", minHeight: 84, padding: "8px 10px", marginTop: -2,
-    background: "#242424", border: "1px solid #f59e0b", borderRadius: 6, outline: "none",
+    display: "block", width: "100%", minHeight: 84, maxHeight: "60vh", padding: "8px 10px", marginTop: -2,
+    background: "#242424", border: "1px solid #f59e0b", borderRadius: 6, outline: "none", resize: "none",
     color: "#f1f1f1", fontSize: 14, lineHeight: 1.5, fontFamily: "inherit",
   },
   editError: { color: "#f87171", fontSize: 12.5, marginTop: 4, lineHeight: 1.4 },
@@ -145,6 +149,18 @@ const S = {
     color: "#f1f1f1", fontSize: 13, lineHeight: 1.5, fontFamily: "inherit",
   },
 };
+
+// 고치기 입력칸: 글 줄 수만큼 높이를 맞춘다(여러 줄 메모도 칸 안에서 따로 스크롤하지 않게)
+function EditBox({ value, ...rest }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`; // + 위아래 테두리
+  }, [value]);
+  return <textarea ref={ref} style={S.editArea} rows={3} value={value} {...rest} />;
+}
 
 export default function NotesView({ onBack }) {
   const [notes, setNotes] = useState([]);
@@ -224,12 +240,28 @@ export default function NotesView({ onBack }) {
     }
   }
 
+  // 고치던 글이 원문과 다른지(저장하지 않고 버리면 잃는 글이 있는지)
+  function editChanged() {
+    if (!editing) return false;
+    const before = notes.find((x) => x.id === editing.id);
+    return !!before && editing.text.trim() !== (before.content || "").trim();
+  }
+
   function startEdit(n) {
-    if (editing && editing.id !== n.id) {
-      const before = notes.find((x) => x.id === editing.id);
-      if (before && editing.text.trim() !== (before.content || "").trim() && !confirm("고치던 메모를 저장하지 않고 넘어갈까요?")) return;
-    }
+    if (editing && editing.id !== n.id && editChanged() && !confirm("고치던 메모를 저장하지 않고 넘어갈까요?")) return;
     setEditing({ id: n.id, text: n.content || "", saving: false, error: "" });
+  }
+
+  // Esc 는 실수로 누르기 쉬워 고친 글이 있으면 묻는다('취소' 단추는 묻지 않음)
+  function escEdit() {
+    if (editing?.saving) return;
+    if (editChanged() && !confirm("고친 내용을 버릴까요?")) return;
+    setEditing(null);
+  }
+
+  function goBack() {
+    if (editChanged() && !confirm("고치던 메모를 저장하지 않고 나갈까요?")) return;
+    onBack();
   }
 
   async function saveEdit() {
@@ -331,15 +363,13 @@ export default function NotesView({ onBack }) {
         <div style={S.main}>
           {isEditing ? (
             <>
-              <textarea
-                style={S.editArea}
+              <EditBox
                 value={editing.text}
-                rows={3}
                 autoFocus
                 readOnly={editing.saving}
                 onChange={(e) => setEditing({ ...editing, text: e.target.value, error: "" })}
                 onKeyDown={(e) => {
-                  if (e.key === "Escape") setEditing(null);
+                  if (e.key === "Escape") { e.preventDefault(); escEdit(); }
                   else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveEdit(); }
                 }}
               />
@@ -368,26 +398,26 @@ export default function NotesView({ onBack }) {
           <div style={S.metaRow}>
             <span style={S.meta}>{meta}</span>
             {!isEditing && (
-              <>
+              <span style={S.actions}>
                 <button
                   style={S.iconBtn}
                   onClick={() => startEdit(n)}
                   disabled={isBusy}
                   onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f59e0b"; }}
-                  onPointerLeave={(e) => { e.currentTarget.style.color = "#6b6b6b"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.color = "#7a7a7a"; }}
                   aria-label="고치기"
                   title="고치기"
-                >✏</button>
+                ><PencilIcon size={16} /></button>
                 <button
                   style={S.iconBtn}
                   onClick={() => remove(n)}
                   disabled={isBusy}
                   onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
-                  onPointerLeave={(e) => { e.currentTarget.style.color = "#6b6b6b"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.color = "#7a7a7a"; }}
                   aria-label="지우기"
                   title="지우기"
-                >✕</button>
-              </>
+                ><TrashIcon size={16} /></button>
+              </span>
             )}
           </div>
         </div>
@@ -397,7 +427,7 @@ export default function NotesView({ onBack }) {
 
   let emptyText = "";
   if (loadState === "ok" && visible.length === 0) {
-    if (notes.length === 0) emptyText = "아직 메모가 없습니다.\n문제를 풀다가 오른쪽 아래 '✎ 질문 메모' 단추로 적어 보세요.";
+    if (notes.length === 0) emptyText = "아직 메모가 없습니다.\n문제를 풀다가 오른쪽 아래 연필(질문 메모) 단추로 적어 보세요.";
     else if (filter === "open") emptyText = "미해결 메모가 없습니다.";
     else emptyText = "해결한 메모가 없습니다.";
   }
@@ -408,7 +438,7 @@ export default function NotesView({ onBack }) {
         <div style={S.navLeft}>
           <button
             style={S.backBtn}
-            onClick={onBack}
+            onClick={goBack}
             onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
             onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
           >← 목록으로</button>
