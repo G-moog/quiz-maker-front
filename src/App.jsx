@@ -5,6 +5,7 @@ import DashboardView from "./views/DashboardView";
 import EditorView from "./views/EditorView";
 import PreviewView from "./views/PreviewView";
 import SolveView from "./views/SolveView";
+import NotesView from "./views/NotesView";
 
 // 토큰이 살아 있으면 대시보드로 시작한다. 만료된 토큰은 지우고 안내와 함께 로그인 화면으로.
 // (만료된 토큰으로 대시보드를 열면 목록 요청이 거절돼 문제집이 없는 것처럼 보였다)
@@ -75,9 +76,14 @@ export default function App() {
         onLogout={handleLogout}
         onOpenEditor={handleOpenEditor}
         onSolve={handleSolve}
+        onOpenNotes={() => setView("notes")}
         role={role}
       />
     );
+  }
+
+  if (view === "notes") {
+    return <NotesView onBack={() => setView("dashboard")} />;
   }
 
   if (view === "editor") {

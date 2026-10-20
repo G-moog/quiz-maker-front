@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { getSets, createSet, updateSet, deleteSet } from "../api/quiz";
+import { listNotes } from "../api/notes";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
 import { groupHardSets, hardTitleOf, loadHardModeIds, saveHardModeIds } from "../utils/hardMode";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
@@ -53,12 +54,28 @@ const S = {
     padding: "6px 14px", minHeight: 36, borderRadius: 6, cursor: "pointer", fontSize: 13,
     transition: "opacity 0.15s ease", whiteSpace: "nowrap", flexShrink: 0,
   },
-  header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
-  h2: { color: "#f1f1f1", fontSize: 18, fontWeight: 700, margin: 0 },
+  // 360px 이상은 한 줄. 그보다 좁은 휴대폰에서는 넘치지 않고 단추가 다음 줄로 내려간다
+  header: {
+    display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap",
+    columnGap: 8, rowGap: 8, marginBottom: 14,
+  },
+  h2: { color: "#f1f1f1", fontSize: 18, fontWeight: 700, margin: 0, whiteSpace: "nowrap" },
+  // 좌우 여백·사이 간격은 index.css 의 .qm-dash-head-btns / .qm-dash-add / .qm-dash-notes (좁은 휴대폰에서 줄임)
   addBtn: {
-    background: "#f59e0b", color: "#000000", border: "none",
-    padding: "8px 16px", borderRadius: 7, fontWeight: 700, fontSize: 13,
+    height: 34, background: "#f59e0b", color: "#000000", border: "none",
+    borderRadius: 7, fontWeight: 700, fontSize: 13, whiteSpace: "nowrap",
     cursor: "pointer", transition: "opacity 0.15s ease",
+  },
+  notesBtn: {
+    height: 34, display: "inline-flex", alignItems: "center", gap: 5,
+    background: "#242424", color: "#d0d0d0", border: "1px solid #2e2e2e",
+    borderRadius: 7, fontWeight: 700, fontSize: 13, whiteSpace: "nowrap",
+    cursor: "pointer", transition: "opacity 0.15s ease",
+  },
+  notesCount: {
+    minWidth: 18, height: 18, padding: "0 5px", borderRadius: 5,
+    background: "#f59e0b", color: "#000", fontSize: 11, fontWeight: 800,
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
   },
   // 본문·카드 여백과 카드 사이 간격은 index.css 의 .qm-dash-body / .qm-dash-grid / .qm-card (휴대폰에서 촘촘하게)
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))" },
@@ -227,7 +244,7 @@ function blurGray(e) { e.target.style.borderColor = "#2e2e2e"; }
 
 const ROLE_LABEL = { ADMIN: "관리자", MANAGER: "중간관리자", USER: "일반사용자" };
 
-export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = "USER" }) {
+export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenNotes, role = "USER" }) {
   const canExcel = role === "ADMIN" || role === "MANAGER";
 
   const [sets, setSets] = useState([]);
@@ -301,6 +318,16 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
   const [loadError, setLoadError] = useState("");
 
   useEffect(() => { fetchSets(); }, []);
+
+  // '질문 메모' 단추의 미해결 수. 덤이라 못 불러오면(백엔드 배포 전 등) 숫자만 안 보인다
+  const [openNoteCount, setOpenNoteCount] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    listNotes({ status: "open" })
+      .then((list) => { if (alive && Array.isArray(list)) setOpenNoteCount(list.length); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   async function fetchSets() {
     try {
@@ -540,14 +567,28 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, role = 
       <div className="qm-dash-body">
         <div style={S.header}>
           <h2 style={S.h2}>내 문제집</h2>
-          <button
-            style={S.addBtn}
-            onClick={() => setShowCreateModal(true)}
-            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
-            onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-          >
-            + 새 세트 만들기
-          </button>
+          <div className="qm-dash-head-btns">
+            <button
+              style={S.notesBtn}
+              className="qm-dash-notes"
+              onClick={onOpenNotes}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.8"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+              title={openNoteCount ? `미해결 질문 메모 ${openNoteCount}개` : "읽다가 적어 둔 질문 모아 보기"}
+            >
+              질문 메모
+              {openNoteCount > 0 && <span style={S.notesCount}>{openNoteCount > 99 ? "99+" : openNoteCount}</span>}
+            </button>
+            <button
+              style={S.addBtn}
+              className="qm-dash-add"
+              onClick={() => setShowCreateModal(true)}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            >
+              + 새 세트 만들기
+            </button>
+          </div>
         </div>
 
         {loadState === "error" && (

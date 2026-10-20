@@ -1,8 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getQuestions } from "../api/quiz";
+import { listNotes } from "../api/notes";
 import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
+import QuestionNoteSheet from "../components/QuestionNoteSheet";
 import { plainPreview } from "../utils/textBlocks";
+import { blankContext, questionContext } from "../utils/notes";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
@@ -310,6 +313,30 @@ const S = {
     fontWeight: 700, fontSize: 13, cursor: "pointer",
     transition: "opacity 0.15s ease",
   },
+  // 질문 메모: 오른쪽 아래에 떠 있는 단추(자리·안전 여백은 index.css 의 .qm-note-fab)
+  // 높이 40: 손가락으로 누르기 넉넉하면서 본문을 덜 가리게
+  noteFab: {
+    display: "inline-flex", alignItems: "center", gap: 6,
+    height: 40, padding: "0 12px", borderRadius: 8,
+    background: "#242424", border: "1px solid #f59e0b", color: "#f59e0b",
+    fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.55)",
+  },
+  noteFabCount: {
+    minWidth: 19, height: 19, padding: "0 5px", borderRadius: 5,
+    background: "#f59e0b", color: "#000", fontSize: 12, fontWeight: 800,
+    display: "inline-flex", alignItems: "center", justifyContent: "center",
+  },
+  // 메모 단추 바로 위 가운데
+  toast: (type) => ({
+    position: "fixed", left: 0, right: 0, margin: "0 auto", width: "fit-content", zIndex: 300,
+    bottom: "calc(72px + env(safe-area-inset-bottom, 0px))", maxWidth: "calc(100% - 32px)",
+    padding: "10px 18px", borderRadius: 8, fontSize: 14, fontWeight: 600, textAlign: "center",
+    border: `1px solid ${type === "error" ? "#f87171" : "#34d399"}`,
+    background: type === "error" ? "#2a1515" : "#11261d",
+    color: type === "error" ? "#f87171" : "#34d399",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.5)",
+  }),
 };
 
 export default function SolveView({ set, onBack }) {
@@ -325,6 +352,12 @@ export default function SolveView({ set, onBack }) {
   const [done, setDone] = useState(false);
   const [mode, setMode] = useState(null);       // null | "ordered" | "random"
   const [modeChoice, setModeChoice] = useState("ordered"); // 모드 선택 화면 임시 상태
+  // 질문 메모: 마지막으로 누른 빈칸 { qid: 문항 id, i: 빈칸 번호(0부터) }, 열린 메모 창의 정보, 이 문제집의 미해결 메모 수
+  const [lastBlank, setLastBlank] = useState(null);
+  const [noteInfo, setNoteInfo] = useState(null);
+  const [noteCount, setNoteCount] = useState(null);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -338,6 +371,23 @@ export default function SolveView({ set, onBack }) {
       }
     })();
   }, []);
+
+  // 메모 수는 덤 — 못 불러오면(백엔드 배포 전 등) 단추에 숫자만 안 보인다
+  useEffect(() => {
+    let alive = true;
+    listNotes({ status: "open", setId: set.id })
+      .then((list) => { if (alive && Array.isArray(list)) setNoteCount(list.length); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [set.id]);
+
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+
+  function showToast(message, type = "success") {
+    clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 2500);
+  }
 
   const current = questions[currentIndex];
   const answered = results[currentIndex] !== undefined;
@@ -377,6 +427,7 @@ export default function SolveView({ set, onBack }) {
       setShowExplanation(false);
       setUserInput("");
       setFillRevealed([]);
+      setLastBlank(null);
       setShowAnswerImage(false);
     } else {
       setDone(true);
@@ -400,6 +451,7 @@ export default function SolveView({ set, onBack }) {
     setShowExplanation(false);
     setUserInput("");
     setFillRevealed([]);
+    setLastBlank(null);
     setShowAnswerImage(false);
     setDone(false);
   }
@@ -413,6 +465,7 @@ export default function SolveView({ set, onBack }) {
     setShowExplanation(false);
     setUserInput("");
     setFillRevealed([]);
+    setLastBlank(null);
     setShowAnswerImage(false);
     setDone(false);
   }
@@ -611,6 +664,8 @@ export default function SolveView({ set, onBack }) {
     ? fillRevealed
     : Array(fillBlankCount).fill(false);
   function toggleFill(i) {
+    // 질문 메모 맥락용: 열든 닫든 마지막으로 누른 빈칸을 기억(문항 id 로 묶어 다른 문항으로 넘어가면 쓰지 않음)
+    setLastBlank({ qid: current.id, i });
     setFillRevealed((prev) => {
       // prev(실제 상태)로 base를 만들고 base[i]를 토글 — fillRev(외부 파생값) 참조 금지
       const base = prev.length === fillBlankCount
@@ -626,6 +681,31 @@ export default function SolveView({ set, onBack }) {
     if (i === current.answerIndex) return "correct";
     if (String(i) === result.userAnswer) return "wrong";
     return "dim";
+  }
+
+  // 질문 메모 창 열기: 문제집·문항 + (빈칸 문항이면) 마지막으로 누른 빈칸과 그 줄의 글,
+  // (다른 유형이면) 문제 본문 앞부분. 빈칸을 누른 적이 없으면 문제집·문항만.
+  function openNote() {
+    const info = { setId: set.id, setTitle: set.title, questionId: current?.id ?? null, qNo: currentIndex + 1, blankNo: null, context: null };
+    if (qtype === "fill") {
+      if (lastBlank && lastBlank.qid === current.id && lastBlank.i < fillBlankCount) {
+        info.blankNo = lastBlank.i + 1;
+        info.context = blankContext(current.text, lastBlank.i, fillAnswers) || null;
+      }
+    } else if (current) {
+      info.context = questionContext(current.text) || null;
+    }
+    setNoteInfo(info);
+  }
+
+  // 저장한 메모가 이 문제집 것이면(불러온 초안은 다른 문제집 것일 수 있다) 단추의 수를 다시 센다
+  function handleNoteSaved(note, info) {
+    setNoteInfo(null);
+    showToast("메모했습니다");
+    if (String(info.setId) !== String(set.id)) return;
+    listNotes({ status: "open", setId: set.id })
+      .then((list) => { if (Array.isArray(list)) setNoteCount(list.length); })
+      .catch(() => setNoteCount((n) => (n == null ? n : n + 1)));
   }
 
   return (
@@ -651,7 +731,8 @@ export default function SolveView({ set, onBack }) {
         <div style={S.progressFill(progressPct)} />
       </div>
 
-      <div style={S.body} className="qm-solve-body">
+      {/* --fab: 맨 아래 '다음 문제' 단추가 떠 있는 메모 단추 위로 올라올 만큼 아래 여백을 더 둔다 */}
+      <div style={S.body} className={!loadingQ && current ? "qm-solve-body qm-solve-body--fab" : "qm-solve-body"}>
         {loadingQ ? (
           <div style={S.center}>불러오는 중...</div>
         ) : questions.length === 0 ? (
@@ -861,6 +942,25 @@ export default function SolveView({ set, onBack }) {
           </div>
         )}
       </div>
+
+      {/* ── 질문 메모 ── */}
+      {!loadingQ && current && (
+        <button
+          style={S.noteFab}
+          className="qm-note-fab"
+          onClick={openNote}
+          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
+          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+          title={noteCount ? `이 문제집의 미해결 메모 ${noteCount}개` : "읽다가 든 질문 적기"}
+        >
+          ✎ 질문 메모
+          {noteCount > 0 && <span style={S.noteFabCount}>{noteCount}</span>}
+        </button>
+      )}
+      {noteInfo && (
+        <QuestionNoteSheet info={noteInfo} onClose={() => setNoteInfo(null)} onSaved={handleNoteSaved} />
+      )}
+      {toast && <div style={S.toast(toast.type)} role="status">{toast.message}</div>}
     </div>
   );
 }

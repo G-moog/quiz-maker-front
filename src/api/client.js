@@ -25,7 +25,10 @@ export async function authFetch(path, options = {}) {
       throw new Error(SESSION_EXPIRED_MESSAGE);
     }
     const message = await res.text();
-    throw new Error(message || `HTTP ${res.status}`);
+    // status: 부르는 쪽이 '아직 서버에 없는 기능(404 등)' 같은 경우를 가릴 수 있게
+    const err = new Error(message || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
 
   const text = await res.text();

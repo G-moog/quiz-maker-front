@@ -298,6 +298,39 @@ textarea::-webkit-resizer {
   padding: 40px 36px;
 }
 
+/* 질문 메모 단추: 화면 오른쪽 아래에 떠 있다(아이폰 홈 막대·둥근 모서리 안쪽으로 안전 여백).
+   본문은 아래 여백을 더 두어(--fab) 맨 아래 '다음 문제' 단추가 이 단추 위로 올라오게 한다 */
+.qm-note-fab {
+  position: fixed;
+  z-index: 20;
+  right: calc(24px + env(safe-area-inset-right, 0px));
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.qm-solve-body.qm-solve-body--fab {
+  padding-bottom: 104px;
+}
+
+/* 질문 메모 목록 */
+.qm-notes-body {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 20px 20px 60px;
+}
+
+/* 대시보드 '내 문제집' 줄의 단추(질문 메모 · 새 세트 만들기) */
+.qm-dash-head-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.qm-dash-add {
+  padding: 0 16px;
+}
+.qm-dash-notes {
+  padding: 0 12px;
+}
+
 /* 편집기: 넓은 화면은 왼쪽 문항 목록 + 오른쪽 편집 폼(각자 스크롤) */
 .qm-ed-nav {
   padding: 0 24px;
@@ -474,6 +507,29 @@ textarea::-webkit-resizer {
   }
   .qm-result-card {
     padding: 28px 16px;
+  }
+  .qm-note-fab {
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+  .qm-solve-body.qm-solve-body--fab {
+    padding-bottom: 84px;
+  }
+  .qm-notes-body {
+    padding: 12px 12px 48px;
+  }
+}
+
+/* 좁은 휴대폰(360px 안팎): '내 문제집' 줄이 한 줄에 들어가게 단추 여백·간격을 줄인다 */
+@media (max-width: 400px) {
+  .qm-dash-head-btns {
+    gap: 6px;
+  }
+  .qm-dash-add {
+    padding: 0 10px;
+  }
+  .qm-dash-notes {
+    padding: 0 9px;
   }
 }
 
