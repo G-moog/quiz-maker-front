@@ -1,11 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "../api/quiz";
-import { uploadImage } from "../api/image";
+import { IMAGE_ACCEPT, uploadImage } from "../api/image";
 import FillText from "../components/FillText";
 import TableAwareText from "../components/TableAwareText";
 import { buildTableTemplate, plainPreview } from "../utils/textBlocks";
-
-const ANTHROPIC_API_KEY = "YOUR_API_KEY_HERE"; // TODO: 환경변수로 교체
+import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
@@ -74,11 +73,6 @@ const S = {
     minHeight: 36, borderRadius: 6, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
     fontSize: 13, transition: "opacity 0.15s ease",
   },
-  aiBtn: {
-    background: "#f59e0b", color: "#000000", border: "none",
-    minHeight: 36, borderRadius: 6, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
-    fontSize: 13, transition: "opacity 0.15s ease",
-  },
 
   // 사이드바 (배치·폭·스크롤은 .qm-ed-sidebar — 휴대폰에서 숨기려면 display 를 인라인에 두면 안 됨)
   sidebar: { background: "#1a1a1a" },
@@ -111,6 +105,17 @@ const S = {
     transition: "color 0.15s ease",
   },
   sideEmpty: { color: "#555555", fontSize: 13, textAlign: "center", padding: "32px 16px" },
+  // 문항 목록을 못 불러왔을 때(빈 목록으로 숨기지 않음)
+  loadError: {
+    margin: 12, padding: "10px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.5,
+    border: "1px solid rgba(248,113,113,0.4)", background: "rgba(248,113,113,0.1)", color: "#f87171",
+    overflowWrap: "anywhere",
+  },
+  retryBtn: {
+    display: "block", marginTop: 8, padding: "6px 14px", minHeight: 36, borderRadius: 6,
+    border: "1px solid #f87171", background: "none", color: "#f87171", fontSize: 13, fontWeight: 600,
+    cursor: "pointer",
+  },
 
   // 편집 패널 (배치·여백·스크롤은 .qm-ed-editor)
   editor: { background: "#0f0f0f" },
@@ -258,35 +263,6 @@ const S = {
     color: active ? "#f59e0b" : "#555555", cursor: "pointer",
     transition: "all 0.15s ease",
   }),
-
-  // AI 모달: 휴대폰에서도 화면 끝에서 16px 띄우고, 좁으면 안쪽 여백을 줄인다(clamp)
-  overlay: {
-    position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", padding: 16,
-    display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
-  },
-  modal: {
-    background: "#1a1a1a", borderRadius: 12, padding: "clamp(22px, 6vw, 32px) clamp(18px, 6vw, 36px)",
-    width: "100%", maxWidth: 380, border: "1px solid #2e2e2e",
-    boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
-  },
-  modalTitle: { fontWeight: 700, fontSize: 16, color: "#f1f1f1", marginBottom: 16 },
-  modalBtns: { display: "flex", gap: 10, marginTop: 8 },
-  confirmBtn: {
-    flex: 1, padding: "10px 0", background: "#f59e0b", color: "#000000",
-    border: "none", borderRadius: 7, fontWeight: 700, cursor: "pointer",
-    transition: "opacity 0.15s ease",
-  },
-  modalCancelBtn: {
-    flex: 1, padding: "10px 0", background: "#242424", color: "#a0a0a0",
-    border: "1px solid #2e2e2e", borderRadius: 7, fontWeight: 700, cursor: "pointer",
-    transition: "opacity 0.15s ease",
-  },
-  modalInput: {
-    width: "100%", padding: "9px 12px",
-    background: "#242424", border: "1px solid #2e2e2e", borderRadius: 7,
-    fontSize: 14, marginBottom: 14, color: "#f1f1f1", outline: "none",
-    transition: "border-color 0.15s ease",
-  },
 };
 
 function focusGold(e) { e.target.style.borderColor = "#f59e0b"; }
@@ -305,10 +281,7 @@ export default function EditorView({ set, onBack, onPreview }) {
   const [saving, setSaving] = useState(false);
   const [uploadingQ, setUploadingQ] = useState(false); // 문제 이미지 업로드 중
   const [uploadingA, setUploadingA] = useState(false); // 답안 이미지 업로드 중
-  const [showAI, setShowAI] = useState(false);
-  const [aiTopic, setAiTopic] = useState("");
-  const [aiCount, setAiCount] = useState(3);
-  const [aiLoading, setAiLoading] = useState(false);
+  const [loadError, setLoadError] = useState(""); // 문항 목록을 못 불러왔을 때의 오류(빈 목록과 가리려고)
   const [showTableInsert, setShowTableInsert] = useState(false);
   const [tableRows, setTableRows] = useState(2);
   const [tableCols, setTableCols] = useState(2);
@@ -317,7 +290,14 @@ export default function EditorView({ set, onBack, onPreview }) {
   useEffect(() => { fetchQ(); }, []);
 
   async function fetchQ() {
-    try { setQuestions(await getQuestions(set.id)); } catch (e) { console.error(e); }
+    try {
+      setQuestions(await getQuestions(set.id));
+      setLoadError("");
+    } catch (e) {
+      console.error(e);
+      // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
+      if (e.message !== SESSION_EXPIRED_MESSAGE) setLoadError(e.message || "문항을 불러오지 못했습니다.");
+    }
   }
 
   // 휴대폰(목록·편집을 한 화면에 하나씩)에서 편집 폼을 맨 위부터 보이게. 목록에서 폼을 열 때는 목록의 스크롤 위치를
@@ -461,52 +441,6 @@ export default function EditorView({ set, onBack, onPreview }) {
     });
   }
 
-  async function handleAIGenerate() {
-    if (!aiTopic.trim()) return;
-    setAiLoading(true);
-    try {
-      const prompt = `다음 주제로 객관식 문항 ${aiCount}개를 JSON 배열로 생성해줘. 주제: ${aiTopic}\n각 항목: {"text":"문제","options":["①","②","③","④"],"answerIndex":0,"explanation":"해설"}`;
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 2048,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
-      const data = await res.json();
-      const text = data.content?.[0]?.text ?? "";
-      const match = text.match(/\[[\s\S]*\]/);
-      if (!match) throw new Error("JSON 파싱 실패");
-      const items = JSON.parse(match[0]);
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        await addQuestion(set.id, {
-          type: "multiple",
-          text: item.text,
-          options: JSON.stringify(item.options),
-          answerIndex: item.answerIndex ?? 0,
-          answer: "",
-          answers: null,
-          explanation: item.explanation ?? "",
-          orderIndex: questions.length + i,
-        });
-      }
-      await fetchQ();
-      setShowAI(false);
-      setAiTopic("");
-    } catch (e) {
-      alert("AI 생성 실패: " + e.message);
-    } finally {
-      setAiLoading(false);
-    }
-  }
-
   const isEdit = !!form?.id;
   const opts = form?.options ?? ["", "", "", ""];
   const fillBlankCount = form?.type === "fill" ? (form.text.match(/___/g) || []).length : 0;
@@ -523,15 +457,8 @@ export default function EditorView({ set, onBack, onPreview }) {
           >←</button>
           <span style={S.navTitle} className="qm-ed-title" title={set.title}>{set.title}</span>
         </div>
-        {/* 휴대폰에서는 단추 글씨를 줄임(.qm-wide-only 숨김): '✨ AI', '미리보기' */}
+        {/* 휴대폰에서는 단추 글씨를 줄임(.qm-wide-only 숨김): '미리보기' */}
         <div style={S.navRight}>
-          <button
-            style={S.aiBtn}
-            className="qm-ed-nav-btn"
-            onClick={() => setShowAI(true)}
-            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
-            onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-          >✨ AI<span className="qm-wide-only"> 생성</span></button>
           <button
             style={S.previewBtn}
             className="qm-ed-nav-btn"
@@ -559,8 +486,14 @@ export default function EditorView({ set, onBack, onPreview }) {
             ))}
           </div>
 
+          {loadError && (
+            <div style={S.loadError} role="alert">
+              문항을 불러오지 못했습니다. ({loadError})
+              <button style={S.retryBtn} onClick={fetchQ}>다시 시도</button>
+            </div>
+          )}
           {questions.length === 0 ? (
-            <div style={S.sideEmpty}>문항을 추가해보세요</div>
+            !loadError && <div style={S.sideEmpty}>문항을 추가해보세요</div>
           ) : (
             questions.map((q, i) => (
               <div
@@ -694,7 +627,7 @@ export default function EditorView({ set, onBack, onPreview }) {
                   >
                     {uploadingQ ? "⏳ 업로드 중..." : "📷 이미지 업로드"}
                     <input
-                      type="file" accept="image/*" hidden
+                      type="file" accept={IMAGE_ACCEPT} hidden
                       disabled={uploadingQ}
                       onChange={(e) => { handleImageUpload(e.target.files[0], "question"); e.target.value = ""; }}
                     />
@@ -734,7 +667,7 @@ export default function EditorView({ set, onBack, onPreview }) {
                     >
                       {uploadingA ? "⏳ 업로드 중..." : "📷 답안 이미지 업로드"}
                       <input
-                        type="file" accept="image/*" hidden
+                        type="file" accept={IMAGE_ACCEPT} hidden
                         disabled={uploadingA}
                         onChange={(e) => { handleImageUpload(e.target.files[0], "answer"); e.target.value = ""; }}
                       />
@@ -900,51 +833,6 @@ export default function EditorView({ set, onBack, onPreview }) {
           )}
         </div>
       </div>
-
-      {/* ── AI 생성 모달 ── */}
-      {showAI && (
-        <div style={S.overlay} onClick={() => setShowAI(false)}>
-          <div style={S.modal} onClick={(e) => e.stopPropagation()}>
-            <div style={S.modalTitle}>✨ AI 문항 생성</div>
-            <label style={{ ...S.fieldLabel, display: "block", marginBottom: 6 }}>주제</label>
-            <input
-              style={S.modalInput}
-              value={aiTopic}
-              onChange={(e) => setAiTopic(e.target.value)}
-              onFocus={focusGold}
-              onBlur={blurGray}
-              placeholder="예: 조선시대 역사"
-              autoFocus
-            />
-            <label style={{ ...S.fieldLabel, display: "block", marginBottom: 6 }}>생성할 문항 수</label>
-            <input
-              style={S.modalInput}
-              type="number"
-              min={1}
-              max={10}
-              value={aiCount}
-              onChange={(e) => setAiCount(Number(e.target.value))}
-              onFocus={focusGold}
-              onBlur={blurGray}
-            />
-            <div style={S.modalBtns}>
-              <button
-                style={S.modalCancelBtn}
-                onClick={() => setShowAI(false)}
-                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
-                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-              >취소</button>
-              <button
-                style={S.confirmBtn}
-                onClick={handleAIGenerate}
-                disabled={aiLoading}
-                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
-                onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-              >{aiLoading ? "생성 중..." : "생성"}</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

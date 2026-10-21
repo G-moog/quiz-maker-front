@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { login, register } from "../api/auth";
+import { login, sendRecovery } from "../api/auth";
+
+// 로그인(설계서 3.1·3.5절): 이메일 + 비밀번호. 회원가입은 없다(Supabase 에서 새 가입을 끔).
+// '비밀번호를 잊었어요' → 재설정 메일 → 메일의 링크 → 새 비밀번호 화면(App 이 PASSWORD_RECOVERY 를 받아 엶)
 
 const S = {
   page: {
@@ -29,26 +32,20 @@ const S = {
     marginBottom: 28,
     letterSpacing: 1,
   },
-  tabs: {
-    display: "flex",
-    marginBottom: 28,
-    borderBottom: "1px solid #2e2e2e",
-    gap: 4,
+  heading: {
+    color: "#f1f1f1",
+    fontSize: 16,
+    fontWeight: 700,
+    margin: "0 0 10px",
+    textAlign: "center",
   },
-  tab: (active) => ({
-    flex: 1,
-    padding: "10px 0",
-    border: "none",
-    background: active ? "#242424" : "none",
-    cursor: "pointer",
-    fontWeight: 600,
-    fontSize: 15,
-    color: active ? "#f59e0b" : "#555555",
-    borderBottom: active ? "2px solid #f59e0b" : "2px solid transparent",
-    marginBottom: -1,
-    borderRadius: "6px 6px 0 0",
-    transition: "color 0.15s ease, background 0.15s ease",
-  }),
+  intro: {
+    color: "#a0a0a0",
+    fontSize: 13,
+    lineHeight: 1.6,
+    margin: "0 0 18px",
+    textAlign: "center",
+  },
   label: {
     display: "block",
     fontSize: 13,
@@ -68,11 +65,6 @@ const S = {
     outline: "none",
     transition: "border-color 0.15s ease",
   }),
-  fieldError: {
-    color: "#f87171",
-    fontSize: 12,
-    marginBottom: 12,
-  },
   btn: {
     width: "100%",
     padding: "12px 0",
@@ -87,10 +79,29 @@ const S = {
     letterSpacing: 0.5,
     transition: "opacity 0.15s ease",
   },
+  // 여백 10 + 음수 여백: 보이는 자리는 그대로, 누르는 자리만 넓게
+  linkBtn: {
+    display: "block",
+    margin: "14px auto -10px",
+    padding: 10,
+    background: "none",
+    border: "none",
+    color: "#a0a0a0",
+    fontSize: 13,
+    textDecoration: "underline",
+    cursor: "pointer",
+  },
   serverError: {
     color: "#f87171",
     fontSize: 13,
     marginBottom: 12,
+    textAlign: "center",
+  },
+  sent: {
+    color: "#34d399",
+    fontSize: 14,
+    lineHeight: 1.6,
+    margin: "0 0 8px",
     textAlign: "center",
   },
   notice: {
@@ -105,82 +116,31 @@ const S = {
   },
 };
 
-const INIT_REGISTER = {
-  username: "",
-  nickname: "",
-  email: "",
-  password: "",
-  passwordConfirm: "",
-};
-
-function validateRegister(fields) {
-  const errors = {};
-  if (fields.username.length < 4 || fields.username.length > 20)
-    errors.username = "아이디는 4자 이상 20자 이하여야 합니다.";
-  if (fields.nickname.length < 2 || fields.nickname.length > 20)
-    errors.nickname = "닉네임은 2자 이상 20자 이하여야 합니다.";
-  if (!fields.email.includes("@"))
-    errors.email = "올바른 이메일 형식이 아닙니다.";
-  if (fields.password.length < 6)
-    errors.password = "비밀번호는 6자 이상이어야 합니다.";
-  if (fields.password !== fields.passwordConfirm)
-    errors.passwordConfirm = "비밀번호가 일치하지 않습니다.";
-  return errors;
-}
-
 export default function LoginView({ onLoginSuccess, notice = "" }) {
-  const [tab, setTab] = useState("login");
-
-  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
-  const [registerForm, setRegisterForm] = useState(INIT_REGISTER);
-  const [fieldErrors, setFieldErrors] = useState({});
+  // login(로그인) · forgot(재설정 메일 받기) · sent(메일 보냄)
+  const [mode, setMode] = useState("login");
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [forgotEmail, setForgotEmail] = useState("");
   const [serverError, setServerError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  function handleTabChange(next) {
-    setTab(next);
+  function changeMode(next) {
+    setMode(next);
     setServerError("");
-    setFieldErrors({});
+    if (next === "forgot") setForgotEmail((cur) => cur || loginForm.email);
   }
 
   async function handleLoginSubmit(e) {
     e.preventDefault();
-    setServerError("");
-    setLoading(true);
-    try {
-      const res = await login(loginForm.username, loginForm.password);
-      localStorage.setItem("token", res.token);
-      localStorage.setItem("username", res.username);
-      localStorage.setItem("role", res.role ?? "USER");
-      onLoginSuccess();
-    } catch (err) {
-      setServerError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleRegisterSubmit(e) {
-    e.preventDefault();
-    setServerError("");
-
-    const errors = validateRegister(registerForm);
-    if (Object.keys(errors).length > 0) {
-      setFieldErrors(errors);
+    if (loading) return;
+    if (!loginForm.email.trim() || !loginForm.password) {
+      setServerError("이메일과 비밀번호를 넣어 주세요.");
       return;
     }
-    setFieldErrors({});
+    setServerError("");
     setLoading(true);
     try {
-      const res = await register(
-        registerForm.username,
-        registerForm.nickname,
-        registerForm.email,
-        registerForm.password
-      );
-      localStorage.setItem("token", res.token);
-      localStorage.setItem("username", res.username);
-      localStorage.setItem("role", res.role ?? "USER");
+      await login(loginForm.email, loginForm.password);
       onLoginSuccess();
     } catch (err) {
       setServerError(err.message);
@@ -189,137 +149,129 @@ export default function LoginView({ onLoginSuccess, notice = "" }) {
     }
   }
 
-  function setRegField(key, value) {
-    setRegisterForm((f) => ({ ...f, [key]: value }));
-    if (fieldErrors[key]) setFieldErrors((e) => ({ ...e, [key]: undefined }));
+  async function handleForgotSubmit(e) {
+    e.preventDefault();
+    if (loading) return;
+    if (!forgotEmail.includes("@")) {
+      setServerError("로그인에 쓰는 이메일을 넣어 주세요.");
+      return;
+    }
+    setServerError("");
+    setLoading(true);
+    try {
+      await sendRecovery(forgotEmail);
+      setMode("sent");
+    } catch (err) {
+      setServerError(err.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   function focusStyle(e) {
     e.target.style.borderColor = "#f59e0b";
   }
-  function blurStyle(e, hasError) {
-    e.target.style.borderColor = hasError ? "#f87171" : "#2e2e2e";
+  function blurStyle(e) {
+    e.target.style.borderColor = "#2e2e2e";
   }
+
+  const submitHover = {
+    onPointerEnter: (e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; },
+    onPointerLeave: (e) => { e.currentTarget.style.opacity = "1"; },
+  };
 
   return (
     <div style={S.page}>
       <div style={S.card}>
         <div style={S.logo}>📝 Quiz Maker</div>
-        {notice && <div style={S.notice} role="status">{notice}</div>}
-        <div style={S.tabs}>
-          <button style={S.tab(tab === "login")} onClick={() => handleTabChange("login")}>
-            로그인
-          </button>
-          <button style={S.tab(tab === "register")} onClick={() => handleTabChange("register")}>
-            회원가입
-          </button>
-        </div>
+        {notice && mode === "login" && <div style={S.notice} role="status">{notice}</div>}
 
-        {tab === "login" ? (
+        {mode === "login" && (
           <form onSubmit={handleLoginSubmit}>
-            <label style={S.label}>아이디</label>
+            <label style={S.label} htmlFor="qm-login-email">이메일</label>
             <input
+              id="qm-login-email"
               style={S.input(false)}
-              value={loginForm.username}
-              onChange={(e) => setLoginForm((f) => ({ ...f, username: e.target.value }))}
+              type="email"
+              inputMode="email"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={loginForm.email}
+              onChange={(e) => setLoginForm((f) => ({ ...f, email: e.target.value }))}
               onFocus={focusStyle}
-              onBlur={(e) => blurStyle(e, false)}
-              placeholder="아이디 입력"
+              onBlur={blurStyle}
+              placeholder="이메일 입력"
               autoFocus
             />
-            <label style={S.label}>비밀번호</label>
+            <label style={S.label} htmlFor="qm-login-password">비밀번호</label>
             <input
+              id="qm-login-password"
               style={S.input(false)}
               type="password"
+              autoComplete="current-password"
               value={loginForm.password}
               onChange={(e) => setLoginForm((f) => ({ ...f, password: e.target.value }))}
               onFocus={focusStyle}
-              onBlur={(e) => blurStyle(e, false)}
+              onBlur={blurStyle}
               placeholder="비밀번호 입력"
             />
-            {serverError && <div style={S.serverError}>{serverError}</div>}
-            <button
-              style={S.btn}
-              type="submit"
-              disabled={loading}
-              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
-              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-            >
+            {serverError && <div style={S.serverError} role="alert">{serverError}</div>}
+            <button style={S.btn} type="submit" disabled={loading} {...submitHover}>
               {loading ? "처리 중..." : "로그인"}
             </button>
-          </form>
-        ) : (
-          <form onSubmit={handleRegisterSubmit}>
-            <label style={S.label}>아이디</label>
-            <input
-              style={S.input(!!fieldErrors.username)}
-              value={registerForm.username}
-              onChange={(e) => setRegField("username", e.target.value)}
-              onFocus={focusStyle}
-              onBlur={(e) => blurStyle(e, !!fieldErrors.username)}
-              placeholder="4~20자"
-              autoFocus
-            />
-            {fieldErrors.username && <div style={S.fieldError}>{fieldErrors.username}</div>}
-
-            <label style={S.label}>닉네임</label>
-            <input
-              style={S.input(!!fieldErrors.nickname)}
-              value={registerForm.nickname}
-              onChange={(e) => setRegField("nickname", e.target.value)}
-              onFocus={focusStyle}
-              onBlur={(e) => blurStyle(e, !!fieldErrors.nickname)}
-              placeholder="2~20자"
-            />
-            {fieldErrors.nickname && <div style={S.fieldError}>{fieldErrors.nickname}</div>}
-
-            <label style={S.label}>이메일</label>
-            <input
-              style={S.input(!!fieldErrors.email)}
-              type="email"
-              value={registerForm.email}
-              onChange={(e) => setRegField("email", e.target.value)}
-              onFocus={focusStyle}
-              onBlur={(e) => blurStyle(e, !!fieldErrors.email)}
-              placeholder="example@email.com"
-            />
-            {fieldErrors.email && <div style={S.fieldError}>{fieldErrors.email}</div>}
-
-            <label style={S.label}>비밀번호</label>
-            <input
-              style={S.input(!!fieldErrors.password)}
-              type="password"
-              value={registerForm.password}
-              onChange={(e) => setRegField("password", e.target.value)}
-              onFocus={focusStyle}
-              onBlur={(e) => blurStyle(e, !!fieldErrors.password)}
-              placeholder="6자 이상"
-            />
-            {fieldErrors.password && <div style={S.fieldError}>{fieldErrors.password}</div>}
-
-            <label style={S.label}>비밀번호 재확인</label>
-            <input
-              style={S.input(!!fieldErrors.passwordConfirm)}
-              type="password"
-              value={registerForm.passwordConfirm}
-              onChange={(e) => setRegField("passwordConfirm", e.target.value)}
-              onFocus={focusStyle}
-              onBlur={(e) => blurStyle(e, !!fieldErrors.passwordConfirm)}
-              placeholder="비밀번호 재입력"
-            />
-            {fieldErrors.passwordConfirm && <div style={S.fieldError}>{fieldErrors.passwordConfirm}</div>}
-
-            {serverError && <div style={S.serverError}>{serverError}</div>}
-            <button
-              style={S.btn}
-              type="submit"
-              disabled={loading}
-              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
-              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-            >
-              {loading ? "처리 중..." : "회원가입"}
+            <button type="button" style={S.linkBtn} onClick={() => changeMode("forgot")}>
+              비밀번호를 잊었어요
             </button>
           </form>
+        )}
+
+        {mode === "forgot" && (
+          <form onSubmit={handleForgotSubmit}>
+            <h1 style={S.heading}>비밀번호 다시 정하기</h1>
+            <p style={S.intro}>
+              로그인에 쓰는 이메일을 넣으면 새 비밀번호를 정하는 링크를 메일로 보냅니다(한 시간에 2통까지).
+            </p>
+            <label style={S.label} htmlFor="qm-forgot-email">이메일</label>
+            <input
+              id="qm-forgot-email"
+              style={S.input(false)}
+              type="email"
+              inputMode="email"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={forgotEmail}
+              onChange={(e) => setForgotEmail(e.target.value)}
+              onFocus={focusStyle}
+              onBlur={blurStyle}
+              placeholder="이메일 입력"
+              autoFocus
+            />
+            {serverError && <div style={S.serverError} role="alert">{serverError}</div>}
+            <button style={S.btn} type="submit" disabled={loading} {...submitHover}>
+              {loading ? "보내는 중..." : "재설정 메일 보내기"}
+            </button>
+            <button type="button" style={S.linkBtn} onClick={() => changeMode("login")}>
+              ← 로그인으로
+            </button>
+          </form>
+        )}
+
+        {mode === "sent" && (
+          <div>
+            <h1 style={S.heading}>메일을 보냈습니다</h1>
+            <p style={S.sent} role="status">
+              메일의 링크를 누르면 새 비밀번호를 정하는 화면이 열립니다.
+            </p>
+            <p style={S.intro}>
+              메일이 오지 않으면 스팸함을 보거나 잠시 뒤 다시 해 주세요. 그래도 안 오면 Supabase 대시보드
+              Users 에서 그 사용자의 재설정 메일 보내기를 씁니다(사용자를 지우고 다시 만들지 않습니다).
+            </p>
+            <button type="button" style={S.btn} onClick={() => changeMode("login")} {...submitHover}>
+              로그인으로
+            </button>
+          </div>
         )}
       </div>
     </div>

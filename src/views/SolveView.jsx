@@ -14,6 +14,7 @@ import { InkModeButton, InkToolbar } from "../ink/InkToolbar";
 import { useInk } from "../ink/useInk";
 import { loadInkMode, saveInkMode } from "../ink/inkMode";
 import { textHash } from "../ink/geometry";
+import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
@@ -194,6 +195,15 @@ const S = {
   },
   // 로딩/빈 문항
   center: { textAlign: "center", padding: "80px 20px", color: "#555555", fontSize: 15 },
+  // 불러오기 실패(빈 문제집으로 숨기지 않음)
+  loadError: {
+    textAlign: "center", padding: "64px 20px", color: "#f87171", fontSize: 15, lineHeight: 1.6,
+    overflowWrap: "anywhere",
+  },
+  loadRetryBtn: {
+    marginTop: 14, padding: "8px 18px", minHeight: 40, borderRadius: 7, border: "1px solid #f87171",
+    background: "none", color: "#f87171", fontSize: 14, fontWeight: 700, cursor: "pointer",
+  },
 
   // ── 결과 화면 ──
   resultPage: { maxWidth: 680, margin: "0 auto" },
@@ -336,6 +346,7 @@ const S = {
 export default function SolveView({ set, onBack }) {
   const [questions, setQuestions] = useState([]);
   const [loadingQ, setLoadingQ] = useState(true);
+  const [loadError, setLoadError] = useState(""); // 불러오기 실패 — '문항이 없습니다'와 가린다
   const [currentIndex, setCurrentIndex] = useState(0);
   // results: { [index]: { correct: bool, userAnswer: string } }
   const [results, setResults] = useState({});
@@ -356,18 +367,29 @@ export default function SolveView({ set, onBack }) {
   const [inkOn, setInkOn] = useState(loadInkMode);
   const [username] = useState(() => localStorage.getItem("username") || "");
 
+  // 문항 불러오기. loadTry 를 올리면('다시 시도') 다시 부른다
+  const [loadTry, setLoadTry] = useState(0);
   useEffect(() => {
     (async () => {
       try {
         const data = await getQuestions(set.id);
         setQuestions(data);
+        setLoadError("");
       } catch (e) {
         console.error(e);
+        // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
+        if (e.message !== SESSION_EXPIRED_MESSAGE) setLoadError(e.message || "문항을 불러오지 못했습니다.");
       } finally {
         setLoadingQ(false);
       }
     })();
-  }, []);
+  }, [loadTry]);
+
+  function retryLoad() {
+    setLoadingQ(true);
+    setLoadError("");
+    setLoadTry((n) => n + 1);
+  }
 
   // 메모 수는 덤 — 못 불러오면(백엔드 배포 전 등) 단추에 숫자만 안 보인다
   useEffect(() => {
@@ -756,6 +778,13 @@ export default function SolveView({ set, onBack }) {
       <div style={S.body} className={!loadingQ && current ? "qm-solve-body qm-solve-body--fab" : "qm-solve-body"}>
         {loadingQ ? (
           <div style={S.center}>불러오는 중...</div>
+        ) : loadError ? (
+          <div style={S.loadError} role="alert">
+            문항을 불러오지 못했습니다.
+            <br />({loadError})
+            <br />
+            <button style={S.loadRetryBtn} onClick={retryLoad}>다시 시도</button>
+          </div>
         ) : questions.length === 0 ? (
           <div style={S.center}>문항이 없습니다.</div>
         ) : (

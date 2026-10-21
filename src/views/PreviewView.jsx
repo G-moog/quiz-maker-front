@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getQuestions } from "../api/quiz";
+import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
 
@@ -70,6 +71,12 @@ const S = {
   answerItem: { fontSize: 14, color: "#a0a0a0", marginBottom: 8, lineHeight: 1.6, overflowWrap: "anywhere" },
   answerNum: { fontWeight: 700, color: "#34d399" },
   explanation: { color: "#8a8a8a", marginLeft: 20, fontSize: 13, overflowWrap: "anywhere" },
+  // 불러오기 실패(빈 문제지로 숨기지 않음)
+  loadError: {
+    maxWidth: 800, margin: "16px auto 0", padding: "12px 16px", borderRadius: 8, fontSize: 14,
+    border: "1px solid rgba(248,113,113,0.4)", background: "rgba(248,113,113,0.1)", color: "#f87171",
+    overflowWrap: "anywhere",
+  },
 };
 
 const printStyle = `
@@ -94,10 +101,17 @@ const printStyle = `
 
 export default function PreviewView({ set, onBack }) {
   const [questions, setQuestions] = useState([]);
+  const [loadError, setLoadError] = useState(""); // 불러오기 실패를 빈 문제지로 보이지 않게
 
   useEffect(() => {
     (async () => {
-      try { setQuestions(await getQuestions(set.id)); } catch (e) { console.error(e); }
+      try {
+        setQuestions(await getQuestions(set.id));
+      } catch (e) {
+        console.error(e);
+        // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
+        if (e.message !== SESSION_EXPIRED_MESSAGE) setLoadError(e.message || "문항을 불러오지 못했습니다.");
+      }
     })();
     const style = document.createElement("style");
     style.textContent = printStyle;
@@ -132,6 +146,12 @@ export default function PreviewView({ set, onBack }) {
           🖨 인쇄
         </button>
       </div>
+
+      {loadError && (
+        <div className="no-print" style={S.loadError} role="alert">
+          문항을 불러오지 못했습니다. ({loadError}) ← 로 돌아가 다시 열어 주세요.
+        </div>
+      )}
 
       <div className="print-sheet qm-sheet" style={S.sheet}>
         <div className="print-doc-title qm-doc-title" style={S.docTitle}>{set.title}</div>

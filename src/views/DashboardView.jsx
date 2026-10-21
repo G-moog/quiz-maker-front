@@ -4,6 +4,7 @@ import { listNotes } from "../api/notes";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
 import { groupHardSets, hardTitleOf, loadHardModeIds, saveHardModeIds } from "../utils/hardMode";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
+import { SHOW_EXCEL } from "../config";
 
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType). 휴대폰에서 누른 뒤
 // 흐리거나 떠오른 모양이 그대로 남지 않게.
@@ -53,6 +54,22 @@ const S = {
     background: "#242424", border: "1px solid #2e2e2e", color: "#a0a0a0",
     padding: "6px 14px", minHeight: 36, borderRadius: 6, cursor: "pointer", fontSize: 13,
     transition: "opacity 0.15s ease", whiteSpace: "nowrap", flexShrink: 0,
+  },
+  // 이름·배지를 누르면 작은 계정 메뉴('비밀번호 바꾸기'). 배치는 그대로 .qm-nav-who 가 정한다
+  whoWrap: { position: "relative", display: "flex", minWidth: 0 },
+  whoBtn: {
+    background: "none", border: "none", padding: "4px 0", margin: 0, minHeight: 36, minWidth: 0,
+    font: "inherit", color: "inherit", cursor: "pointer", textAlign: "inherit",
+  },
+  userMenu: {
+    position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 50, minWidth: 168,
+    background: "#1a1a1a", border: "1px solid #2e2e2e", borderRadius: 8, padding: 4,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+  },
+  userMenuItem: {
+    display: "block", width: "100%", minHeight: 40, padding: "8px 12px", textAlign: "left",
+    background: "none", border: "none", borderRadius: 6, color: "#f1f1f1", fontSize: 13, fontWeight: 600,
+    cursor: "pointer", whiteSpace: "nowrap",
   },
   // 360px 이상은 한 줄. 그보다 좁은 휴대폰에서는 넘치지 않고 단추가 다음 줄로 내려간다
   header: {
@@ -244,8 +261,24 @@ function blurGray(e) { e.target.style.borderColor = "#2e2e2e"; }
 
 const ROLE_LABEL = { ADMIN: "관리자", MANAGER: "중간관리자", USER: "일반사용자" };
 
-export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenNotes, role = "USER" }) {
-  const canExcel = role === "ADMIN" || role === "MANAGER";
+export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenNotes, onChangePassword, role = "USER" }) {
+  // 엑셀 단추는 설정(SHOW_EXCEL)으로 켤 때만 — 결정 4 미정이라 기본은 숨김(src/config.js)
+  const canExcel = SHOW_EXCEL && (role === "ADMIN" || role === "MANAGER");
+
+  // 이름·배지를 누르면 여는 계정 메뉴. 바깥을 누르거나 Esc 면 닫는다
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    function onDown(e) { if (!menuRef.current?.contains(e.target)) setMenuOpen(false); }
+    function onKey(e) { if (e.key === "Escape") setMenuOpen(false); }
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   const [sets, setSets] = useState([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -395,7 +428,8 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
     }
   }
 
-  const editErrorText = (e) => (e.message.includes("403") ? "수정 권한이 없습니다" : e.message);
+  // 403 = 칸 권한 등으로 막힘(api/supabase.js 가 status 를 붙임). '없음'(QM404)·검사 실패는 400 + 옛 문구 그대로
+  const editErrorText = (e) => (e.status === 403 ? "수정 권한이 없습니다" : e.message);
 
   async function handleEditSave() {
     const nextTitle = editTitle.trim();
@@ -406,7 +440,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
     try {
       await updateSet(editingSet.id, nextTitle, nextSubject);
     } catch (e) {
-      setEditError(e.message.includes("403") ? "수정 권한이 없습니다." : e.message);
+      setEditError(e.status === 403 ? "수정 권한이 없습니다." : e.message);
       setEditSaving(false);
       return;
     }
@@ -469,12 +503,14 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
     }
   }
 
-  // 엑셀 다운로드
-  function handleDownloadAll() { downloadAll(); }
+  // 엑셀 다운로드(아직 준비 안 됨이면 그 안내를 토스트로 — src/api/excel.js)
+  function handleDownloadAll() {
+    try { downloadAll(); } catch (err) { showToast(err.message, "error"); }
+  }
 
   function handleDownloadSet(e, id) {
     e.stopPropagation();
-    downloadSet(id);
+    try { downloadSet(id); } catch (err) { showToast(err.message, "error"); }
   }
 
   // 카드 목록: 짝인 하드 문제집은 원래 문제집 카드에 묶는다(utils/hardMode.js)
@@ -521,7 +557,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
 
   function handleDownloadTemplate(e) {
     e.preventDefault();
-    downloadTemplate();
+    try { downloadTemplate(); } catch (err) { setUploadError(err.message); }
   }
 
   return (
@@ -549,9 +585,33 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
           </div>
         )}
         <div style={S.navGroup} className="qm-nav-user">
-          <span className="qm-nav-who">
-            <span style={S.username} title={username}>{username}</span>
-            <span style={S.roleBadge(role)}>{ROLE_LABEL[role] ?? "일반사용자"}</span>
+          <span style={S.whoWrap} ref={menuRef}>
+            <button
+              type="button"
+              style={S.whoBtn}
+              className="qm-nav-who"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              title="계정 메뉴"
+            >
+              <span style={S.username} title={username}>{username}</span>
+              <span style={S.roleBadge(role)}>{ROLE_LABEL[role] ?? "일반사용자"}</span>
+            </button>
+            {menuOpen && (
+              <div role="menu" style={S.userMenu}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  style={S.userMenuItem}
+                  onClick={() => { setMenuOpen(false); onChangePassword?.(); }}
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.background = "#242424"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                >
+                  비밀번호 바꾸기
+                </button>
+              </div>
+            )}
           </span>
           <button
             style={S.logoutBtn}
