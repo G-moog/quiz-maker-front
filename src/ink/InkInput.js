@@ -9,12 +9,19 @@ import {
 //  손가락   : 하나로 끌기 = 아무 일 없음(손바닥 대비), 빈칸 한 번 터치 = 지금처럼 토글(브라우저 click 그대로),
 //             둘로 밀기 = 페이지 스크롤(떼면 관성), 벌리기(확대)는 영역의 touch-action: none 이 막는다
 //  마우스   : 왼쪽 끌기 = 필기, 움직이지 않은 클릭 = 빈칸 토글
-//  손바닥 무시: 펜이 닿아 있는 동안, 펜 호버(에어뷰)·펜을 뗀 뒤 PALM_MS 동안 손 입력(스크롤·클릭)을 받지 않는다
+//  손바닥 무시: 펜이 닿아 있는 동안, 펜 호버(에어뷰)·펜을 뗀 뒤 PALM_MS 동안 손 입력(스크롤·클릭)을 받지 않는다.
+//             영역 밖(카드 여백·화면 가장자리)에 닿은 손바닥이 브라우저 스크롤을 일으키지 않게 창의 touch 이벤트도 막는다.
+//             머리 줄·도구 막대([data-ink-palm-safe])는 펜이 닿아 있거나 막 뗀 때만 막는다(펜을 든 손으로 단추를 누를 수 있게)
 // hooks: { onBlankTap(i), onEvent(type, detail), livePath(kind) } — livePath 는 그리는 중인 선을 그릴 <path>
 // 펜 시험 페이지가 onEvent 로 무슨 일이 있었는지 센다.
 
 // 입력칸·(빈칸이 아닌) 단추 위에서 누르면 필기를 시작하지 않고 원래 동작(포커스·클릭)을 하게 둔다
 const INTERACTIVE = "input, textarea, select, a[href], label, [contenteditable]:not([contenteditable='false']), button:not([data-ink-blank])";
+// 선을 긋기 시작하면 초점을 빼 줄 입력칸(화면 자판이 내려가 글을 가리지 않게 — 필기 모드를 끄고 글을 누를 때와 같다)
+const TEXT_INPUT = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
+
+// 손바닥이 닿기 어려운 곳(머리 줄·도구 막대·안내 띠): 손바닥 무시를 짧게
+const isPalmSafe = (target) => target instanceof Element && !!target.closest("[data-ink-palm-safe]");
 
 const now = () => performance.now();
 // 이벤트 시각: 실제 입력은 이벤트 시각, 시각이 0 인 이벤트(옛 브라우저)는 지금
@@ -25,7 +32,10 @@ export class InkInput {
     this.el = el;
     this.store = store;
     this.hooks = hooks;
-    this.palm = { penDown: false, lastPenHover: -Infinity, lastPenUp: -Infinity };
+    this.palm = { penDown: false, lastPenDown: -Infinity, lastPenHover: -Infinity, lastPenUp: -Infinity };
+    this.palmTouches = new Set(); // 손바닥으로 본 손가락(touch identifier) — 뗄 때까지 브라우저 스크롤을 막는다
+    this.penTouches = new Set(); // 펜이 함께 보낸 touch(identifier) — 손바닥으로 보지 않는다
+    this.lastPenAt = null; // 마지막 펜 pointerdown 자리·때 { x, y, t }
     this.touches = new Map(); // 영역에서 시작한 손가락들
     this.gesture = null; // 두 손가락 스크롤 중
     this.active = null; // 펜·마우스로 누르고 있는 것(하나만)
@@ -39,7 +49,8 @@ export class InkInput {
     this.inertia = null;
     this.liveRaf = 0;
     for (const k of ["onDown", "onMove", "onUp", "onCancel", "onClick", "onBlockDefault",
-      "onWinDown", "onWinMove", "onWinUp", "onWinClick", "stopInertia", "stepInertia", "drawLive"]) {
+      "onWinDown", "onWinMove", "onWinUp", "onWinClick", "onWinTouch", "onWinBlur", "onVisibility",
+      "stopInertia", "stepInertia", "drawLive"]) {
       this[k] = this[k].bind(this);
     }
   }
@@ -63,6 +74,12 @@ export class InkInput {
     window.addEventListener("pointercancel", this.onWinUp, opt);
     window.addEventListener("click", this.onWinClick, true);
     window.addEventListener("wheel", this.stopInertia, { passive: true });
+    // 손바닥의 브라우저 스크롤 막기(preventDefault 를 써야 하므로 passive 아님 — 필기 모드일 때만 붙는다)
+    const touchOpt = { capture: true, passive: false };
+    for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"]) window.addEventListener(type, this.onWinTouch, touchOpt);
+    // 펜 떼기를 놓친 채 앱이 가려지거나 창이 초점을 잃으면 '펜이 닿아 있음'을 푼다
+    window.addEventListener("blur", this.onWinBlur);
+    document.addEventListener("visibilitychange", this.onVisibility);
   }
 
   detach() {
@@ -82,6 +99,12 @@ export class InkInput {
     window.removeEventListener("pointercancel", this.onWinUp, opt);
     window.removeEventListener("click", this.onWinClick, true);
     window.removeEventListener("wheel", this.stopInertia, { passive: true });
+    const touchOpt = { capture: true, passive: false };
+    for (const type of ["touchstart", "touchmove", "touchend", "touchcancel"]) window.removeEventListener(type, this.onWinTouch, touchOpt);
+    window.removeEventListener("blur", this.onWinBlur);
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    this.palmTouches.clear();
+    this.penTouches.clear();
     this.stopInertia();
     this.active = null;
     this.clearLive();
@@ -97,9 +120,11 @@ export class InkInput {
     this.stopInertia();
     if (e.pointerType === "pen") {
       this.palm.penDown = true;
+      this.palm.lastPenDown = t;
+      this.lastPenAt = { x: e.clientX, y: e.clientY, t };
       this.ignoreTouches(t);
     } else if (e.pointerType === "touch") {
-      this.touchDownBlocked = palmBlocked(this.palm, t);
+      this.touchDownBlocked = palmBlocked(this.palm, t, isPalmSafe(e.target));
     }
   }
 
@@ -129,6 +154,46 @@ export class InkInput {
   // 손바닥 무시 중에 닿은 손가락의 click 은 영역 밖(다음 문제·도구 막대 등)에서도 막는다
   onWinClick(e) {
     if (this.clickType(e) === "touch" && this.touchDownBlocked) this.block(e, "touch", "palm");
+  }
+
+  // 손바닥 무시 중에 닿거나 움직인 손가락은 뗄 때까지 손바닥으로 보고, 브라우저 스크롤(영역 밖은 touch-action 이 기본)을 막는다.
+  // 펜으로 쓰는 중에 카드 여백·화면 가장자리에 닿은 손바닥이 페이지를 움직이면 그리던 선이 글에서 어긋난다
+  onWinTouch(e) {
+    const t = timeOf(e);
+    const end = e.type === "touchend" || e.type === "touchcancel";
+    let palm = false;
+    for (const tc of e.changedTouches) {
+      const id = tc.identifier;
+      if (this.isPenTouch(tc, e.type, t)) {
+        if (end) this.penTouches.delete(id);
+        continue;
+      }
+      if (end) {
+        if (this.palmTouches.delete(id)) palm = true;
+        continue;
+      }
+      if (!this.palmTouches.has(id) && palmBlocked(this.palm, t, isPalmSafe(tc.target))) this.palmTouches.add(id);
+      if (this.palmTouches.has(id)) palm = true;
+    }
+    if (palm && e.cancelable) e.preventDefault();
+  }
+
+  // 안드로이드 크롬은 펜에도 touch 이벤트를 함께 보낸다 — 펜 자신은 손바닥이 아니다(막으면 펜으로 입력칸·단추를 못 누름).
+  // touchType 'stylus' 로 가리고, 모르는 브라우저는 펜 pointerdown 과 같은 자리·같은 때에 닿은 touch 로 가린다
+  isPenTouch(tc, type, t) {
+    if (tc.touchType === "stylus" || this.penTouches.has(tc.identifier)) return true;
+    const p = this.lastPenAt;
+    if (type !== "touchstart" || !p || t - p.t > 100 || Math.abs(tc.clientX - p.x) > 2 || Math.abs(tc.clientY - p.y) > 2) return false;
+    this.penTouches.add(tc.identifier);
+    return true;
+  }
+
+  onWinBlur() {
+    this.palm.penDown = false;
+  }
+
+  onVisibility() {
+    if (document.visibilityState === "hidden") this.palm.penDown = false;
   }
 
   // 펜이 오면 이미 닿아 있던 손가락(손바닥)은 더 받지 않는다 — 스크롤 중이면 그 자리에서 멈춤
@@ -170,12 +235,10 @@ export class InkInput {
     const { tool, color } = this.store.getSnapshot();
     // 지우개: 도구 막대에서 고르거나, S펜 옆 단추를 누른 채(buttons 2 = 옆 단추, 32 = 지우개 끝)
     const eraser = tool === "eraser" || (e.pointerType === "pen" && (e.buttons & 34) !== 0);
-    const r = this.el.getBoundingClientRect();
-    const origin = { x: r.left + window.scrollX, y: r.top + window.scrollY };
-    const p = this.local(e, origin);
+    const p = this.local(e, this.el.getBoundingClientRect());
     this.active = {
       id: e.pointerId, type: e.pointerType, x0: e.clientX, y0: e.clientY, t0: t, far: 0,
-      blank: blankEl ? Number(blankEl.dataset.inkBlank) : null, eraser, origin, last: p, shown: false, captured: false,
+      blank: blankEl ? Number(blankEl.dataset.inkBlank) : null, eraser, last: p, shown: false, captured: false,
       stroke: eraser ? null : tool === "hl"
         ? { tool: "hl", color: HL_COLOR, w: HL_WIDTH, pts: [] }
         : { tool: "pen", color, w: PEN_WIDTH, pts: [] },
@@ -194,6 +257,8 @@ export class InkInput {
     }
     const a = this.active;
     if (!a || a.id !== e.pointerId) return;
+    // 영역 자리는 움직일 때마다 다시 잰다 — 긋는 중에 위쪽 글·그림이 바뀌어 영역이 밀려도 점이 글에 맞게(좌표는 영역 기준)
+    const r = this.el.getBoundingClientRect();
     const list = typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : null;
     for (const ev of list && list.length ? list : [e]) {
       a.far = Math.max(a.far, distance(a.x0, a.y0, ev.clientX, ev.clientY));
@@ -205,20 +270,31 @@ export class InkInput {
           // 합성 이벤트·이미 뗀 포인터
         }
       }
-      const p = this.local(ev, a.origin);
+      const p = this.local(ev, r);
       if (a.eraser) {
-        if (a.far >= TAP_SLOP) this.eraseAlong(a.last, p);
+        // 숨겨 둔 채 지우개를 쓰면 보이지 않는 선이 말없이 지워지므로, 이번 한 번은 다시 보이게만 하고 지우지 않는다
+        if (a.far >= TAP_SLOP && this.reveal(a)) a.revealOnly = true;
+        if (a.far >= TAP_SLOP && !a.revealOnly) this.eraseAlong(a.last, p);
         a.last = p;
       } else {
         addPoint(a.stroke.pts, p.x, p.y, a.type === "mouse" ? 0.5 : ev.pressure);
       }
     }
     if (a.eraser) return;
-    if (!a.shown && (a.far >= TAP_SLOP || (a.type === "pen" && timeOf(e) - a.t0 >= TAP_MS))) {
-      a.shown = true;
-      if (this.store.getSnapshot().hidden) this.store.toggleHidden(); // 숨겨 둔 채 쓰면 다시 보이게
-    }
+    if (!a.shown && (a.far >= TAP_SLOP || (a.type === "pen" && timeOf(e) - a.t0 >= TAP_MS))) this.reveal(a);
     if (a.shown && !this.liveRaf) this.liveRaf = requestAnimationFrame(this.drawLive);
+  }
+
+  // 콕이 아니라 긋기(지우기)로 판정된 순간: 숨겨 둔 필기를 다시 보이게 하고, 입력칸 초점을 뺀다(화면 자판이 글을 가리지 않게).
+  // 숨김을 풀었으면 true
+  reveal(a) {
+    if (a.shown) return false;
+    a.shown = true;
+    const ae = document.activeElement;
+    if (ae instanceof HTMLElement && ae !== document.body && !this.el.contains(ae) && ae.matches(TEXT_INPUT)) ae.blur();
+    if (!this.store.getSnapshot().hidden) return false;
+    this.store.toggleHidden();
+    return true;
   }
 
   onUp(e) {
@@ -232,16 +308,20 @@ export class InkInput {
     this.active = null;
     a.far = Math.max(a.far, distance(a.x0, a.y0, e.clientX, e.clientY));
     if (isTap(a.far, t - a.t0, a.type)) {
-      // 콕: 점을 남기지 않는다. 펜은 빈칸 두 번 콕만 보고, 마우스는 뒤따르는 click 이 빈칸을 연다
+      // 콕: 점을 남기지 않는다. 펜은 빈칸 두 번 콕만 보고, 마우스는 뒤따르는 click 이 빈칸을 연다.
+      // 지우개 콕은 닿은 선을 지운다 — 필기를 숨겨 둔 때는 지우지 않고 다시 보이게만
       this.clearLive();
-      if (a.eraser) this.eraseAlong(a.last, a.last);
+      if (a.eraser) {
+        if (this.store.getSnapshot().hidden) this.store.toggleHidden();
+        else this.eraseAlong(a.last, a.last);
+      }
       if (a.type === "pen") this.penTap(a, t);
       return;
     }
     this.lastTap = null;
     this.blockMouseClick = true;
     if (a.eraser) return;
-    const p = this.local(e, a.origin);
+    const p = this.local(e, this.el.getBoundingClientRect());
     addPoint(a.stroke.pts, p.x, p.y, a.type === "mouse" ? 0.5 : e.pressure);
     // 보관소가 바로 다음 그림(마이크로태스크)에 선을 그리므로 그리던 선을 지금 지워도 깜빡이지 않는다
     const ok = this.store.addStroke(a.stroke);
@@ -369,15 +449,25 @@ export class InkInput {
     const touch = this.touches.get(e.pointerId);
     this.touches.delete(e.pointerId);
     if (!touch) return;
-    if (touch.multi && this.gesture && this.liveTouches().filter((x) => x.multi).length < 2) this.endGesture(t, true);
+    if (touch.multi) this.fingerLeft(t, true);
     // 손가락 하나로 움직이지 않고 뗀 것만 빈칸을 연다(두 손가락 제스처의 손가락·손바닥은 아님)
     this.touchClick = { ok: !touch.ignored && !touch.multi && !touch.moved, at: now() };
   }
 
   touchCancel(e, t) {
     this.touches.delete(e.pointerId);
-    if (this.gesture && this.liveTouches().filter((x) => x.multi).length < 2) this.endGesture(t, false);
+    this.fingerLeft(t, false);
     this.touchClick = null;
+  }
+
+  // 스크롤 중 손가락이 빠졌다: 둘 이상 남았으면 남은 손가락의 가운데점을 다시 잡고(셋 → 둘에서 페이지가 튀지 않게),
+  // 하나 이하면 끝(뗀 것이면 관성)
+  fingerLeft(t, fling) {
+    const g = this.gesture;
+    if (!g) return;
+    const live = this.liveTouches().filter((x) => x.multi);
+    if (live.length < 2) this.endGesture(t, fling);
+    else g.mid = midpoint(live).y;
   }
 
   endGesture(t, fling) {
@@ -435,8 +525,9 @@ export class InkInput {
   }
 
   // ── 그리기 ──
-  local(e, origin) {
-    return { x: e.clientX + window.scrollX - origin.x, y: e.clientY + window.scrollY - origin.y };
+  // 영역 왼쪽 위 기준 좌표(r = 지금 잰 영역 자리). 페이지가 움직여도 늘 지금 화면의 글 위 자리
+  local(e, r) {
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
   eraseAlong(a, b) {

@@ -9,6 +9,7 @@ import { PencilIcon } from "../components/NoteIcons";
 import { plainPreview } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
 import InkSurface from "../ink/InkSurface";
+import InkNotices from "../ink/InkNotices";
 import { InkModeButton, InkToolbar } from "../ink/InkToolbar";
 import { useInk } from "../ink/useInk";
 import { loadInkMode, saveInkMode } from "../ink/inkMode";
@@ -52,7 +53,7 @@ function scoreColor(rate) {
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType) — 휴대폰에서 누른 뒤 흐린 채 남지 않게.
 const S = {
   page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
-  // 문항 풀기 화면의 위쪽 묶음(머리줄 + 필기 모드일 때 도구 막대)을 함께 띄운다
+  // 문항 풀기 화면의 위쪽 묶음(머리줄 + 필기 모드일 때 도구 막대 + 그 아래 겹쳐 뜨는 필기 안내)을 함께 띄운다
   head: { position: "sticky", top: 0, zIndex: 10 },
   // 머리줄: ← 목록으로 | 제목(가운데, 최대 두 줄) | 진행 (+ 필기 모드). 덩어리가 맞닿거나 쪼개지지 않게
   nav: {
@@ -68,10 +69,11 @@ const S = {
     minHeight: 44, whiteSpace: "nowrap",
     transition: "color 0.15s ease",
   },
+  // 줄 수는 index.css: .qm-solve-title 두 줄, .qm-solve-title--ink(필기 모드 단추가 있는 머리 줄)는 좁은 휴대폰에서 세 줄
   navTitle: {
     flex: "1 1 0", minWidth: 0, textAlign: "center",
     fontWeight: 700, color: "#f1f1f1", lineHeight: 1.3,
-    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+    display: "-webkit-box", WebkitBoxOrient: "vertical", overflow: "hidden",
     overflowWrap: "anywhere",
   },
   navProgress: { fontSize: 13, color: "#a0a0a0", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 },
@@ -723,7 +725,8 @@ export default function SolveView({ set, onBack }) {
 
   return (
     <div style={S.page}>
-      <div style={S.head}>
+      {/* data-ink-palm-safe: 손바닥이 닿기 어려운 곳 — 필기 모드의 손바닥 무시를 짧게(펜을 든 손으로 단추를 누를 수 있게) */}
+      <div style={S.head} data-ink-palm-safe="">
         <nav style={S.nav} className="qm-solve-nav">
           <div style={S.navLeft}>
             <button
@@ -735,13 +738,14 @@ export default function SolveView({ set, onBack }) {
               ← 목록으로
             </button>
           </div>
-          <span style={S.navTitle} className="qm-solve-title">{set.title}</span>
+          <span style={S.navTitle} className="qm-solve-title qm-solve-title--ink">{set.title}</span>
           <span style={S.navProgress}>
             {questions.length > 0 ? currentIndex + 1 : 0} / {questions.length}
           </span>
           {!loadingQ && current && <InkModeButton on={inkOn} onToggle={toggleInk} />}
         </nav>
         {inkActive && <InkToolbar store={ink} />}
+        {!loadingQ && current && <InkNotices store={ink} enabled={inkActive} />}
       </div>
 
       <div style={S.progressBar}>

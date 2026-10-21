@@ -10,7 +10,7 @@ import { TrashIcon } from "../components/NoteIcons";
 const S = {
   toggle: (on) => ({
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-    height: 36, minWidth: 40, borderRadius: 8, flexShrink: 0, whiteSpace: "nowrap",
+    height: 36, borderRadius: 8, flexShrink: 0, whiteSpace: "nowrap",
     fontSize: 13, fontWeight: 700, cursor: "pointer",
     background: on ? "rgba(255,77,79,0.16)" : "transparent",
     border: `1px solid ${on ? "#ff4d4f" : "#3a3a3a"}`,
@@ -43,7 +43,9 @@ export function InkModeButton({ on, onToggle }) {
   );
 }
 
-function ToolButton({ active = false, pressed, disabled = false, label, onClick, children }) {
+// toggle: 고르는 단추(펜 색·형광펜·지우개·숨기기)는 고르지 않은 때도 aria-pressed="false" —
+// 화면 읽기 프로그램이 켜고 끄는 단추로 읽어 지금 어느 도구인지 견줄 수 있게. 되돌리기·전체 지우기는 토글이 아님
+function ToolButton({ active = false, toggle = false, disabled = false, label, onClick, children }) {
   return (
     <button
       type="button"
@@ -51,7 +53,7 @@ function ToolButton({ active = false, pressed, disabled = false, label, onClick,
       style={{ ...S.tool(active), opacity: disabled ? 0.35 : 1, cursor: disabled ? "default" : "pointer" }}
       onClick={onClick}
       disabled={disabled}
-      aria-pressed={pressed ?? (active || undefined)}
+      aria-pressed={toggle ? active : undefined}
       aria-label={label}
       title={label}
     >
@@ -68,6 +70,7 @@ export function InkToolbar({ store }) {
       {PEN_COLORS.map((c) => (
         <ToolButton
           key={c.value}
+          toggle
           active={s.tool === "pen" && s.color === c.value}
           label={`펜 ${c.name}`}
           onClick={() => store.setPen(c.value)}
@@ -75,10 +78,10 @@ export function InkToolbar({ store }) {
           <span style={S.dot(c.value)} />
         </ToolButton>
       ))}
-      <ToolButton active={s.tool === "hl"} label="형광펜" onClick={() => store.setTool("hl")}>
+      <ToolButton toggle active={s.tool === "hl"} label="형광펜" onClick={() => store.setTool("hl")}>
         <span style={{ color: HL_COLOR, display: "inline-flex" }}><HighlighterIcon /></span>
       </ToolButton>
-      <ToolButton active={s.tool === "eraser"} label="지우개 (닿은 선을 통째로)" onClick={() => store.setTool("eraser")}>
+      <ToolButton toggle active={s.tool === "eraser"} label="지우개 (닿은 선을 통째로)" onClick={() => store.setTool("eraser")}>
         <EraserIcon />
       </ToolButton>
       <span className="qm-ink-sep" aria-hidden="true" />
@@ -95,7 +98,7 @@ export function InkToolbar({ store }) {
         <TrashIcon size={19} />
       </ToolButton>
       <ToolButton
-        pressed={s.hidden}
+        toggle
         active={s.hidden}
         label={s.hidden ? "필기 다시 보이기" : "필기 잠깐 숨기기"}
         onClick={() => store.toggleHidden()}

@@ -278,6 +278,7 @@ textarea::-webkit-resizer {
 }
 .qm-solve-title {
   font-size: 15px;
+  -webkit-line-clamp: 2;
 }
 .qm-solve-spacer {
   width: 80px;
@@ -315,7 +316,19 @@ textarea::-webkit-resizer {
    막대는 위에 두어 글을 쓰는 손바닥(아래쪽)과 오른쪽 아래 '질문 메모' 단추에 닿지 않게 한다.
    단추 40px(좁은 휴대폰 36px): 손가락·펜으로 누르기 쉽고 8개가 한 줄에 들어가게 */
 .qm-ink-toggle {
+  min-width: 40px;
   padding: 0 11px;
+}
+/* 필기 영역의 입력을 글 상자 바깥 카드 여백까지 넓힌다(줄 맨 앞 글자 왼쪽·마지막 줄 아래에서 시작한 선도 그어지게).
+   좌우는 카드 안쪽 여백(24px, 휴대폰 16px) 끝까지, 위아래는 옆 요소와 겹치지 않을 만큼(위 문항 번호 줄과 16px,
+   아래 '모두 보기' 줄과 18px, 보기·입력칸과 24px 떨어져 있음). 글 위치·좌표 원점(글 상자 왼쪽 위)은 그대로 */
+.qm-ink-bleed {
+  position: absolute;
+  z-index: -2;
+  top: -12px;
+  bottom: -14px;
+  left: -24px;
+  right: -24px;
 }
 .qm-ink-bar {
   display: flex;
@@ -573,6 +586,10 @@ textarea::-webkit-resizer {
   .qm-ink-toggle-label {
     display: none;
   }
+  .qm-ink-bleed {
+    left: -16px;
+    right: -16px;
+  }
   .qm-notes-body {
     padding: 12px 12px 48px;
   }
@@ -599,6 +616,25 @@ textarea::-webkit-resizer {
   }
   .qm-ink-sep {
     margin: 0 2px;
+  }
+  /* 좁은 휴대폰: 필기 모드 단추를 더 작게(32px)하고 그 단추가 있는 머리 줄(문항 풀기)의 제목은 세 줄까지 —
+     단추만큼 좁아진 제목 칸에서 긴 제목이 '…'로 잘리지 않게(넓은 화면·모드 고르기·결과 화면은 예전처럼 두 줄) */
+  .qm-ink-toggle {
+    min-width: 32px;
+    padding: 0 6px;
+  }
+  .qm-solve-title--ink {
+    -webkit-line-clamp: 3;
+  }
+}
+
+/* 아주 좁은 휴대폰(320px): 도구 막대 단추 8개가 한 줄에 넘치지 않게 간격을 줄인다 */
+@media (max-width: 340px) {
+  .qm-ink-bar {
+    gap: 1px;
+  }
+  .qm-ink-sep {
+    margin: 0 1px;
   }
 }
 

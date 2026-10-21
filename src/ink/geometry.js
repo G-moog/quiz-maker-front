@@ -19,6 +19,8 @@ export const TAP_SLOP = 6; // '콕': 움직임 이 px 미만
 export const TAP_MS = 300; // ……이고 누른 시간이 이 ms 미만(펜). 마우스는 시간 상관없이 안 움직였으면 클릭
 export const DOUBLE_TAP_MS = 400; // 두 번째 콕이 첫 콕을 뗀 뒤 이 ms 안에 눌리면 두 번 콕
 export const PALM_MS = 500; // 펜 호버·펜 뗀 뒤 이 ms 동안 손(touch) 입력 무시
+export const PALM_SAFE_MS = 150; // 머리 줄·도구 막대(손바닥이 닿기 어려운 곳)는 펜을 뗀 뒤 이만큼만 무시하고 호버는 보지 않음
+export const PEN_STUCK_MS = 2000; // '펜이 닿아 있음'은 마지막 펜 입력 뒤 이만큼만 믿는다(떼기를 놓쳐도 손이 계속 막히지 않게)
 export const TOUCH_SLOP = 10; // 손가락 한 번 터치로 볼 움직임 한도(넘으면 끈 것 — 빈칸을 열지 않음)
 
 export function distance(ax, ay, bx, by) {
@@ -37,9 +39,14 @@ export function isDoubleTap(prev, tap) {
   return gap >= 0 && gap <= DOUBLE_TAP_MS;
 }
 
-// 손바닥 무시: 펜이 닿아 있거나, 펜 호버·펜 뗀 뒤 PALM_MS 안이면 손 입력을 받지 않는다
-export function palmBlocked({ penDown, lastPenHover, lastPenUp }, now) {
-  return !!penDown || now - lastPenHover < PALM_MS || now - lastPenUp < PALM_MS;
+// 손바닥 무시: 펜이 닿아 있거나, 펜 호버·펜 뗀 뒤 PALM_MS 안이면 손 입력을 받지 않는다.
+// 펜이 닿아 있다는 표시는 마지막 펜 입력(누름·움직임, lastPenHover 는 닿은 채 움직임도 포함) 뒤 PEN_STUCK_MS 까지만 믿는다.
+// (lastPenDown 을 모르는 예전 모양이면 표시를 그대로 믿는다)
+// safe(머리 줄·도구 막대): 펜이 닿아 있거나 뗀 직후(PALM_SAFE_MS)만 — 펜을 든 손으로도 단추를 누를 수 있게
+export function palmBlocked({ penDown, lastPenDown, lastPenHover = -Infinity, lastPenUp = -Infinity }, now, safe = false) {
+  const down = !!penDown && (lastPenDown === undefined || now - Math.max(lastPenDown, lastPenHover) < PEN_STUCK_MS);
+  if (safe) return down || now - lastPenUp < PALM_SAFE_MS;
+  return down || now - lastPenHover < PALM_MS || now - lastPenUp < PALM_MS;
 }
 
 // ── 두 손가락 스크롤 ──
