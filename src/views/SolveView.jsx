@@ -1,12 +1,18 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { getQuestions } from "../api/quiz";
 import { listNotes } from "../api/notes";
 import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
+import FillBlank from "../components/FillBlank";
 import QuestionNoteSheet from "../components/QuestionNoteSheet";
 import { PencilIcon } from "../components/NoteIcons";
 import { plainPreview } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
+import InkSurface from "../ink/InkSurface";
+import { InkModeButton, InkToolbar } from "../ink/InkToolbar";
+import { useInk } from "../ink/useInk";
+import { loadInkMode, saveInkMode } from "../ink/inkMode";
+import { textHash } from "../ink/geometry";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 
@@ -28,24 +34,7 @@ function normalizeType(type) {
   return map[lower] ?? lower;
 }
 
-// FILL 빈칸 버튼 스타일
-//  표 칸 안(inTable): 좁은 칸을 넘지 않게 여백·테두리를 줄임. 연 상태의 긴 정답은 버튼 안에서 줄바꿈
-//  가린 상태의 번호는 줄바꿈 금지 — 칸이 좁아도 "13" 이 "1/3" 처럼 세로로 쪼개지지 않게
-function fillBlankBtnStyle(revealed, inTable = false) {
-  return {
-    display: "inline-flex", alignItems: "center", justifyContent: "center",
-    minWidth: inTable ? "min(40px, 100%)" : 64, maxWidth: "100%",
-    padding: inTable ? "1px 3px" : "2px 14px", margin: inTable ? "1px 0" : "0 3px",
-    verticalAlign: "middle", borderRadius: inTable ? 5 : 6,
-    fontSize: inTable ? 13 : 14, fontWeight: 700, cursor: "pointer",
-    border: `${inTable ? 1.5 : 2}px ${revealed ? "solid" : "dashed"} #f59e0b`,
-    background: revealed ? "#f59e0b" : "transparent",
-    color: revealed ? "#1a1a1a" : "#f59e0b",
-    transition: "all 0.2s ease",
-    lineHeight: 1.4,
-    ...(revealed ? {} : { whiteSpace: "nowrap", overflowWrap: "normal" }),
-  };
-}
+// FILL 빈칸 버튼 모양은 components/FillBlank.jsx (펜 시험 페이지와 함께 씀)
 
 function parseOptions(opts) {
   if (!opts) return [];
@@ -63,7 +52,9 @@ function scoreColor(rate) {
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType) — 휴대폰에서 누른 뒤 흐린 채 남지 않게.
 const S = {
   page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
-  // 머리줄: ← 목록으로 | 제목(가운데, 최대 두 줄) | 진행. 세 덩어리가 맞닿거나 쪼개지지 않게
+  // 문항 풀기 화면의 위쪽 묶음(머리줄 + 필기 모드일 때 도구 막대)을 함께 띄운다
+  head: { position: "sticky", top: 0, zIndex: 10 },
+  // 머리줄: ← 목록으로 | 제목(가운데, 최대 두 줄) | 진행 (+ 필기 모드). 덩어리가 맞닿거나 쪼개지지 않게
   nav: {
     background: "#1a1a1a", borderBottom: "1px solid #2e2e2e",
     display: "flex", alignItems: "center", gap: 8,
@@ -359,6 +350,9 @@ export default function SolveView({ set, onBack }) {
   const [noteCount, setNoteCount] = useState(null);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
+  // 필기 모드(S펜): 켬/끔은 이 기기에 기억(inkMode.js). 필기는 문항마다 이 기기(IndexedDB)에 — src/ink/
+  const [inkOn, setInkOn] = useState(loadInkMode);
+  const [username] = useState(() => localStorage.getItem("username") || "");
 
   useEffect(() => {
     (async () => {
@@ -393,6 +387,24 @@ export default function SolveView({ set, onBack }) {
   const current = questions[currentIndex];
   const answered = results[currentIndex] !== undefined;
   const result = results[currentIndex];
+
+  // 필기: 열쇠 "<아이디>:<문제집 id>:<문항 id>"(하드 문제집은 id 가 달라 필기도 따로).
+  // 본문 지문이 저장 때와 다르면(문항을 고침) 예전 필기는 숨긴다 — 빈칸 문항은 정답도 넣는다(빈칸 폭이 정답 길이를 따름)
+  const inkKey = current ? `${username}:${set.id}:${current.id}` : null;
+  const inkSource = current
+    ? [current.type, current.text || "", normalizeType(current.type) === "fill" ? parseAnswers(current.answers).join("\u0001") : ""].join("\u0000")
+    : "";
+  const inkHash = useMemo(() => textHash(inkSource), [inkSource]);
+  const [ink, hasInk] = useInk(inkKey, inkHash);
+  const inkActive = inkOn && !!current && mode !== null && !done;
+  // 필기 층: 필기 모드를 켰거나, 이 문항에 보여 줄 필기가 있을 때(이때 빈칸은 열고 닫아도 크기가 그대로 — FillBlank fixed)
+  const inkLayer = inkActive || hasInk;
+
+  function toggleInk() {
+    const next = !inkOn;
+    setInkOn(next);
+    saveInkMode(next);
+  }
   // 진행 표시: 머리줄 숫자는 지금 보는 문항 번호, 막대는 끝낸 문항 수(지나온 문항 + 지금 문항을 채점했으면 1).
   // 빈칸·답안 이미지 문항은 채점 기록이 없어 예전 '채점한 수' 기준으로는 '0 / 1'·0% 에 멈춰 있었다
   const doneCount = currentIndex + (answered ? 1 : 0);
@@ -711,22 +723,26 @@ export default function SolveView({ set, onBack }) {
 
   return (
     <div style={S.page}>
-      <nav style={S.nav} className="qm-solve-nav">
-        <div style={S.navLeft}>
-          <button
-            style={S.backBtn}
-            onClick={onBack}
-            onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
-            onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
-          >
-            ← 목록으로
-          </button>
-        </div>
-        <span style={S.navTitle} className="qm-solve-title">{set.title}</span>
-        <span style={S.navProgress}>
-          {questions.length > 0 ? currentIndex + 1 : 0} / {questions.length}
-        </span>
-      </nav>
+      <div style={S.head}>
+        <nav style={S.nav} className="qm-solve-nav">
+          <div style={S.navLeft}>
+            <button
+              style={S.backBtn}
+              onClick={onBack}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+            >
+              ← 목록으로
+            </button>
+          </div>
+          <span style={S.navTitle} className="qm-solve-title">{set.title}</span>
+          <span style={S.navProgress}>
+            {questions.length > 0 ? currentIndex + 1 : 0} / {questions.length}
+          </span>
+          {!loadingQ && current && <InkModeButton on={inkOn} onToggle={toggleInk} />}
+        </nav>
+        {inkActive && <InkToolbar store={ink} />}
+      </div>
 
       <div style={S.progressBar}>
         <div style={S.progressFill(progressPct)} />
@@ -766,7 +782,9 @@ export default function SolveView({ set, onBack }) {
 
               {/* 문제 텍스트 (빈칸 채우기는 아래 토글 UI에서 렌더링) */}
               {qtype !== "fill" && (
-                <div style={S.qText}><TableAwareText text={current.text} /></div>
+                <InkSurface store={ink} enabled={inkActive} layerOn={inkLayer} style={S.qText}>
+                  <TableAwareText text={current.text} />
+                </InkSurface>
               )}
 
               {/* 문제 이미지 */}
@@ -874,21 +892,27 @@ export default function SolveView({ set, onBack }) {
                   {/* 문제 텍스트 + 빈칸 토글 버튼 (표 문법 포함 가능)
                       가린 빈칸에는 번호(i + 1)를 표시 — 글·표 칸을 통틀어 읽는 순서대로 answers[i] 와 같은 번호.
                       줄 간격 2.1: 번호 단추(높이 약 28px)가 줄(31.5px) 안에 들어가 줄이 들쭉날쭉하지 않는 가장 촘촘한 값 */}
-                  <div style={{ fontSize: 15, lineHeight: 2.1, color: "#f1f1f1", wordBreak: "keep-all" }}>
+                  <InkSurface
+                    store={ink}
+                    enabled={inkActive}
+                    layerOn={inkLayer}
+                    onBlankTap={toggleFill}
+                    style={{ fontSize: 15, lineHeight: 2.1, color: "#f1f1f1", wordBreak: "keep-all" }}
+                  >
                     <TableAwareText
                       text={current.text}
                       renderBlank={(i, { inTable }) => (
-                        <button
-                          className="qm-blank"
-                          style={fillBlankBtnStyle(fillRev[i], inTable)}
-                          onClick={() => toggleFill(i)}
-                          title={fillRev[i] ? "클릭하여 가리기" : `클릭하여 ${i + 1}번 빈칸 정답 확인`}
-                        >
-                          {fillRev[i] ? (fillAnswers[i] ?? "?") : i + 1}
-                        </button>
+                        <FillBlank
+                          index={i}
+                          revealed={fillRev[i]}
+                          answer={fillAnswers[i]}
+                          inTable={inTable}
+                          fixed={inkLayer}
+                          onToggle={toggleFill}
+                        />
                       )}
                     />
-                  </div>
+                  </InkSurface>
                   {/* 모두 보기 / 모두 가리기 */}
                   <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
                     <button
