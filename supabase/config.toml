@@ -1,0 +1,5 @@
+# Supabase CLI 설정 — 손으로 최소 내용만 둔다(설계서 2.2·7.2절).
+# [remotes]·[storage.buckets]·[auth] 블록은 두지 않는다. 이런 블록이 있으면 config.toml 의 Auth 기본값
+# (가입 켜짐, site_url = 127.0.0.1)이 운영에 적용되어 대시보드에서 끈 가입이 다시 켜질 수 있다.
+# 그림 버킷은 migrations/20261023000400_qm_storage.sql 한 곳에서만 정의한다.
+project_id = "quiz-maker"

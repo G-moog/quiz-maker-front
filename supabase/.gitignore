@@ -1,0 +1,4 @@
+# Supabase CLI 가 만드는 로컬 파일(link 결과·브랜치·비밀값)은 저장소에 올리지 않는다
+.temp
+.branches
+.env
