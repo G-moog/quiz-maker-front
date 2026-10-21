@@ -1,0 +1,9 @@
+{
+  "note": "supabase/migrations 파일의 sha256(BOM 을 빼고 줄바꿈을 LF 로 맞춘 뒤). 적용된 파일이 바뀌면 npm run test:db 가 실패한다. 새 파일은 node test/db/lock.mjs --add (supabase/README.md)",
+  "files": {
+    "20261023000100_qm_tables.sql": "8097eda6c3e8ae181a0bae570e4b442ed6a4d44920a1aed53f9bac282b2e9a5e",
+    "20261023000200_qm_api.sql": "d782588a7be79f583cbd7a1eac4abcf0631ad39ceb8dc1420103bb79d4b6f736",
+    "20261023000300_qm_import.sql": "1aa89d0b14121e48782a526dbda4e52c8e3603bd8ff5d3d529d0ecff77873710",
+    "20261023000400_qm_storage.sql": "f1858481ec6cc9a8f8435129ca27c6405bd155185a29ccc226d30d93efabebb1"
+  }
+}

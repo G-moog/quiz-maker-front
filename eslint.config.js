@@ -18,4 +18,12 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    // DB 시험(Node 에서 돎)
+    files: ['test/**/*.mjs'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: globals.node,
+    },
+  },
 ])
