@@ -1404,8 +1404,10 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
               {/* 문항 번호 + 유형 (+ 하드로/보통으로 · ★ 표시 · ★만 가리기, 본문이 긴 빈칸 문항은 목차·모두 보기/가리기 —
                   긴 본문 끝까지 내려가지 않아도 되게) */}
               <div style={S.qMeta}>
-                <span style={S.qNum}>Q{currentIndex + 1}</span>
-                <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype] ?? "학습"}</span>
+                {/* 문항 하나짜리 빈칸 문제집(노션 페이지)은 'Q1 · 빈칸 채우기'가 알려 주는 것이 없어 빼고 단추 자리로 —
+                    휴대폰(412px)에서 머리 줄이 한 줄에 들어가게 */}
+                {!singleFill && <span style={S.qNum}>Q{currentIndex + 1}</span>}
+                {!singleFill && <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype] ?? "학습"}</span>}
                 {((pair && onSwitchSet) || starTools) && (
                   <div style={S.qMetaBtns}>
                     {pair && onSwitchSet && (
