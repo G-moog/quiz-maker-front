@@ -3,10 +3,10 @@
 // 키가 공개 키 꼴이 아니면 앱이 시작하지 않고(api/supabase.js) 빌드도 실패한다(vite.config.js).
 // 이 파일은 브라우저(앱)와 Node(vite.config.js·api/keepalive.js)가 함께 읽으므로 다른 파일을 불러오지 않는다.
 
-// Supabase 프로젝트 주소(예: "https://abcdefghijklmnop.supabase.co"). 프로젝트를 만든 뒤 채운다 — 지금은 비어 있음
-export const SUPABASE_URL = "";
-// publishable 키(sb_publishable_ 로 시작). 지금은 비어 있음
-export const SUPABASE_PUBLISHABLE_KEY = "";
+// Supabase 프로젝트 주소(2026-10-22 만든 quiz-maker 프로젝트, 서울)
+export const SUPABASE_URL = "https://mcqcmstyecoktxbozqyg.supabase.co";
+// publishable 키(sb_publishable_ 로 시작하는 공개 키)
+export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_PwxvwnquiYrE4LjVppTXhw_3JgilTg_";
 // 운영 주소(Vercel production 도메인, 호스트 이름만. 예: "quiz-maker-xx.vercel.app" — https:// · 경로 · 끝의 / 없이).
 // Vercel 프로젝트를 만든 뒤 채운다 — 지금은 없음. 꼴이 틀리면 앱이 시작하지 않고 빌드도 실패한다(assertProdHosts).
 // 여기 없는 주소(미리보기·로컬)에서는 리허설 띠나 '운영 데이터' 확인을 보인다(설계서 3.4절).
