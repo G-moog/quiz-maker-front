@@ -99,7 +99,7 @@ test('저장소의 지금 설정값은 검사를 통과하거나 아직 비어 �
   assert.ok(r.ok || r.empty, JSON.stringify(r));
   assert.ok(!String(SUPABASE_PUBLISHABLE_KEY).startsWith('sb_secret_'));
   assert.ok(Array.isArray(PROD_HOSTS));
-  assert.equal(REQUIRED_SCHEMA, 4);
+  assert.equal(REQUIRED_SCHEMA, 5);
 });
 
 test('주소 종류: 운영 · 옛 Railway · 그 밖(미리보기·로컬)', () => {
@@ -126,7 +126,7 @@ test('주소 종류: Vercel 운영 빌드는 어느 주소로 열어도 운영(g
 });
 
 test('qm_me 결과 → 화면(설계서 3.4절 순서)', () => {
-  const me = (o) => ({ ready: true, username: 'admin-user', role: 'ADMIN', schemaVersion: 4, live: false, ...o });
+  const me = (o) => ({ ready: true, username: 'admin-user', role: 'ADMIN', schemaVersion: 5, live: false, ...o });
   assert.deepEqual(decideAfterMe(null, 'prod', 4), { screen: 'error' });
   // 판이 낮으면 계정·live 보다 먼저 '서버 준비 중'
   assert.deepEqual(decideAfterMe(me({ schemaVersion: 3 }), 'preview', 4), { screen: 'not-ready' });

@@ -15,7 +15,10 @@ const DESIGN_FILES = [
   '20261023000200_qm_api.sql',
   '20261023000300_qm_import.sql',
   '20261023000400_qm_storage.sql',
+  '20261023000500_qm_safeupdate.sql',   // 2026-10-22 Supabase safeupdate 맞춤(설계 뒤 더함)
 ];
+// 마지막 마이그레이션이 올리는 판
+const LATEST_SCHEMA = 5;
 const TABLES = ['qm_settings', 'profiles', 'question_sets', 'questions', 'question_notes'];
 
 // 앱 QuestionNoteSheet.jsx 의 TARGET_GONE 정규식을 그대로 읽는다(문구를 바꾸면 앱 판정이 깨지는지 여기서 잡힘)
@@ -73,7 +76,7 @@ test('1. 마이그레이션을 두 번 돌려도 오류 없음·결과 같음, m
   await runMigrations(db);
   const second = await catalogSnapshot(db);
   assert.deepEqual(second, first, '두 번째 적용 뒤 스키마 상태가 달라졌습니다(멱등 아님)');
-  assert.equal(first.settings[0].schema_version, 4);
+  assert.equal(first.settings[0].schema_version, LATEST_SCHEMA);
   assert.equal(first.settings[0].live, false);
   await db.close();
 
@@ -425,7 +428,7 @@ test('9. anon: public·qm_private 의 모든 함수 중 qm_schema_version 만 �
     assert.deepEqual(fns.filter((f) => !f.auth_x).map((f) => f.sig), [], 'authenticated 가 못 부르는 qm_ 함수가 있습니다');
 
     // 실제로 불러 봄
-    assert.equal(await rpc(db, ANON, 'qm_schema_version'), 4);
+    assert.equal(await rpc(db, ANON, 'qm_schema_version'), LATEST_SCHEMA);
     for (const fn of ['qm_me', 'qm_list_sets', 'qm_list_notes', 'qm_import_status', 'qm_import_close', 'qm_import_reset']) {
       await expectError(rpc(db, ANON, fn), '42501', /permission denied for function/);
     }
@@ -582,13 +585,13 @@ test('13. bootstrap: 사용자 2명·익명·관리자 있음은 거절, 같은 
   assert.deepEqual(r1, { username: 'admin-user', role: 'ADMIN', created: true });
   const r2 = await rpc(db, authed(id), 'qm_bootstrap_admin', { p_username: 'someone-else' });
   assert.deepEqual(r2, { username: 'admin-user', role: 'ADMIN', created: false });
-  assert.deepEqual(await rpc(db, authed(id), 'qm_me'), { ready: true, username: 'admin-user', role: 'ADMIN', schemaVersion: 4, live: false });
+  assert.deepEqual(await rpc(db, authed(id), 'qm_me'), { ready: true, username: 'admin-user', role: 'ADMIN', schemaVersion: LATEST_SCHEMA, live: false });
 
   // 관리자가 있는데 두 번째 사용자가 생김 → 거절(가입 틈에 생긴 사용자가 관리자를 빼앗지 못함)
   const second = await addAuthUser(db);
   await expectError(rpc(db, authed(second), 'qm_bootstrap_admin', { p_username: 'thief' }), 'QM403', /^사용자가 정확히 한 명일 때만/);
   // 계정 준비 전: 판 번호는 보이고(시작 화면 판정), 설정 줄(live 등)은 보이지 않음
-  assert.deepEqual(await rpc(db, authed(second), 'qm_me'), { ready: false, username: null, role: null, schemaVersion: 4, live: null });
+  assert.deepEqual(await rpc(db, authed(second), 'qm_me'), { ready: false, username: null, role: null, schemaVersion: LATEST_SCHEMA, live: null });
   await expectError(rpc(db, authed(second), 'qm_list_sets'), 'QM403', /^계정 준비가 끝나지 않았습니다/);
   // 관리자 둘은 고유 색인이 막음(대시보드에서 손으로 넣어도)
   await expectError(sql(db, OWNER, "insert into public.profiles (id, username, role) values ($1, 'admin2', 'ADMIN')", [second]), '23505', /profiles_one_admin/);
@@ -727,7 +730,7 @@ test('17. qm_import_status 의 다음 번호가 setval 과 맞음', async () => 
   const admin = await bootstrapAdmin(db);
   const st0 = await rpc(db, admin, 'qm_import_status');
   assert.deepEqual(st0.nextIds, { sets: 1, questions: 1, notes: 1 });
-  assert.deepEqual([st0.live, st0.schemaVersion, st0.importedAt, st0.importMax, st0.lastUserWriteAt], [false, 4, null, null, null]);
+  assert.deepEqual([st0.live, st0.schemaVersion, st0.importedAt, st0.importMax, st0.lastUserWriteAt], [false, LATEST_SCHEMA, null, null, null]);
 
   await rpc(db, admin, 'qm_import_set', { p_set: legacySet(30, [300, 310]) });
   await rpc(db, admin, 'qm_import_notes', { p_notes: [legacyNote(40, 30, 300)] });
@@ -905,7 +908,7 @@ test('재현 검토4·10: 프로필 없는 로그인은 설정 줄을 못 읽음
   await rpc(db, admin, 'qm_import_finish', { p_floor: {} });
   const stranger = authed(await addAuthUser(db));
   assert.deepEqual(await sql(db, stranger, 'select * from public.qm_settings'), []);
-  assert.equal((await rpc(db, stranger, 'qm_me')).schemaVersion, 4);
+  assert.equal((await rpc(db, stranger, 'qm_me')).schemaVersion, LATEST_SCHEMA);
   // 프로필이 있는 사용자는 읽음
   assert.equal((await sql(db, admin, 'select live from public.qm_settings')).length, 1);
   // 낯선 사용자는 표에 넣지 못함(외래키), 남의 행은 보이지 않음
@@ -1020,5 +1023,37 @@ test('재현 검토13(받아들임): options 의 소수·지수·-0 꼴은 MySQL
   assert.equal(q.options, '[2.50, 100, 1.0, 0, 12345678901234567890]');   // MySQL 이면 [2.5, 100.0, 1.0, -0.0, 1.2345678901234567e19]
   assert.equal((await rpc(db, u, 'qm_add_question', { p_set_id: s.id, p_question: { options: '' } })).options, null);
   await expectError(rpc(db, u, 'qm_add_question', { p_set_id: s.id, p_question: { answerIndex: '' } }), '22P02');
+  await db.close();
+});
+
+// Supabase 는 Data API 요청에 pg-safeupdate 를 켜 둔다: API 로 부른 함수 안이라도 WHERE 없는 UPDATE·DELETE 는
+// "UPDATE requires a WHERE clause" 로 거절된다. PGlite 에는 이 장치가 없어 2026-10-22 리허설 넣기에서야 드러났다.
+// 마지막 판의 함수 정의(pg_proc)를 훑어 같은 실수가 다시 들어오지 않게 막는다(INSERT … ON CONFLICT DO UPDATE·SELECT … FOR UPDATE 는 제외).
+function unsafeWrites(rows) {
+  const bad = [];
+  for (const r of rows) {
+    const src = String(r.prosrc).replace(/--[^\n]*/g, '');
+    for (const m of src.matchAll(/\b(update|delete\s+from)\s+[\w."]+[\s\S]*?(?:;|$)/gi)) {
+      const before = src.slice(Math.max(0, m.index - 5), m.index).toLowerCase();
+      if (/\b(do|for)\s+$/.test(before)) continue;
+      if (/^update\s+(or|of)\b/i.test(m[0])) continue;
+      if (!/\bwhere\b/i.test(m[0])) bad.push(`${r.fn}: ${m[0].replace(/\s+/g, ' ').slice(0, 90)}`);
+    }
+  }
+  return bad;
+}
+
+test('20. Supabase safeupdate 흉내: public·qm_private 함수 안에 WHERE 없는 UPDATE·DELETE 가 없다', async () => {
+  const db = await createDb();
+  const rows = await sql(db, OWNER, `
+    select n.nspname || '.' || p.proname as fn, p.prosrc
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname in ('public', 'qm_private') and p.prokind = 'f'`);
+  assert.ok(rows.length > 20, `함수를 너무 적게 읽었습니다(${rows.length})`);
+  assert.deepEqual(unsafeWrites(rows), [], 'Supabase 에서 거절될 WHERE 없는 쓰기가 있습니다');
+  // 검사가 실제로 잡는지: 옛 판(⑤ 적용 전)의 정의는 걸려야 한다
+  const old = readMigration('20261023000300_qm_import.sql');
+  const oldBad = unsafeWrites([{ fn: 'old300', prosrc: old.slice(old.indexOf('qm_import_reset'), old.indexOf('qm_import_set')) }]);
+  assert.equal(oldBad.length, 1, `옛 qm_import_reset 의 WHERE 없는 UPDATE 를 잡지 못했습니다: ${JSON.stringify(oldBad)}`);
   await db.close();
 });

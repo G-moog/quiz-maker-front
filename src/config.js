@@ -15,7 +15,7 @@ export const PROD_HOSTS = [];
 // 옛 Railway 앱 주소: 여기서 열리면 '주소가 바뀌었습니다' 화면만 보인다
 export const LEGACY_APP_HOST = "quiz-maker.up.railway.app";
 // 앱이 요구하는 DB 판(supabase/migrations 의 마지막 schema_version). DB 가 이보다 낮으면 '서버 준비 중'
-export const REQUIRED_SCHEMA = 4;
+export const REQUIRED_SCHEMA = 5;   // ⑤ safeupdate 맞춤(2026-10-22) 이 있어야 쓰기가 됨
 // 엑셀 단추(전체 다운로드·엑셀 업로드·카드의 ⬇ 엑셀). 결정 4(엑셀)가 미정이라 숨긴다.
 // true 로 바꾸기 전에 src/api/excel.js 를 브라우저 엑셀(설계서 5.1절)로 다시 써야 한다 — 지금 그 함수들은 '준비 안 됨' 오류만 낸다
 export const SHOW_EXCEL = false;
