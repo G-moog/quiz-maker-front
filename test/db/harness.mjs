@@ -64,8 +64,10 @@ export function authed(sub, { isAnonymous = false } = {}) {
 }
 
 // 한 요청 = 한 트랜잭션(PostgREST 와 같은 꼴). 오류면 되돌리고 그대로 던진다.
-export async function sql(db, who, text, params = []) {
+// readOnly: PostgREST 는 STABLE·IMMUTABLE 함수를 읽기 전용 트랜잭션으로 부른다(POST 여도) — rpc() 가 그때 켠다
+export async function sql(db, who, text, params = [], { readOnly = false } = {}) {
   return db.transaction(async (tx) => {
+    if (readOnly) await tx.exec('set transaction read only');
     if (who) {
       await tx.query("select set_config('request.jwt.claims', $1, true)", [JSON.stringify(who.claims)]);
       await tx.exec(`set local role ${who.role}`);
@@ -75,7 +77,23 @@ export async function sql(db, who, text, params = []) {
   });
 }
 
+// 함수가 STABLE·IMMUTABLE 인지(이름 하나에 정의가 여럿이면 하나라도 VOLATILE 이면 아님) — db 마다 기억
+const readOnlyCache = new WeakMap();
+async function isReadOnlyFn(db, fn) {
+  let m = readOnlyCache.get(db);
+  if (!m) { m = new Map(); readOnlyCache.set(db, m); }
+  if (!m.has(fn)) {
+    const rows = await sql(db, OWNER, `
+      select bool_and(p.provolatile in ('s', 'i')) as ro
+        from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = $1`, [fn]);
+    m.set(fn, rows[0]?.ro === true);
+  }
+  return m.get(fn);
+}
+
 // rpc(db, who, 'qm_create_set', { p_title: '…' }) → 함수 결과(jsonb 는 JS 값으로)
+// STABLE 함수는 운영(PostgREST)처럼 읽기 전용 트랜잭션에서 부른다 — 안에 쓰기가 있으면 25006 으로 실패해 시험이 잡는다
 export async function rpc(db, who, fn, args = {}) {
   const keys = Object.keys(args);
   const call = `select public.${fn}(${keys.map((k, i) => `${k} => $${i + 1}`).join(', ')}) as r`;
@@ -83,7 +101,7 @@ export async function rpc(db, who, fn, args = {}) {
     const v = args[k];
     return v !== null && typeof v === 'object' ? JSON.stringify(v) : v;
   });
-  const rows = await sql(db, who, call, params);
+  const rows = await sql(db, who, call, params, { readOnly: await isReadOnlyFn(db, fn) });
   return rows[0].r;
 }
 

@@ -2,6 +2,7 @@
 // 실행: npm run test:app  (화면·서버 없이 함수만 부름)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import {
   SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, PROD_HOSTS, REQUIRED_SCHEMA,
   assertProdHosts, assertPublicKey, assertSupabaseUrl, checkConfig,
@@ -99,7 +100,16 @@ test('저장소의 지금 설정값은 검사를 통과하거나 아직 비어 �
   assert.ok(r.ok || r.empty, JSON.stringify(r));
   assert.ok(!String(SUPABASE_PUBLISHABLE_KEY).startsWith('sb_secret_'));
   assert.ok(Array.isArray(PROD_HOSTS));
-  assert.equal(REQUIRED_SCHEMA, 5);
+  assert.equal(REQUIRED_SCHEMA, 6);
+});
+
+// 앱이 요구하는 판 = 마지막 마이그레이션이 올리는 판(어긋나면 배포 뒤 늘 '서버 준비 중'이거나, 새 함수 없이 앱이 돎)
+test('REQUIRED_SCHEMA 는 supabase/migrations 의 마지막 파일이 올리는 schema_version 과 같다', () => {
+  const dir = new URL('../../supabase/migrations/', import.meta.url);
+  const last = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort().at(-1);
+  const all = [...readFileSync(new URL(last, dir), 'utf8').matchAll(/greatest\(schema_version, (\d+)\)/g)];
+  assert.ok(all.length, `${last} 에 schema_version 올리기가 없습니다`);
+  assert.equal(Number(all.at(-1)[1]), REQUIRED_SCHEMA, last);
 });
 
 test('주소 종류: 운영 · 옛 Railway · 그 밖(미리보기·로컬)', () => {

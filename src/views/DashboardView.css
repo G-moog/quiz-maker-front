@@ -6,3 +6,55 @@
     display: none;
   }
 }
+
+/* '내 문제집' + 공부 요약. 머리 줄의 남은 폭을 채우고(단추는 오른쪽 그대로), 요약 글은 폭 계산에 넣지 않는다(width: 0) —
+   요약이 길어도 단추가 다음 줄로 밀리거나 머리 줄이 넓어지지 않고 '…' 로 준다. 넓은 화면은 제목 옆 한 줄 */
+.qm-dash-title {
+  display: flex;
+  align-items: baseline;
+  column-gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.qm-dash-summary {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 15px;
+}
+.qm-sum-short {
+  display: none;
+}
+
+/* 휴대폰: 요약은 제목 아래 작은 줄(제목 옆에 두면 단추 사이에 몇 글자만 남음). 머리 줄 높이는 단추(34px)보다 몇 px 만 늘어난다.
+   글은 짧은 꼴('개' 뺌, 11px) — 412px 에서 제목 아래 폭 172px 에 두 자리 수까지(163px) 들어간다 */
+@media (max-width: 720px) {
+  .qm-dash-title {
+    flex-direction: column;
+    align-items: stretch;
+    row-gap: 1px;
+  }
+  .qm-dash-summary {
+    flex: none;
+    min-width: 100%;
+    font-size: 11px;
+    line-height: 14px;
+  }
+  .qm-sum-long {
+    display: none;
+  }
+  .qm-sum-short {
+    display: inline;
+  }
+}
+
+/* 좁은 휴대폰(360px 안팎, 제목 아래 폭 140px): 낱말 사이를 조금 좁혀 한 자리 수면 다 보이게(넘치면 '…') */
+@media (max-width: 400px) {
+  .qm-sum-short {
+    word-spacing: -1.5px;
+  }
+}

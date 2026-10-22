@@ -4,11 +4,12 @@ import { listNotes } from "../api/notes";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
 import { groupHardSets, hardTitleOf, loadHardModeIds, saveHardModeIds } from "../utils/hardMode";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
-import { lastStudiedMap } from "../utils/studyState";
+import { exportStudy, lastStudiedMap, studyDay, studyDaysMap } from "../utils/studyState";
+import { syncStudy } from "../api/study";
 import { STAY, useBack } from "../utils/backStack";
 import {
-  SORT_DEFAULT, SORT_RECENT, cardNoteCount, countNotesBySet, filterCards, lastStudiedOf, loadSortMode,
-  readDashCache, relativeDay, saveSortMode, sortCards, writeDashCache,
+  SORT_DEFAULT, SORT_RECENT, SORT_REVIEW, cardNoteCount, countNotesBySet, filterCards, lastStudiedOf, loadSortMode,
+  readDashCache, relativeDay, saveSortMode, sortCards, studySummary, summaryText, writeDashCache,
 } from "../utils/dashboard";
 import { backupFileName, backupSummary, buildBackup, downloadJson } from "../utils/backup";
 import { exportInkJson, importInkJson } from "../ink/inkBackup";
@@ -25,15 +26,19 @@ function currentUser() {
 }
 
 // 백업 확장 자리: 돌려준 칸은 파일 맨 위에 더해진다(utils/backup.js 의 extras — 기본 칸 이름과 겹치면 오류).
-// 필기(이 기기 IndexedDB 에만 있음)를 ink 칸으로 함께 담는다. 필기를 못 읽어도(사생활 보호 창 등) 문제집 백업은 그대로 받는다
+// 필기(이 기기 IndexedDB 에만 있음)를 ink 칸으로, 공부 기록(이어 보기·공부한 날 — 다른 기기 것과 합친 이 기기 사본)을
+// study 칸으로 함께 담는다. 필기를 못 읽어도(사생활 보호 창 등) 문제집 백업은 그대로 받는다
 async function backupExtras(username) {
+  const out = {};
   try {
     const ink = await exportInkJson(username);
-    return ink.items.length ? { ink } : undefined;
+    if (ink.items.length) out.ink = ink;
   } catch (e) {
     console.warn("필기를 백업에 넣지 못했습니다", e);
-    return undefined;
   }
+  const study = exportStudy(username);
+  if (Object.keys(study.records).length) out.study = study;
+  return Object.keys(out).length ? out : undefined;
 }
 
 // 필기 가져오기 파일: 필기만 내보낸 파일(app: quiz-maker-ink)이나, 필기가 든 전체 백업(app: quiz-maker 의 ink 칸)
@@ -116,6 +121,9 @@ const S = {
     columnGap: 8, rowGap: 8, marginBottom: 14,
   },
   h2: { color: "#f1f1f1", fontSize: 18, fontWeight: 700, margin: 0, whiteSpace: "nowrap" },
+  // 공부 요약('오늘 2개 · 이번 주 7개 · 연속 3일'): 넓은 화면은 제목 옆, 휴대폰은 제목 아래 작은 줄.
+  // 배치(남은 폭만 쓰고 넘치면 '…')는 DashboardView.css 의 .qm-dash-title / .qm-dash-summary
+  summary: { color: "#8a8a8a", fontWeight: 600 },
   // 좌우 여백·사이 간격은 index.css 의 .qm-dash-head-btns / .qm-dash-add / .qm-dash-notes (좁은 휴대폰에서 줄임)
   addBtn: {
     height: 34, background: "#f59e0b", color: "#000000", border: "none",
@@ -384,11 +392,39 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
   const backupBusy = useRef(false);
   const inkFileRef = useRef(null); // '필기 가져오기' 파일 고르기(숨김)
 
-  // 찾기·정렬(최근 공부 순은 기기에 기억)·마지막 공부 때(이 기기 공부 기록 — 대시보드를 열 때마다 다시 읽음)
+  // 찾기·정렬(고른 정렬은 기기에 기억)·마지막 공부 때와 공부한 날(공부 기록 — 대시보드를 열 때마다 이 기기 사본을 읽고,
+  // 서버에서 다른 기기 기록을 받아 합치면 다시 읽는다)
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState(() => loadSortMode(username));
-  const [studied] = useState(() => lastStudiedMap(username));
-  const [now] = useState(() => new Date());
+  const [studied, setStudied] = useState(() => lastStudiedMap(username));
+  const [studyDays, setStudyDays] = useState(() => studyDaysMap(username));
+  const [now, setNow] = useState(() => new Date());
+
+  // 공부 기록 나누기: 열 때·다시 보일 때(휴대폰을 집어 들 때) 서버에서 받아 합치고, 이 기기에 모아 둔 것은 올린다.
+  // 화면은 기다리지 않는다(받기가 끝나 바뀐 것이 있으면 마지막 공부·요약만 다시 그림). 오류는 보이지 않는다(utils/studyState.js)
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    function run() {
+      // 받기를 건너뛰어도(간격) 다시 읽는다 — 풀기 화면이 떠나며 한 마지막 저장은 이 화면의 첫 그리기보다 늦게 들어온다
+      syncStudy(currentUser()).then(() => {
+        if (!mounted.current) return;
+        setStudied(lastStudiedMap(currentUser()));
+        setStudyDays(studyDaysMap(currentUser()));
+      });
+    }
+    function onVisible() {
+      if (document.visibilityState !== "visible") return;
+      setNow(new Date()); // 자정을 넘겨 다시 보면 '오늘'·'3일 전'도 새로
+      run();
+    }
+    run();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      mounted.current = false;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   // 하드모드를 켠 원래 문제집 id(문자열). 기기에 기억한다(utils/hardMode.js)
   const [hardOn, setHardOn] = useState(() => new Set(loadHardModeIds(username)));
@@ -514,7 +550,8 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
       downloadJson(data, backupFileName(new Date()));
       const n = backupSummary(data);
       const inkNote = data.ink ? ` · 필기 ${data.ink.items.length}` : "";
-      showToast(`백업 파일을 내려받았습니다(문제집 ${n.sets} · 문항 ${n.questions} · 메모 ${n.notes}${inkNote})`, "success", 5000);
+      const studyNote = n.study ? ` · 공부 기록 ${n.study}` : "";
+      showToast(`백업 파일을 내려받았습니다(문제집 ${n.sets} · 문항 ${n.questions} · 메모 ${n.notes}${inkNote}${studyNote})`, "success", 5000);
     } catch (e) {
       console.error(e);
       // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
@@ -684,6 +721,9 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
   // 문제집이 많을 때만 찾기·정렬 줄. 줄이 없으면 찾기·정렬도 쓰지 않는다(늘 기본 순서 그대로)
   const showTools = cards.length > TOOLS_MIN_CARDS;
   const shownCards = showTools ? sortCards(filterCards(cards, query), sortMode, studied) : cards;
+  // 공부 요약 한 줄(공부 기록이 없으면 빈 글 — 줄을 그리지 않음). 날짜는 서울 기준(studyState 의 days 와 같게)
+  const studySum = studySummary(cards, studyDays, studyDay(now));
+  const summary = summaryText(studySum);
 
   // 뒤로 가기(안드로이드)로 창·메뉴를 닫는다. 수정 창은 저장 중이면 닫지 않는다(칸을 다시 쌓음)
   useBack(menuOpen, () => setMenuOpen(false));
@@ -693,6 +733,26 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
     closeEditModal();
   });
   useBack(showUploadModal, () => closeUploadModal());
+
+  // Esc 로 창을 닫는다(✕ 와 같은 길 — 뒤로 가기 칸도 함께 걷힘). 수정 창은 저장 중이면 그대로.
+  // 한글 입력 중(조합 중)의 Esc 는 조합만 끝내게 둔다. 닫는 함수가 그때그때 상태를 읽으므로 렌더마다 다시 건다
+  const modalOpen = showCreateModal || showEditModal || showUploadModal;
+  useEffect(() => {
+    if (!modalOpen) return undefined;
+    function onKey(e) {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      e.preventDefault();
+      if (showEditModal) {
+        if (!editSaving) closeEditModal();
+      } else if (showUploadModal) {
+        closeUploadModal();
+      } else {
+        setShowCreateModal(false);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
 
   // 엑셀 업로드
   function openUploadModal() {
@@ -798,7 +858,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                   style={S.userMenuItem}
                   onClick={runBackup}
                   disabled={!!backupMsg}
-                  title="문제집·문항·질문 메모와 이 기기의 필기를 모두 파일로 받기"
+                  title="문제집·문항·질문 메모와 이 기기의 필기·공부 기록을 모두 파일로 받기"
                   onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.background = "#242424"; }}
                   onPointerLeave={(e) => { e.currentTarget.style.background = "none"; }}
                 >
@@ -840,7 +900,21 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
 
       <div className="qm-dash-body">
         <div style={S.header}>
-          <h2 style={S.h2}>내 문제집</h2>
+          <div className="qm-dash-title">
+            <h2 style={S.h2}>내 문제집</h2>
+            {summary && (
+              <div
+                style={S.summary}
+                className="qm-dash-summary"
+                data-study-summary=""
+                title={"공부한 문제집 수(하드 짝은 하나로) — 휴대폰·태블릿 기록을 합친 값.\n이번 주는 월요일부터, 연속은 하루도 빠짐없이 공부한 날 수(오늘 아직이면 어제까지)"}
+              >
+                {/* 휴대폰은 짧은 꼴('개' 뺌) — 제목 아래 폭(412px 에서 172px)에 두 자리 수까지 들어가게(DashboardView.css) */}
+                <span className="qm-sum-long">{summary}</span>
+                <span className="qm-sum-short">{summaryText(studySum, { short: true })}</span>
+              </div>
+            )}
+          </div>
           <div className="qm-dash-head-btns">
             <button
               style={S.notesBtn}
@@ -896,7 +970,8 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
             />
             <div style={S.sortGroup} role="group" aria-label="정렬">
               <button type="button" style={S.sortBtn(sortMode === SORT_DEFAULT)} aria-pressed={sortMode === SORT_DEFAULT} onClick={() => changeSort(SORT_DEFAULT)} title="만든 순(새것부터)">기본</button>
-              <button type="button" style={S.sortBtn(sortMode === SORT_RECENT)} aria-pressed={sortMode === SORT_RECENT} onClick={() => changeSort(SORT_RECENT)} title="이 기기에서 최근에 공부한 순">최근 공부</button>
+              <button type="button" style={S.sortBtn(sortMode === SORT_RECENT)} aria-pressed={sortMode === SORT_RECENT} onClick={() => changeSort(SORT_RECENT)} title="최근에 공부한 순(휴대폰·태블릿 기록을 합쳐서)">최근 공부</button>
+              <button type="button" style={S.sortBtn(sortMode === SORT_REVIEW)} aria-pressed={sortMode === SORT_REVIEW} onClick={() => changeSort(SORT_REVIEW)} title="공부한 지 오래된 것부터, 공부한 적 없는 것은 그 뒤에">복습 차례</button>
             </div>
           </div>
         )}

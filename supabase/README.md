@@ -10,6 +10,7 @@ quiz-maker 의 Postgres 스키마(표·함수·권한·RLS·그림 버킷)입니
 | `migrations/20261023000300_qm_import.sql` | 계정 준비·옮기기·상태 함수, 실행 권한 | 3 |
 | `migrations/20261023000400_qm_storage.sql` | 그림 버킷 `question-images` 와 올리기 정책 | 4 |
 | `migrations/20261023000500_qm_safeupdate.sql` | Supabase pg-safeupdate 맞춤(함수 안 UPDATE 에 WHERE) | 5 |
+| `migrations/20261023000600_qm_study.sql` | 공부 기록 표 `study_states`(기기 사이 이어 보기·공부한 날), `qm_list_study`·`qm_put_study` | 6 |
 | `../docs/restore/reopen-import.sql` | 복원 때만 쓰는 '옮기기 다시 열기' 틀(마이그레이션 아님) | — |
 
 ## 시험
@@ -18,7 +19,8 @@ quiz-maker 의 Postgres 스키마(표·함수·권한·RLS·그림 버킷)입니
 npm run test:db
 ```
 
-- PGlite(메모리 안의 Postgres)에 Supabase 흉내(`test/db/supabase-mock.sql`: 역할 anon·authenticated, `auth.uid()`·`auth.jwt()`, storage)를 깔고 마이그레이션 5개를 **두 번** 돌린 뒤 시나리오를 시험합니다. 운영 Supabase 에는 붙지 않습니다.
+- PGlite(메모리 안의 Postgres)에 Supabase 흉내(`test/db/supabase-mock.sql`: 역할 anon·authenticated, `auth.uid()`·`auth.jwt()`, storage)를 깔고 마이그레이션 전부를 **두 번** 돌린 뒤 시나리오를 시험합니다. 운영 Supabase 에는 붙지 않습니다.
+  - STABLE 함수는 운영 PostgREST 처럼 읽기 전용 트랜잭션으로 부릅니다(`harness.mjs` 의 `rpc`). STABLE 함수에 쓰기를 넣으면 시험이 25006 으로 실패합니다.
 - `test/db/migrations.lock.json` 에 마이그레이션 파일의 해시가 있습니다. 파일 내용이 바뀌거나, 파일이 사라지거나, lock 에 없는 파일이 생기면 시험이 실패합니다.
   - 새 파일을 더한 뒤: `node test/db/lock.mjs --add` (이미 있는 줄은 바꾸지 않음)
   - 지금 상태 보기: `node test/db/lock.mjs`
@@ -49,7 +51,7 @@ GitHub 연동(Deploy to production)이 켜진 뒤에는 **master 에 올리는 �
 **올린 뒤**
 
 11. 공개 키로 `rpc qm_schema_version` 을 불러 기대한 판인지 확인합니다.
-12. 같은 때 anon(공개 키, 로그인 없음)으로 마이그레이션 파일에 나오는 public 의 함수 **전부**(이름이 `qm_` 가 아니어도, `qm_schema_version` 만 예외)와 표·뷰 전부(지금은 `qm_settings`, `profiles`, `question_sets`, `questions`, `question_notes`)가 **모두 401** 인지 봅니다. 목록은 파일의 `create function public.…`·`create table public.…`·`create view public.…` 에서 빠짐없이 뽑습니다.
+12. 같은 때 anon(공개 키, 로그인 없음)으로 마이그레이션 파일에 나오는 public 의 함수 **전부**(이름이 `qm_` 가 아니어도, `qm_schema_version` 만 예외)와 표·뷰 전부(지금은 `qm_settings`, `profiles`, `question_sets`, `questions`, `question_notes`, `study_states`)가 **모두 401** 인지 봅니다. 목록은 파일의 `create function public.…`·`create table public.…`·`create view public.…` 에서 빠짐없이 뽑습니다.
     - 처음 적용할 때(2단계)는 다음도 확인합니다: 앱 로그인으로 그림 한 장 올리기(`upsert: false`)가 되는지(막히면 새 파일로 자기 폴더 SELECT 정책을 더함), 도구 login 의 계정 준비(`qm_bootstrap_admin`)가 되는지(= 소유자 권한 함수가 `auth.users` 와 그 `is_anonymous` 칸을 읽음).
 13. 그다음 앱 코드 커밋을 올립니다. 순서가 어긋나도 앱은 `schemaVersion` 을 보고 '서버 준비 중'을 띄웁니다.
 14. 판이 오르지 않으면 대시보드 Integrations 화면과 GitHub 커밋 상태를 보고, CLI(`db push`, 사용자 터미널) → 내장 브라우저 SQL Editor(마지막 수단, 설계서 7.1절 G 규칙) 순으로 같은 SQL 을 적용합니다(멱등).

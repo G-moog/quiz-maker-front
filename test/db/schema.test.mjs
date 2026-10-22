@@ -16,10 +16,11 @@ const DESIGN_FILES = [
   '20261023000300_qm_import.sql',
   '20261023000400_qm_storage.sql',
   '20261023000500_qm_safeupdate.sql',   // 2026-10-22 Supabase safeupdate 맞춤(설계 뒤 더함)
+  '20261023000600_qm_study.sql',        // 2026-10-23 공부 기록 기기 사이 나누기(시나리오 시험은 study.test.mjs)
 ];
 // 마지막 마이그레이션이 올리는 판
-const LATEST_SCHEMA = 5;
-const TABLES = ['qm_settings', 'profiles', 'question_sets', 'questions', 'question_notes'];
+const LATEST_SCHEMA = 6;
+const TABLES = ['qm_settings', 'profiles', 'question_sets', 'questions', 'question_notes', 'study_states'];
 
 // 앱 QuestionNoteSheet.jsx 의 TARGET_GONE 정규식을 그대로 읽는다(문구를 바꾸면 앱 판정이 깨지는지 여기서 잡힘)
 function appTargetGone() {
