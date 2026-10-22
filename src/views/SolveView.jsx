@@ -10,6 +10,7 @@ import { PencilIcon } from "../components/NoteIcons";
 import { plainPreview, textModel } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
 import { clearStudy, loadStudy, saveStudy } from "../utils/studyState";
+import { freshStudyBeforeOpen } from "../api/study";
 import { GRADED_TYPES, initialSolveState, normalizeType, questionHash, studySnapshot, blankCountOf } from "../utils/solveStudy";
 import { applyAnchor, captureAnchor, pulse, readingProgress, scrollElTo } from "../utils/solveScroll";
 import { useWakeLock } from "../utils/wakeLock";
@@ -448,13 +449,14 @@ export default function SolveView({ set, onBack }) {
   const lastJump = useRef(null); // '↓ 빈칸'으로 마지막에 간 빈칸 { i, y } — 그 뒤 스크롤하지 않았으면 다음 번호부터
 
   // 문항 불러오기. loadTry 를 올리면('다시 시도') 다시 부른다.
-  // 이 기기에 남은 공부 기록이 지금 문항 묶음과 맞으면 이어 보고(문항·순서·연 빈칸·읽던 자리), 아니면 문항이 하나면 바로 시작
+  // 이 기기에 남은 공부 기록이 지금 문항 묶음과 맞으면 이어 보고(문항·순서·연 빈칸·읽던 자리), 아니면 문항이 하나면 바로 시작.
+  // 문항을 받는 동안 다른 기기 공부 기록 받기도 함께 기다린다(최대 1.5초, api/study.js) — 다른 기기에서 읽던 곳부터 이어 보게
   const [loadTry, setLoadTry] = useState(0);
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const data = await getQuestions(setId);
+        const [data] = await Promise.all([getQuestions(setId), freshStudyBeforeOpen(username)]);
         if (!alive) return;
         const list = Array.isArray(data) ? data : [];
         const saved = loadStudy(username, setId);
@@ -470,8 +472,9 @@ export default function SolveView({ set, onBack }) {
         const cq = init.questions[init.index];
         restoreRef.current = init.resumed && init.anchor && cq ? { qid: cq.id, anchor: init.anchor } : null;
         setResumeChip(init.resumed);
-        // 열 때마다 '마지막으로 본 때'(대시보드)를 남긴다 — 이어 볼 기록이면 그대로, 아니면 새로
-        saveStudy(username, setId, init.resumed ? saved : { ids: list.map((q) => String(q.id)) });
+        // 열 때마다 '마지막으로 본 때'(대시보드)를 남긴다. 내용은 바꾸지 않는다(open) — 이 기기가 아직 받지 못한
+        // 다른 기기의 진도를 열기만 해서 덮지 않게(utils/studyState.js saveStudy)
+        saveStudy(username, setId, init.resumed ? saved : { ids: list.map((q) => String(q.id)) }, { open: true });
       } catch (e) {
         console.error(e);
         // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다

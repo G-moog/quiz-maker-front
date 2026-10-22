@@ -105,3 +105,29 @@ export function studySnapshot({ base, questions, mode, index, results, revealed,
   out.q = { [String(q.id)]: { h: questionHash(q), r, a: isAnchor(anchor) ? anchor : null } };
   return out;
 }
+
+// 이어 볼 '진도'가 있나: 지나온 문항·채점·연 빈칸. initialSolveState 가 이어 볼지와 같은 판단을 문항 없이 한다
+// (본문 지문 h 는 견주지 않음 — 문항을 고쳤으면 진도로 쳐도 열 때 버려진다).
+// 읽던 자리(a)만 있는 것은 진도로 치지 않는다: 공부 기록 나누기(utils/studyState.js)에서 진도 없는 저장은 다른 기기의 진도를
+// 덮지 못한다 — 다른 기기 기록을 아직 받지 못한 채 열고 조금 내려 본 것만으로 그 기기에서 연 빈칸들이 지워지지 않게.
+// 풀기 화면 꼴이 아닌 값(ids 없음)은 모르니 진도로 친다(빈 객체만 빼고)
+export function hasStudyProgress(saved) {
+  if (!saved || typeof saved !== "object") return false;
+  if (!Array.isArray(saved.ids)) return Object.keys(saved).length > 0;
+  if (saved.mode !== "ordered" && saved.mode !== "random") return false;
+  const order = saved.mode === "random" && sameIdSet(saved.order, saved.ids) ? saved.order : saved.ids;
+  if (saved.cur != null && order.length && String(saved.cur) !== String(order[0])) return true;
+  if (saved.res && typeof saved.res === "object" && Object.keys(saved.res).length) return true;
+  const entries = saved.q && typeof saved.q === "object" ? Object.values(saved.q) : [];
+  return entries.some((e) => e && Array.isArray(e.r) && e.r.some((i) => Number.isInteger(i) && i >= 0));
+}
+
+// 읽던 자리(a)를 뺀 값 — 두 저장 사이에 진도(문항·채점·연 빈칸)가 바뀌었는지 견줄 때(바뀌었으면 다른 기기로 곧바로 올린다)
+export function progressPart(saved) {
+  if (!saved || typeof saved !== "object" || !saved.q || typeof saved.q !== "object") return saved ?? null;
+  const q = {};
+  for (const [id, e] of Object.entries(saved.q)) {
+    q[id] = e && typeof e === "object" ? Object.fromEntries(Object.entries(e).filter(([k]) => k !== "a")) : e;
+  }
+  return { ...saved, q };
+}

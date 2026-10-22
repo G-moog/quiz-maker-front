@@ -5,7 +5,7 @@ import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } 
 import { groupHardSets, hardTitleOf, loadHardModeIds, saveHardModeIds } from "../utils/hardMode";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 import { exportStudy, lastStudiedMap, studyDay, studyDaysMap } from "../utils/studyState";
-import { freshStudyBeforeOpen, syncStudy } from "../api/study";
+import { syncStudy } from "../api/study";
 import { STAY, useBack } from "../utils/backStack";
 import {
   SORT_DEFAULT, SORT_RECENT, SORT_REVIEW, cardNoteCount, countNotesBySet, filterCards, lastStudiedOf, loadSortMode,
@@ -40,9 +40,6 @@ async function backupExtras(username) {
   if (Object.keys(study.records).length) out.study = study;
   return Object.keys(out).length ? out : undefined;
 }
-
-// 문제집을 열기 전에 다른 기기의 공부 기록 받기를 기다리는 한도(풀기 화면은 처음 그릴 때 이 기기 기록을 읽는다)
-const OPEN_WAIT_MS = 1500;
 
 // 필기 가져오기 파일: 필기만 내보낸 파일(app: quiz-maker-ink)이나, 필기가 든 전체 백업(app: quiz-maker 의 ink 칸)
 function inkPartOf(obj) {
@@ -428,20 +425,6 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
-
-  // 풀기: 다른 기기 기록 받기가 진행 중이거나 오래됐으면 잠깐(최대 OPEN_WAIT_MS) 기다렸다가 연다 —
-  // 풀기 화면이 처음 그릴 때 이 기기 사본을 읽으므로, 그 전에 합쳐 두어야 다른 기기에서 읽던 곳부터 이어 본다
-  const opening = useRef(false);
-  async function openSolve(target) {
-    if (opening.current) return;
-    opening.current = true;
-    try {
-      await freshStudyBeforeOpen(currentUser(), { waitMs: OPEN_WAIT_MS });
-    } finally {
-      opening.current = false;
-    }
-    if (mounted.current) onSolve(target);
-  }
 
   // 하드모드를 켠 원래 문제집 id(문자열). 기기에 기억한다(utils/hardMode.js)
   const [hardOn, setHardOn] = useState(() => new Set(loadHardModeIds(username)));
@@ -1097,7 +1080,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                       <button
                         style={S.solveBtn}
                         className="qm-cbtn-solve"
-                        onClick={(e) => { e.stopPropagation(); openSolve(target); }}
+                        onClick={(e) => { e.stopPropagation(); onSolve(target); }}
                         onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
                         onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                       >풀기</button>

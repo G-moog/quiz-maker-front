@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  blankCountOf, initialSolveState, normalizeType, questionHash, sameIdSet, studySnapshot,
+  blankCountOf, hasStudyProgress, initialSolveState, normalizeType, progressPart, questionHash, sameIdSet, studySnapshot,
 } from '../../src/utils/solveStudy.js';
 import { textHash } from '../../src/ink/geometry.js';
 
@@ -107,4 +107,44 @@ test('망가진 기록도 화면을 멈추지 않는다', () => {
   assert.equal(st.anchor, null);
   assert.equal(sameIdSet(['1', '1'], ['1', '2']), false);
   assert.equal(sameIdSet([1, 2], ['2', '1']), true);
+});
+
+test('hasStudyProgress: 지나온 문항·채점·연 빈칸이면 진도 — initialSolveState 가 이어 보는 것과 같고, 읽던 자리만은 진도가 아님', () => {
+  const snap = (over) => studySnapshot({ base: [Q_PAGE], questions: [Q_PAGE], mode: 'ordered', index: 0, results: {}, revealed: Array(6).fill(false), anchor: null, ...over });
+  // 진도: 연 빈칸
+  const opened = snap({ revealed: [false, true, false, false, false, false] });
+  assert.equal(hasStudyProgress(opened), true);
+  assert.equal(initialSolveState(opened, [Q_PAGE]).resumed, true);
+  // 진도 아님: 맨 위·아무것도 안 함, 끝냄·고르기 화면({ ids }), 열 때의 { ids }, 처음부터({})
+  for (const v of [snap({}), { ids: ['101'] }, {}, null, studySnapshot({ base: MULTI, questions: MULTI, mode: null, index: 0 })]) {
+    assert.equal(hasStudyProgress(v), false, JSON.stringify(v));
+  }
+  // 읽던 자리만: 이어 보기는 되지만(자리를 되살림) 다른 기기의 진도를 덮는 진도로는 치지 않는다
+  const placeOnly = snap({ anchor: { k: 'b', i: 3, d: 40, f: 0.3 } });
+  assert.equal(initialSolveState(placeOnly, [Q_PAGE]).resumed, true);
+  assert.equal(hasStudyProgress(placeOnly), false);
+  // 여러 문항: 채점·보던 문항(첫 문항이 아님)·랜덤 순서의 첫 문항
+  const multi = (over) => studySnapshot({ base: MULTI, questions: MULTI, mode: 'ordered', index: 0, results: {}, revealed: [], anchor: null, ...over });
+  assert.equal(hasStudyProgress(multi({})), false);
+  assert.equal(hasStudyProgress(multi({ index: 1 })), true);
+  assert.equal(hasStudyProgress(multi({ results: { 0: { correct: false, userAnswer: '0' } } })), true);
+  const order = [MULTI[2], MULTI[0], MULTI[1]];
+  const rnd = studySnapshot({ base: MULTI, questions: order, mode: 'random', index: 0, results: {}, revealed: [false], anchor: null });
+  assert.equal(hasStudyProgress(rnd), false, '랜덤으로 막 고른 것(첫 문항)은 진도가 아님');
+  assert.equal(initialSolveState(rnd, MULTI).resumed, false);
+  assert.equal(hasStudyProgress({ ...rnd, cur: '81' }), true);
+  // 풀기 화면 꼴이 아닌 값은 모르니 진도로 친다(덮어쓰기 규칙을 바꾸지 않음)
+  assert.equal(hasStudyProgress({ qid: 1, revealed: [0] }), true);
+});
+
+test('progressPart: 읽던 자리(a)만 뺀다 — 스크롤만 한 저장은 진도가 그대로', () => {
+  const a = studySnapshot({ base: [Q_PAGE], questions: [Q_PAGE], mode: 'ordered', index: 0, results: {}, revealed: [true], anchor: { f: 0.2 } });
+  const b = studySnapshot({ base: [Q_PAGE], questions: [Q_PAGE], mode: 'ordered', index: 0, results: {}, revealed: [true], anchor: { k: 'h', i: 2, d: 10, f: 0.6 } });
+  const c = studySnapshot({ base: [Q_PAGE], questions: [Q_PAGE], mode: 'ordered', index: 0, results: {}, revealed: [true, true], anchor: { f: 0.2 } });
+  assert.deepEqual(progressPart(a), progressPart(b));
+  assert.notDeepEqual(progressPart(a), progressPart(c));
+  assert.equal('a' in progressPart(a).q['101'], false);
+  assert.equal(a.q['101'].a.f, 0.2, '원래 값은 그대로');
+  assert.deepEqual(progressPart({ ids: ['1'] }), { ids: ['1'] });
+  assert.equal(progressPart(null), null);
 });
