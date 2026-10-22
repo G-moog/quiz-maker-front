@@ -1470,14 +1470,16 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     setNoteInfo(info);
   }
 
-  // 저장한 메모가 이 문제집 것이면(불러온 초안은 다른 문제집 것일 수 있다) 단추의 수를 다시 센다
-  function handleNoteSaved(note, info) {
-    setNoteInfo(null);
-    showToast("메모했습니다");
+  // 저장한 메모가 이 문제집 것이면(불러온 초안은 다른 문제집 것일 수 있다) 단추의 수를 다시 센다.
+  // opts.edited: 창에서 이전 메모를 고침 — 창은 닫지 않고(이어서 다른 메모를 고치거나 새 메모를 쓰게) 알림만
+  function handleNoteSaved(note, info, opts) {
+    const edited = !!opts?.edited;
+    if (!edited) setNoteInfo(null);
+    showToast(edited ? "고쳤습니다" : "메모했습니다");
     if (String(info.setId) !== String(setId)) return;
     listNotes({ status: "open", setId })
       .then((list) => { if (Array.isArray(list)) setNoteCount(list.length); })
-      .catch(() => setNoteCount((n) => (n == null ? n : n + 1)));
+      .catch(() => { if (!edited) setNoteCount((n) => (n == null ? n : n + 1)); });
   }
 
   const bodyClass = ["qm-solve-body", showing && "qm-solve-body--fab", showNext && "qm-solve-body--fab2"].filter(Boolean).join(" ");
