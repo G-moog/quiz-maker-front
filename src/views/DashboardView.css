@@ -1,0 +1,8 @@
+/* 대시보드(DashboardView.jsx) 덧붙임 — 인라인 style 로 못 하는 폭별 규칙만 둔다(index.css 의 .qm-card-* 와 같은 단계) */
+
+/* 아주 좁은 카드(안쪽 폭 290px 이하): 마지막 공부('3일 전')는 남기고 앞의 가운뎃점만 뺀다 */
+@container (max-width: 290px) {
+  .qm-card-studied-dot {
+    display: none;
+  }
+}
