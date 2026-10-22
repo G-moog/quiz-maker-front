@@ -6,8 +6,11 @@
 //     sets: [{ ...문제집(qm_list_sets 한 줄), questions: [문항(qm_list_questions 한 줄), …] }, …],
 //     notes: [메모(qm_list_notes, 해결·미해결 모두), …],
 //     ...extras }
-// 확장 자리(extras): 나중에 다른 자료(예: 필기 ink)를 넣을 때 buildBackup({ extras: { ink: … } }) 로 맨 위 칸에 더한다.
-// 위의 기본 칸 이름과 겹치면 오류(기본 칸을 덮지 않게).
+// 확장 자리(extras): 다른 자료를 buildBackup({ extras: { … } }) 로 맨 위 칸에 더한다. 위의 기본 칸 이름과 겹치면 오류(기본 칸을 덮지 않게).
+// 지금 대시보드가 넣는 것(DashboardView backupExtras):
+//   ink:   이 기기 필기(ink/inkBackup.js exportInkJson — { app: "quiz-maker-ink", items: […] })
+//   study: 공부 기록(utils/studyState.js exportStudy — { version: 1, records: { [문제집 id]: { v, at, ct, days, …이어 보기 } } },
+//          다른 기기 기록과 합친 이 기기 사본)
 export const BACKUP_APP = "quiz-maker";
 export const BACKUP_VERSION = 1;
 const CORE_KEYS = new Set(["app", "version", "exportedAt", "username", "sets", "notes"]);
@@ -87,13 +90,15 @@ export function backupFileName(date = new Date()) {
   return `quiz-maker-backup-${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}.json`;
 }
 
-// 끝난 뒤 안내용 수: { sets, questions, notes }
+// 끝난 뒤 안내용 수: { sets, questions, notes, study(공부 기록 문제집 수) }
 export function backupSummary(data) {
   const sets = Array.isArray(data?.sets) ? data.sets : [];
+  const study = data?.study?.records;
   return {
     sets: sets.length,
     questions: sets.reduce((sum, s) => sum + (Array.isArray(s.questions) ? s.questions.length : 0), 0),
     notes: Array.isArray(data?.notes) ? data.notes.length : 0,
+    study: study && typeof study === "object" ? Object.keys(study).length : 0,
   };
 }
 

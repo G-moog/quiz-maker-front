@@ -1,10 +1,10 @@
-// 대시보드 도우미(src/utils/dashboard.js) 시험: 마지막 공부 표시·찾기·최근 공부 순·메모 수·목록 기억
+// 대시보드 도우미(src/utils/dashboard.js) 시험: 마지막 공부 표시·찾기·최근 공부 순·복습 차례·공부 요약·메모 수·목록 기억
 // 실행: npm run test:app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SORT_DEFAULT, SORT_RECENT, cardNoteCount, clearDashCache, countNotesBySet, filterCards, lastStudiedOf,
-  readDashCache, relativeDay, sortCards, writeDashCache,
+  SORT_DEFAULT, SORT_RECENT, SORT_REVIEW, cardNoteCount, clearDashCache, countNotesBySet, filterCards, lastStudiedOf,
+  loadSortMode, readDashCache, relativeDay, saveSortMode, sortCards, studySummary, summaryText, writeDashCache,
 } from '../../src/utils/dashboard.js';
 
 // 이 기기 시각 기준(시험 PC 의 시간대와 무관하게): 같은 날 자정 언저리도 달력 날짜로
@@ -82,4 +82,59 @@ test('목록 기억: 사용자별, 지우면 없음', () => {
   assert.equal(readDashCache('a'), null);
   clearDashCache();
   assert.equal(readDashCache('b'), null);
+});
+
+test('sortCards: 복습 차례는 공부한 지 오래된 것부터 · 공부한 적 없는 것은 뒤에 원래 순서(하드 짝은 늦은 쪽)', () => {
+  const map = { 11: '2026-10-01T01:00:00.000Z', 26: '2026-10-21T01:00:00.000Z', 8: '2026-10-10T05:00:00.000Z' };
+  // 11 카드는 하드 짝(26)이 10/21 이라 마지막 공부가 10/21 → 8(10/10) 다음
+  assert.deepEqual(sortCards(cards, SORT_REVIEW, map).map((c) => c.set.id), [8, 11, 9]);
+  assert.deepEqual(sortCards(cards, SORT_REVIEW, { 9: '2026-10-21T01:00:00.000Z' }).map((c) => c.set.id), [9, 11, 8]);
+  assert.deepEqual(sortCards(cards, SORT_REVIEW, {}).map((c) => c.set.id), [11, 9, 8]);
+});
+
+test('정렬 기억: 세 가지 모두, 모르는 값·저장소 없음은 기본', () => {
+  const mem = new Map();
+  globalThis.localStorage = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => mem.set(k, String(v)), removeItem: (k) => mem.delete(k) };
+  for (const m of [SORT_DEFAULT, SORT_RECENT, SORT_REVIEW]) {
+    saveSortMode('u', m);
+    assert.equal(loadSortMode('u'), m);
+  }
+  assert.equal(loadSortMode('other'), SORT_DEFAULT);
+  saveSortMode('u', 'weird');
+  assert.equal(loadSortMode('u'), SORT_DEFAULT);
+  mem.set('qm:dash-sort:v1:u', 'weird');
+  assert.equal(loadSortMode('u'), SORT_DEFAULT);
+  globalThis.localStorage = { getItem() { throw new Error('막힘'); }, setItem() { throw new Error('막힘'); } };
+  assert.equal(loadSortMode('u'), SORT_DEFAULT);
+  assert.doesNotThrow(() => saveSortMode('u', SORT_REVIEW));
+  delete globalThis.localStorage;
+});
+
+test('studySummary: 오늘·이번 주(월요일부터)·연속(오늘 아직이면 어제까지), 하드 짝은 하나로, 목록에 없는 문제집은 빼고', () => {
+  // 2026-10-22 은 목요일 → 이번 주 = 10/19(월) ~ 10/22
+  const days = {
+    11: ['2026-10-18', '2026-10-20'], 26: ['2026-10-22'], // 같은 카드(하드 짝): 오늘 1개로
+    9: ['2026-10-21', '2026-10-22'],
+    8: ['2026-10-12'],
+    999: ['2026-10-22'], // 지운 문제집
+  };
+  assert.deepEqual(studySummary(cards, days, '2026-10-22'), { today: 2, week: 2, streak: 3 }); // 10/20·21·22
+  assert.equal(summaryText({ today: 2, week: 2, streak: 3 }), '오늘 2개 · 이번 주 2개 · 연속 3일');
+  assert.equal(summaryText({ today: 2, week: 12, streak: 3 }, { short: true }), '오늘 2 · 이번 주 12 · 연속 3일');
+  // 오늘 아직이면 어제까지의 연속, 오늘 0개
+  const noToday = { 11: ['2026-10-20'], 9: ['2026-10-21'] };
+  assert.deepEqual(studySummary(cards, noToday, '2026-10-22'), { today: 0, week: 2, streak: 2 });
+  // 어제도 안 했으면 연속 0 → 글에서 뺌
+  assert.deepEqual(studySummary(cards, { 8: ['2026-10-19'] }, '2026-10-22'), { today: 0, week: 1, streak: 0 });
+  assert.equal(summaryText({ today: 0, week: 1, streak: 0 }), '오늘 0개 · 이번 주 1개');
+  // 월요일에는 지난주(일요일)를 이번 주에 넣지 않음
+  assert.deepEqual(studySummary(cards, { 9: ['2026-10-25', '2026-10-26'] }, '2026-10-26'), { today: 1, week: 1, streak: 2 });
+  // 해가 바뀌는 주(2026-12-31 목 → 2027-01-01 금)
+  assert.deepEqual(studySummary(cards, { 9: ['2026-12-28', '2026-12-31', '2027-01-01'] }, '2027-01-01'), { today: 1, week: 1, streak: 2 });
+  // 기록이 없으면 null(줄을 그리지 않음)
+  assert.equal(studySummary(cards, {}, '2026-10-22'), null);
+  assert.equal(studySummary(cards, { 999: ['2026-10-22'] }, '2026-10-22'), null);
+  assert.equal(studySummary(cards, null, '2026-10-22'), null);
+  assert.equal(studySummary(cards, days, '엉터리'), null);
+  assert.equal(summaryText(null), '');
 });

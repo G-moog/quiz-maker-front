@@ -54,7 +54,7 @@ test('buildBackup: 문제집마다 문항을 붙이고 메모 전체(해결 포�
   assert.deepEqual(setsProgress[0], { phase: 'sets', done: 0, total: 13 });
   assert.deepEqual(setsProgress.at(-1), { phase: 'sets', done: 13, total: 13 });
   assert.ok(progress.some((p) => p.phase === 'notes'));
-  assert.deepEqual(backupSummary(data), { sets: 13, questions: SETS.reduce((n, s) => n + s.questionCount, 0), notes: 2 });
+  assert.deepEqual(backupSummary(data), { sets: 13, questions: SETS.reduce((n, s) => n + s.questionCount, 0), notes: 2, study: 0 });
   // JSON 으로 그대로 오간다
   assert.deepEqual(JSON.parse(JSON.stringify(data)), data);
 });
@@ -97,6 +97,9 @@ test('buildBackup: extras(확장 자리)는 맨 위 칸으로 더하고, 기본 
   const data = await buildBackup({ api, extras: { ink: { v: 1, strokes: 3 } } });
   assert.deepEqual(data.ink, { v: 1, strokes: 3 });
   await assert.rejects(buildBackup({ api, extras: { sets: [] } }), /기본 칸과 겹칩니다/);
+  // 공부 기록(study 칸)은 문제집 수를 안내에 센다
+  const withStudy = await buildBackup({ api, extras: { study: { version: 1, records: { 100: { v: 1, at: null, days: [] }, 101: { v: 1 } } } } });
+  assert.equal(backupSummary(withStudy).study, 2);
 });
 
 test('backupFileName: quiz-maker-backup-YYYYMMDD-HHmm.json (이 기기 시각)', () => {

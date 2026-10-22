@@ -1,4 +1,4 @@
-// 대시보드 도우미(화면 없이 값만): 찾기·정렬·마지막 공부 표시·문제집별 메모 수, 그리고 목록 기억.
+// 대시보드 도우미(화면 없이 값만): 찾기·정렬·마지막 공부 표시·공부 요약·문제집별 메모 수, 그리고 목록 기억.
 // Node 시험(test/app)도 그대로 불러오도록 다른 파일을 부르지 않는다.
 
 // 마지막으로 본 때 → '오늘'·'어제'·'3일 전'·'2주 전'·'3개월 전'·'1년 전'. 이 기기 달력 날짜로 센다(24시간 단위 아님)
@@ -48,16 +48,19 @@ export function filterCards(cards, query) {
 
 export const SORT_DEFAULT = "default"; // 서버 순서(만든 때 늦은 것부터)
 export const SORT_RECENT = "recent"; // 최근 공부 순(공부한 적 없는 것은 뒤에, 기본 순서대로)
+export const SORT_REVIEW = "review"; // 복습 차례: 공부한 지 오래된 것부터, 공부한 적 없는 것은 그 뒤에(기본 순서대로)
+const SORT_MODES = new Set([SORT_DEFAULT, SORT_RECENT, SORT_REVIEW]);
 
 export function sortCards(cards, mode, map) {
-  if (mode !== SORT_RECENT) return cards;
+  if (mode !== SORT_RECENT && mode !== SORT_REVIEW) return cards;
+  const dir = mode === SORT_RECENT ? -1 : 1; // 최근 공부: 늦은 것부터, 복습 차례: 이른 것부터
   return cards
     .map((c, i) => ({ c, i, t: timeOf(lastStudiedOf(c, map)) }))
     .sort((x, y) => {
       if (x.t === null && y.t === null) return x.i - y.i;
       if (x.t === null) return 1;
       if (y.t === null) return -1;
-      return y.t - x.t || x.i - y.i;
+      return dir * (x.t - y.t) || x.i - y.i;
     })
     .map((x) => x.c);
 }
@@ -67,7 +70,8 @@ const sortKey = (username) => `qm:dash-sort:v1:${username || ""}`;
 
 export function loadSortMode(username) {
   try {
-    return localStorage.getItem(sortKey(username)) === SORT_RECENT ? SORT_RECENT : SORT_DEFAULT;
+    const v = localStorage.getItem(sortKey(username));
+    return SORT_MODES.has(v) ? v : SORT_DEFAULT;
   } catch {
     return SORT_DEFAULT;
   }
@@ -75,10 +79,57 @@ export function loadSortMode(username) {
 
 export function saveSortMode(username, mode) {
   try {
-    localStorage.setItem(sortKey(username), mode === SORT_RECENT ? SORT_RECENT : SORT_DEFAULT);
+    localStorage.setItem(sortKey(username), SORT_MODES.has(mode) ? mode : SORT_DEFAULT);
   } catch {
     // 이번 화면에서만 유지
   }
+}
+
+// ── 공부 요약('오늘 2개 · 이번 주 7개 · 연속 3일') ──
+// days: studyState.studyDaysMap 결과 { 문제집 id(문자열): [서울 날짜 YYYY-MM-DD] }, today: 서울 날짜(studyDay)
+// 카드(원래 + 짝인 하드)를 하나로 센다. 목록에 없는 문제집(지운 것)의 기록은 세지 않는다.
+//  today  오늘 공부한 카드 수
+//  week   이번 주(월요일 ~ 오늘)에 한 번이라도 공부한 카드 수
+//  streak 하루도 빠짐없이 공부한 날 수 — 오늘 아직 안 했으면 어제까지로 센다(저녁에 하기 전에 0 으로 떨어지지 않게)
+// 공부 기록이 하나도 없으면 null(요약 줄을 그리지 않음)
+const DAY_MS = 86400000;
+const dayNo = (d) => Math.round(Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) / DAY_MS);
+
+export function studySummary(cards, days, today) {
+  if (!days || !/^\d{4}-\d{2}-\d{2}$/.test(String(today || ""))) return null;
+  const t = dayNo(today);
+  const monday = t - ((new Date(t * DAY_MS).getUTCDay() + 6) % 7);
+  const studiedDays = new Set();
+  let any = false;
+  let todayN = 0;
+  let weekN = 0;
+  for (const c of cards) {
+    const list = [...(days[String(c.set.id)] || []), ...(c.hard ? days[String(c.hard.id)] || [] : [])];
+    if (!list.length) continue;
+    any = true;
+    let inWeek = false;
+    let isToday = false;
+    for (const d of list) {
+      const n = dayNo(d);
+      if (Number.isNaN(n)) continue;
+      studiedDays.add(n);
+      if (n === t) isToday = true;
+      if (n >= monday && n <= t) inWeek = true;
+    }
+    if (isToday) todayN++;
+    if (inWeek) weekN++;
+  }
+  if (!any) return null;
+  let streak = 0;
+  for (let n = studiedDays.has(t) ? t : t - 1; studiedDays.has(n); n--) streak++;
+  return { today: todayN, week: weekN, streak };
+}
+
+// short: 휴대폰 머리 줄(제목 아래 172px 안팎)에 맞춘 짧은 꼴 — '개'를 뺀다('오늘 2 · 이번 주 7 · 연속 3일')
+export function summaryText(s, { short = false } = {}) {
+  if (!s) return "";
+  const n = short ? "" : "개";
+  return [`오늘 ${s.today}${n}`, `이번 주 ${s.week}${n}`, s.streak > 0 ? `연속 ${s.streak}일` : null].filter(Boolean).join(" · ");
 }
 
 // 미해결 메모 목록 → { 문제집 id(문자열): 수 }
