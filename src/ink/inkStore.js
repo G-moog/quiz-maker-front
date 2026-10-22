@@ -1,6 +1,7 @@
 import { loadInk as dbLoadInk, loadLatestArchive as dbLoadArchive, saveInk as dbSaveInk } from "./inkDb.js";
 import { driftExceeds, matchWidth, packRecord, unpackRecord } from "./geometry.js";
 import { loadInkTool, saveInkTool } from "./inkMode.js";
+import { inkHints } from "./inkHint.js";
 
 // 필기 상태 보관소(React 바깥). 풀기 화면 하나에 하나를 만들고, 필기 영역·도구 막대가 useSyncExternalStore 로 읽는다.
 // 선이 늘어도 문항 본문(긴 글)을 다시 그리지 않게 상태를 화면(SolveView) 밖에 둔다.
@@ -11,6 +12,8 @@ import { loadInkTool, saveInkTool } from "./inkMode.js";
 //  unsure  : 이 문항 필기를 불러오지 못함(저장소 오류). 이때 쓴 필기는 저장 직전에 다시 읽어 저장된 필기 위에 얹는다 —
 //            그대로 저장하면 보지 못한 예전 필기(다른 폭 포함)를 덮어써 없애므로. 다시 읽지도 못하면 저장하지 않고 경고만
 //  archivedKey : 문항 글이 바뀌기 전의 예전 필기를 보관하고 새 필기로 바꾼 문항(안내용)
+//  hint    : 이 문항에 보여 줄 필기가 있을 것 같다(이 기기의 기억 — inkHint.js). 불러오는 동안만 hasVisibleInk 에 쓴다
+//            (필기 모드를 끈 채 필기가 있는 문항을 열 때 첫 그림부터 필기 층·정답 폭 빈칸으로 그리게 — 글이 한 번 다시 흐르지 않게)
 //  old     : 이 문항에 보관한 예전 필기 가운데 가장 최근 것 { record, at(보관한 때) } (없으면 null — 불러온 뒤 따로 읽음)
 //  oldOn   : 예전 필기를 흐리게 겹쳐 보는 중('흐리게 보기' — 읽기만. 지금 필기·되돌리기·저장과 상관없다).
 //            보여 줄 것: 본문이 바뀌어 숨긴 지금 기록, 아니면 old(oldRecord)
@@ -115,17 +118,19 @@ export function mergeOnto(stored, mine, textHash) {
   return { record: { textHash, layouts }, prev: null };
 }
 
-// db: { loadInk, saveInk, loadArchive? } (시험에서 바꿔 끼움), prefs: { load, save } 도구 기억
+// db: { loadInk, saveInk, loadArchive? } (시험에서 바꿔 끼움), prefs: { load, save } 도구 기억,
+// hints: { has(key, textHash), note(key, record), width(w) } 필기가 있는 문항 기억
 export function createInkStore({
   db = { loadInk: dbLoadInk, saveInk: dbSaveInk, loadArchive: dbLoadArchive },
   prefs = { load: loadInkTool, save: saveInkTool },
+  hints = inkHints,
 } = {}) {
   const pref = prefs.load();
   let s = {
     key: null, textHash: "", loaded: false, unsure: false, record: null,
     width: 0, height: 0, lw: 0,
     tool: pref.tool, color: pref.color, hidden: false,
-    history: [], future: [], saveError: false, archivedKey: null, old: null, oldOn: false,
+    history: [], future: [], saveError: false, archivedKey: null, old: null, oldOn: false, hint: false,
   };
   const listeners = new Set();
   let timer = 0;
@@ -159,6 +164,7 @@ export function createInkStore({
     const archiveStale = p.archive && !!p.record && p.record.textHash === p.textHash;
     db.saveInk(p.key, packRecord(p.record), { archiveStale }).then(
       (res) => {
+        hints.note(p.key, p.record);
         const patch = {};
         if (s.saveError) patch.saveError = false;
         const archived = !!res?.archived && s.key === p.key;
@@ -244,7 +250,8 @@ export function createInkStore({
       return () => listeners.delete(l);
     },
     getSnapshot: () => s,
-    hasVisibleInk: () => visibleStrokes(s).length > 0,
+    // 불러오는 동안은 기억(hint)으로, 불러온 뒤에는 진짜 필기로
+    hasVisibleInk: () => (s.hint && !s.loaded) || visibleStrokes(s).length > 0,
     visibleStrokes: () => visibleStrokes(s),
     flush,
     // 펜·마우스가 필기 영역에 닿아 있음(InkInput). 닿아 있는 동안은 저장을 미루고, 떼면 SAVE_DELAY 뒤 저장
@@ -262,10 +269,12 @@ export function createInkStore({
       flush();
       const my = ++loadSeq;
       queued = [];
-      emit({ key, textHash, loaded: !key, unsure: false, record: null, lw: 0, history: [], future: [], hidden: false, old: null, oldOn: false });
+      const hint = !!key && hints.has(key, textHash);
+      emit({ key, textHash, loaded: !key, unsure: false, record: null, lw: 0, history: [], future: [], hidden: false, old: null, oldOn: false, hint });
       if (!key) return;
       const done = (record, unsure) => {
         if (my !== loadSeq) return;
+        if (!unsure) hints.note(key, record);
         emit({ loaded: true, unsure, record, lw: resolveWidth(record, s.width) });
         const early = queued;
         queued = [];
@@ -277,6 +286,7 @@ export function createInkStore({
     },
     setSize(width, height) {
       if (width === s.width && height === s.height) return;
+      if (width !== s.width) hints.width(width);
       emit(width === s.width ? { height } : { width, height, lw: resolveWidth(s.record, width) });
     },
     setTool(tool) {
