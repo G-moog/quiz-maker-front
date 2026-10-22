@@ -1,11 +1,12 @@
 // 예전 필기 흐리게 보기 시험(2차): 보관한 예전 필기 고르기(가장 최근), 보관소의 old·oldOn(읽기만 — 지금 필기·되돌리기·
-// 저장과 섞이지 않음), 다른 폭이면 가장 가까운 폭(approx), 안내를 저절로 띄우는 기간.
+// 저장과 섞이지 않음), 다른 폭이면 가장 가까운 폭(approx), 안내를 저절로 띄우는 기간·닫은 기억, 흐리게 보는 동안 필기 층.
 // 실행: npm run test:app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  OLD_NOTICE_MS, createInkStore, hasOld, oldNoticeDue, oldRecord, oldStrokes, visibleStrokes,
+  OLD_NOTICE_MS, createInkStore, hasOld, isStale, oldNoticeDue, oldRecord, oldStrokes, visibleStrokes,
 } from '../../src/ink/inkStore.js';
+import { OLD_CLOSED_MAX, noteOldClosed, parseOldClosed, serializeOldClosed } from '../../src/ink/inkOldNotice.js';
 import { archiveKeyOf, archiveValue, latestArchive, needsArchive } from '../../src/ink/inkRecord.js';
 import { DEFAULT_TOOL } from '../../src/ink/inkMode.js';
 import { packPoints } from '../../src/ink/geometry.js';
@@ -173,4 +174,129 @@ test('보관한 예전 필기 안내를 저절로 띄우는 기간: 보관한 �
   assert.equal(oldNoticeDue(s, now), true);
   assert.equal(oldNoticeDue({ ...s, old: { record: {}, at: now - 31 * DAY } }, now), false);
   assert.equal(oldNoticeDue({ ...s, old: null }, now), false);
+});
+
+// 닫은 기억 가짜(inkOldNotice.oldNoticeMemory 와 같은 규칙 — 늦은 때만 적음)
+function fakeClosed() {
+  const m = new Map();
+  return { m, closedAt: (k) => m.get(k) || 0, close: (k, at) => noteOldClosed(m, k, at) };
+}
+
+test('흐리게 보는 동안은 필기 층을 켠다(hasVisibleInk) — 필기 모드를 끈 채 바뀐 본문에서도 빈칸이 필기할 때의 정답 폭', async () => {
+  // 본문이 바뀐 문항: 지금 필기는 숨겨져 보여 줄 선이 없다 → 평소엔 필기 층 없음
+  const db = fakeDb({ 'me:1:1': raw('OLD', 600, 3), 'me:1:2#old:OLD:1': raw('OLD', 600, 2, 1, { archivedAt: Date.now() - DAY }) });
+  const store = createInkStore({ db, prefs, oldClosed: fakeClosed() });
+  await ready(store, 'me:1:1', 'NEW');
+  assert.equal(isStale(store.getSnapshot()), true);
+  assert.equal(store.hasVisibleInk(), false);
+  store.toggleOld();
+  assert.equal(store.hasVisibleInk(), true, '흐리게 보기 켬 → 필기 층');
+  store.toggleOld();
+  assert.equal(store.hasVisibleInk(), false, '끄면 다시 없음');
+  // 지금 필기는 없고 보관한 예전 필기만 있는 문항도 같다
+  await ready(store, 'me:1:2', 'NEW');
+  assert.equal(store.getSnapshot().record, null);
+  assert.equal(store.hasVisibleInk(), false);
+  store.toggleOld();
+  assert.equal(store.hasVisibleInk(), true);
+});
+
+test('불러오는 중에 바뀐 본문 위에 쓴 선: 막 숨긴 기록이 예전 필기 — 뒤늦게 온 더 오래된 보관이 덮어쓰지 않는다', async () => {
+  const map = {
+    'me:1:1': raw('MID', 600, 2, 5), // 지금 저장된 기록(본문이 또 바뀌어 숨김), 선 2개
+    'me:1:1#old:OLD:3': raw('OLD', 600, 4, 3, { archivedAt: Date.now() - DAY }), // 더 예전 보관, 선 4개
+  };
+  const db = fakeDb(map);
+  // 보관 읽기를 늦게(불러오기 다음에) 끝나게
+  const slow = db.loadArchive;
+  db.loadArchive = (key) => new Promise((r) => setTimeout(() => r(slow(key)), 20));
+  const store = createInkStore({ db, prefs, oldClosed: fakeClosed() });
+  store.setSize(600, 1000);
+  store.setKey('me:1:1', 'NEW');
+  assert.equal(store.addStroke(line(10, 10)), true, '불러오기 전에 그은 선은 기다렸다 더함');
+  await settle();
+  await settle();
+  await new Promise((r) => setTimeout(r, 40));
+  let s = store.getSnapshot();
+  assert.equal(s.old?.record?.textHash, 'MID', '막 숨긴 기록');
+  store.toggleOld();
+  assert.equal(oldStrokes(store.getSnapshot()).strokes.length, 2);
+  store.flush();
+  await settle();
+  await settle();
+  s = store.getSnapshot();
+  assert.equal(s.archivedKey, 'me:1:1');
+  assert.equal(s.old.record.textHash, 'MID', '보관한 뒤에도 같은 것');
+  assert.equal(oldStrokes(s).strokes.length, 2);
+});
+
+test('보관한 예전 필기 안내: 막 보관한 화면에서는 저절로 안 뜸(따로 보관했습니다가 뜸), 다시 열면 뜨고, 닫으면 이 기기에서 다시 안 뜸', async () => {
+  const closed = fakeClosed();
+  const db = fakeDb({ 'me:1:1': raw('OLD', 600, 3, 7) });
+  let store = createInkStore({ db, prefs, oldClosed: closed });
+  await ready(store, 'me:1:1', 'NEW');
+  store.addStroke(line(1, 1));
+  let s = store.getSnapshot();
+  assert.equal(hasOld(s), true);
+  assert.equal(oldNoticeDue(s), false, '막 숨긴 기록 — 보관했다는 안내만');
+  store.flush();
+  await settle();
+  await settle();
+  assert.equal(store.getSnapshot().archivedKey, 'me:1:1');
+  assert.equal(oldNoticeDue(store.getSnapshot()), false);
+  // 닫지 않고 다시 열면(새 화면) 한 번 더 뜬다
+  store = createInkStore({ db, prefs, oldClosed: closed });
+  await ready(store, 'me:1:1', 'NEW');
+  assert.equal(oldNoticeDue(store.getSnapshot()), true);
+  // 닫으면 이 화면에서도, 다시 열어도 안 뜬다
+  store.dismissOld();
+  assert.equal(oldNoticeDue(store.getSnapshot()), false);
+  assert.ok(closed.closedAt('me:1:1') > 0);
+  store = createInkStore({ db, prefs, oldClosed: closed });
+  await ready(store, 'me:1:1', 'NEW');
+  s = store.getSnapshot();
+  assert.equal(hasOld(s), true, '흐리게 보기는 그대로 할 수 있음');
+  assert.equal(oldNoticeDue(s), false);
+  // 닫은 뒤에 새로 보관한 예전 필기(본문이 또 바뀜)는 다시 뜬다
+  const later = fakeClosed();
+  later.close('me:2:1', Date.now() - 5 * DAY);
+  const db2 = fakeDb({ 'me:2:1': raw('B', 600, 1), 'me:2:1#old:A:1': raw('A', 600, 2, 1, { archivedAt: Date.now() - DAY }) });
+  store = createInkStore({ db: db2, prefs, oldClosed: later });
+  await ready(store, 'me:2:1', 'B');
+  assert.equal(oldNoticeDue(store.getSnapshot()), true);
+});
+
+test('보관이 끝나기 전에 안내를 닫아도: 보관이 끝난 뒤 닫은 때를 다시 적어 다음에 열 때 안 뜸', async () => {
+  const closed = fakeClosed();
+  const db = fakeDb({ 'me:1:1': raw('OLD', 600, 3, 7) });
+  let store = createInkStore({ db, prefs, oldClosed: closed });
+  await ready(store, 'me:1:1', 'NEW');
+  store.toggleOld();
+  store.addStroke(line(1, 1));
+  store.dismissOld(); // 흐리게 보던 중의 안내를 저장 전에 닫음
+  const first = closed.closedAt('me:1:1');
+  await new Promise((r) => setTimeout(r, 5));
+  store.flush();
+  await settle();
+  await settle();
+  const archivedAt = db.map.get('me:1:1#old:OLD:7').archivedAt;
+  assert.ok(closed.closedAt('me:1:1') >= archivedAt && closed.closedAt('me:1:1') >= first);
+  store = createInkStore({ db, prefs, oldClosed: closed });
+  await ready(store, 'me:1:1', 'NEW');
+  assert.equal(oldNoticeDue(store.getSnapshot()), false);
+});
+
+test('닫은 기억 모양: 틀린 글은 빈 기억, 늦은 때만 적고, 넘치면 오래된 것부터 지움', () => {
+  for (const bad of [null, '', '{', '[]', '{"v":2,"k":{"a":1}}', '{"v":1,"k":3}']) assert.equal(parseOldClosed(bad).size, 0);
+  const m = parseOldClosed('{"v":1,"k":{"me:1:1":100,"me:1:2":"x","me:1:3":-1,"me:1:4":200}}');
+  assert.deepEqual([...m.entries()], [['me:1:1', 100], ['me:1:4', 200]]);
+  assert.deepEqual(parseOldClosed(serializeOldClosed(m)), m);
+  assert.equal(noteOldClosed(m, 'me:1:1', 50), false, '더 이른 때는 적지 않음');
+  assert.equal(noteOldClosed(m, 'me:1:1', 300), true);
+  assert.deepEqual([...m.keys()], ['me:1:4', 'me:1:1'], '고친 것은 뒤로');
+  assert.equal(noteOldClosed(m, '', 1), false);
+  for (let i = 0; i < OLD_CLOSED_MAX + 5; i++) noteOldClosed(m, `k${i}`, 1000 + i);
+  assert.equal(m.size, OLD_CLOSED_MAX);
+  assert.equal(m.has('me:1:4'), false);
+  assert.equal(m.has(`k${OLD_CLOSED_MAX + 4}`), true);
 });
