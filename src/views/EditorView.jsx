@@ -339,7 +339,8 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
   const editorRef = useRef(null);
   // 키보드 초점 옮기기: 초점이 있던 단추가 사라지거나(줄 지우기·폼 닫기) 숨으면(폭 900px 이하는 목록·폼 중 하나만
   // 보임) 다음 그리기 뒤 보이는 곳으로 — Tab 이 문서 처음(body)부터 다시 시작하지 않게.
-  // 값: { id } 그 문항의 목록 줄, "form" 폼 맨 위 '← 문항 목록', 없는 줄이면 첫 유형 단추
+  // 값: { id } 그 문항의 목록 줄, "form" 폼 맨 위 '← 문항 목록', 없는 줄이면 첫 유형 단추,
+  // { img: "question" | "answer" } 그 그림 칸(data-img) — 그림이 있으면 '✕ 삭제', 없으면 file 칸
   const focusNext = useRef(null);
   const returnFocusId = useRef(null); // 폼을 닫으면 초점을 돌려줄 목록 줄(연 문항 id, 새 문항이면 null)
 
@@ -396,11 +397,17 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
     if (now && now !== document.body && shown(now)) return;
     let el;
     if (want === "form") el = editorRef.current?.querySelector(".qm-ed-back");
+    else if (want.img) el = editorRef.current?.querySelector(`[data-img="${want.img}"]`);
     else {
       el = want.id != null ? sidebarRef.current?.querySelector(`.qm-ed-q[data-qid="${want.id}"]`) : null;
       if (!shown(el)) el = sidebarRef.current?.querySelector("button"); // 그 줄이 없으면 첫 유형 단추(객관식)
     }
-    if (shown(el)) el.focus({ preventScroll: true });
+    if (!shown(el)) return;
+    el.focus({ preventScroll: true });
+    // 키보드로 온 초점(테두리가 보임)이 화면·목록 스크롤 칸 밖이면 보이게 — 새 문항을 저장하면 그 줄은 긴 목록 맨 끝에
+    // 붙는다. 손가락·펜으로 누른 뒤(:focus-visible 아님)는 스크롤을 건드리지 않는다(되돌린 목록 자리 그대로).
+    // file 칸은 1px 이라 감싼 칸(label)째로
+    if (el.matches(":focus-visible")) (el.closest(".qm-ed-upload") ?? el).scrollIntoView({ block: "nearest" });
   });
 
   // 폼 열기·닫기. 폼마다 새 key — 늦게 끝난 그림 올리기·저장이 다른 폼에 붙지 않게
@@ -565,6 +572,9 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
     } catch (e) {
       if (formRef.current?.key === key) alert(e.message);
     } finally {
+      // 올리는 동안 file 칸이 꺼져(disabled) 초점이 body 로 빠진다 — 끝나면 그 그림 칸으로(올렸으면 '✕ 삭제',
+      // 못 올렸으면 다시 켜진 file 칸). 그 사이 다른 칸으로 옮겼으면 focusNext 처리가 건드리지 않는다
+      if (formRef.current?.key === key) focusNext.current = { img: field };
       setUploading((u) => (u[field] === key ? { ...u, [field]: null } : u));
     }
   }
@@ -850,9 +860,11 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
                 {form.questionImageUrl ? (
                   <div style={S.imgPreviewWrap}>
                     <img src={form.questionImageUrl} style={S.imgPreview} alt="문제 이미지" />
+                    {/* 지우면 이 단추가 사라지므로 초점은 다시 생기는 file 칸으로(data-img, focusNext) */}
                     <button
                       style={S.imgDelBtn}
-                      onClick={() => setForm((f) => ({ ...f, questionImageUrl: "" }))}
+                      data-img="question"
+                      onClick={() => { setForm((f) => ({ ...f, questionImageUrl: "" })); focusNext.current = { img: "question" }; }}
                     >✕ 삭제</button>
                   </div>
                 ) : (
@@ -865,6 +877,7 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
                     {uploadingQ ? "⏳ 업로드 중..." : "📷 이미지 업로드"}
                     <input
                       type="file" accept={IMAGE_ACCEPT} style={S.fileInput}
+                      data-img="question"
                       disabled={uploadingQ}
                       onChange={(e) => { handleImageUpload(e.target.files[0], "question"); e.target.value = ""; }}
                     />
@@ -896,7 +909,8 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
                       <img src={form.answerImageUrl} style={S.imgPreview} alt="답안 이미지" />
                       <button
                         style={S.imgDelBtn}
-                        onClick={() => setForm((f) => ({ ...f, answerImageUrl: "" }))}
+                        data-img="answer"
+                        onClick={() => { setForm((f) => ({ ...f, answerImageUrl: "" })); focusNext.current = { img: "answer" }; }}
                       >✕ 삭제</button>
                     </div>
                   ) : (
@@ -909,6 +923,7 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
                       {uploadingA ? "⏳ 업로드 중..." : "📷 답안 이미지 업로드"}
                       <input
                         type="file" accept={IMAGE_ACCEPT} style={S.fileInput}
+                        data-img="answer"
                         disabled={uploadingA}
                         onChange={(e) => { handleImageUpload(e.target.files[0], "answer"); e.target.value = ""; }}
                       />
