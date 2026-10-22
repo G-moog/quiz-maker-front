@@ -45,6 +45,12 @@ export function applyAnchor(body, lineY, a) {
     return;
   }
   const el = findAnchorEl(body, a);
+  if (el && a.k === "h" && Number.isFinite(a.p)) {
+    // 절 안 비율(보통 ↔ 하드 바꾸기): 그 제목에서 다음 제목(없으면 본문 끝)까지의 p 지점이 읽는 줄에 오게
+    const { top, end } = sectionSpan(body, el, a.i);
+    window.scrollTo(0, window.scrollY + top + a.p * Math.max(0, end - top) - lineY);
+    return;
+  }
   if (el) {
     window.scrollTo(0, window.scrollY + el.getBoundingClientRect().top - (lineY + a.d));
     return;
@@ -53,6 +59,23 @@ export function applyAnchor(body, lineY, a) {
     const r = body.getBoundingClientRect();
     window.scrollTo(0, window.scrollY + r.top + a.f * r.height - lineY);
   }
+}
+
+// 제목 hid 의 절: 제목 위 끝 ~ 다음 제목(없으면 본문 끝)의 위 끝(화면 기준 px)
+function sectionSpan(body, el, hid) {
+  const next = body.querySelector(`[data-qm-h="${hid + 1}"]`);
+  const top = el.getBoundingClientRect().top;
+  const end = next ? next.getBoundingClientRect().top : body.getBoundingClientRect().bottom;
+  return { top, end };
+}
+
+// 읽는 줄이 제목 hid 의 절 안 어디쯤인가(0~1) — 보통 ↔ 하드를 바꿀 때 짝 문제집의 같은 절 같은 비율로 가려고
+export function sectionProgress(body, lineY, hid) {
+  const el = body && hid != null ? body.querySelector(`[data-qm-h="${hid}"]`) : null;
+  if (!el) return 0;
+  const { top, end } = sectionSpan(body, el, hid);
+  if (end - top <= 1) return 0;
+  return Math.min(1, Math.max(0, (lineY - top) / (end - top)));
 }
 
 // 본문을 얼마나 읽었나(0~1): 본문 맨 위가 읽는 줄에 닿으면 0, 본문 맨 아래가 화면 아래에 닿으면 1

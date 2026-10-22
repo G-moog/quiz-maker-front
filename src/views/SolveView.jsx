@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
-import { getQuestions } from "../api/quiz";
+import { getQuestions, getSets } from "../api/quiz";
 import { listNotes } from "../api/notes";
 import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
@@ -9,10 +9,15 @@ import SolveToc from "../components/SolveToc";
 import { PencilIcon } from "../components/NoteIcons";
 import { plainPreview, textModel } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
-import { clearStudy, loadStudy, saveStudy } from "../utils/studyState";
+import { loadStudy, saveStudy } from "../utils/studyState";
 import { freshStudyBeforeOpen } from "../api/study";
-import { GRADED_TYPES, initialSolveState, normalizeType, questionHash, studySnapshot, blankCountOf } from "../utils/solveStudy";
-import { applyAnchor, captureAnchor, pulse, readingProgress, scrollElTo } from "../utils/solveScroll";
+import {
+  GRADED_TYPES, applyTarget, blankCountOf, flagsOf, indicesOf, initialSolveState, keepResume, normalizeType, openedIndices,
+  questionHash, starOnlyRevealed, studySnapshot, toggleIndex,
+} from "../utils/solveStudy";
+import { applyAnchor, captureAnchor, pulse, readingProgress, scrollElTo, sectionProgress } from "../utils/solveScroll";
+import { hasSet, pairOf, rememberHardMode } from "../utils/hardMode";
+import { readDashCache } from "../utils/dashboard";
 import { useWakeLock } from "../utils/wakeLock";
 import InkSurface from "../ink/InkSurface";
 import InkNotices from "../ink/InkNotices";
@@ -29,13 +34,20 @@ const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill:
 const LONG_FILL_CHARS = 500;
 // 빈칸이 이만큼 이상이면 오른쪽 아래에 '↓ 빈칸'(다음 가린 빈칸으로) 단추
 const NEXT_BLANK_MIN = 10;
-// 이어 보기 안내(머리 줄 아래 작은 띠)를 보여 두는 시간
+// 이어 보기 안내(머리 줄 아래 작은 띠)를 보여 두는 시간. 메모에서 연 안내('읽던 곳으로' 단추)는 조금 더 길게
 const RESUME_CHIP_MS = 7000;
+const NOTE_CHIP_MS = 12000;
 // 다시 열었을 때 읽던 자리를 맞춘 뒤, 늦게 바뀌는 배치(필기를 불러와 빈칸 폭이 바뀜·그림)를 따라 다시 맞추는 시간.
 // 사용자가 손대면(누름·휠·키·직접 스크롤) 바로 그만둔다
 const RESTORE_SETTLE_MS = 4000;
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩";
 const NO_ANSWERS = [];
+const NO_STARS = [];
+// ★(헷갈림 표시) 색: 빈칸 단추의 주황과 갈리게 분홍(FillBlank·solve.css 와 같은 값)
+const STAR = "#f472b6";
+
+// 메모의 빈칸으로 갈 때 그 빈칸을 읽는 줄 아래 얼마에 둘지('↓ 빈칸'과 같은 셈 — 화면의 30%, 많아야 120px)
+const focusGap = () => Math.min(120, Math.max(24, Math.round((window.innerHeight - 120) * 0.3)));
 
 const TYPE_COLOR = {
   multiple: { text: "#60a5fa", bg: "rgba(96,165,250,0.1)" },
@@ -155,9 +167,49 @@ const S = {
     fontWeight: 700, fontSize: 14,
     display: "flex", alignItems: "center", gap: 8,
   }),
-  qMeta: { display: "flex", alignItems: "center", gap: 10, marginBottom: 16 },
-  // 문항 머리 오른쪽 묶음: 목차 · 모두 보기/가리기
-  qMetaBtns: { marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 },
+  // 단추가 많으면(하드로·★·목차·모두 보기) 좁은 휴대폰에서 다음 줄로 — 가로로 넘치지 않게. 단추 묶음은 늘 같은 것만 그려
+  // (★ 를 처음 달 때 생기는 단추 같은 것 없이) 읽는 도중 위쪽 줄 수가 바뀌어 글이 밀리지 않게
+  qMeta: { display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 10, rowGap: 8, marginBottom: 16 },
+  // 문항 머리 오른쪽 묶음: 하드로/보통으로 · ★만 가리기 · 목차 · 모두 보기/가리기(★ 표시 켜고 끄기는 위에 붙은 머리 줄)
+  qMetaBtns: { marginLeft: "auto", display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", gap: 6 },
+  // 머리 묶음 단추(목차와 같은 크기). 좁은 휴대폰 여백은 solve.css .qm-meta-btn
+  metaBtn: {
+    padding: "6px 10px", minHeight: 36,
+    background: "transparent", color: "#c4c4c4",
+    border: "1px solid #3a3a3a", borderRadius: 7,
+    fontWeight: 700, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
+    transition: "opacity 0.15s ease",
+  },
+  // 보통 → 하드: 대시보드 '하드모드' 단추와 같은 빨강. 하드 → 보통은 무채색
+  pairBtn: (toHard) => ({
+    color: toHard ? "#f87171" : "#c4c4c4",
+    border: `1px solid ${toHard ? "rgba(239,68,68,0.5)" : "#3a3a3a"}`,
+  }),
+  // ★만 가리기: 켜진 것은 분홍 바탕
+  starBtn: (on, off = false) => ({
+    display: "inline-flex", alignItems: "center", gap: 5,
+    color: on ? "#fbcfe8" : STAR,
+    background: on ? "rgba(244,114,182,0.18)" : "transparent",
+    border: `1px solid ${on ? STAR : "rgba(244,114,182,0.45)"}`,
+    opacity: off ? 0.4 : 1, cursor: off ? "default" : "pointer",
+  }),
+  // 머리 줄의 ★ 표시(켜면 빈칸을 누를 때 열지 않고 ★ 를 달고 뗌): 필기 모드 단추와 같은 크기(폭·여백은 solve.css .qm-star-toggle).
+  // 켜면 분홍 바탕 — 켜 있는 동안 띠를 따로 두지 않는다(머리 묶음 높이가 바뀌면 맨 위에서 글이 통째로 밀렸다)
+  starToggle: (on) => ({
+    position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
+    height: 36, borderRadius: 8, flexShrink: 0, whiteSpace: "nowrap",
+    fontSize: 13, fontWeight: 700, cursor: "pointer", transition: "opacity 0.15s ease",
+    background: on ? "rgba(244,114,182,0.18)" : "transparent",
+    border: `1px solid ${on ? STAR : "rgba(244,114,182,0.45)"}`,
+    color: on ? "#fbcfe8" : STAR,
+  }),
+  starGlyph: { fontSize: 16, lineHeight: 1 },
+  // ★ 수: 단추 오른쪽 위 모서리에 겹쳐 띄운다(단추 폭이 그대로 — 제목 칸·머리 줄 높이가 바뀌지 않게)
+  starToggleCount: {
+    position: "absolute", top: -7, right: -7, minWidth: 17, height: 16, padding: "0 4px", borderRadius: 5,
+    background: STAR, color: "#1a1a1a", boxShadow: "0 0 0 2px #1a1a1a",
+    fontSize: 10.5, fontWeight: 800, lineHeight: "16px", textAlign: "center", pointerEvents: "none",
+  },
   // 본문이 긴 빈칸 문항(LONG_FILL_CHARS): 본문 위에서도 모두 보기/가리기 (긴 페이지 끝까지 내려가지 않아도 되게)
   revealToggleBtn: {
     padding: "6px 12px", minHeight: 36,
@@ -297,7 +349,9 @@ const S = {
     background: correct ? "rgba(52,211,153,0.15)" : "rgba(248,113,113,0.15)",
     color: correct ? "#34d399" : "#f87171",
   }),
-  resultItemText: { fontSize: 14, color: "#a0a0a0", lineHeight: 1.5, paddingTop: 2 },
+  resultItemText: { fontSize: 14, color: "#a0a0a0", lineHeight: 1.5, paddingTop: 2, minWidth: 0, overflowWrap: "anywhere" },
+  // 빈칸 문항 줄 아래: '연 빈칸 37/230 · ★ 5개'
+  resultItemSub: { display: "block", fontSize: 12.5, color: "#8a8a8a", marginTop: 1 },
   resultBtns: { display: "flex", gap: 12 },
   retryBtn: {
     flex: 1, padding: "12px 0",
@@ -388,14 +442,14 @@ const S = {
     fontWeight: 700, fontSize: 13.5, cursor: "pointer", whiteSpace: "nowrap",
     boxShadow: "0 6px 18px rgba(0,0,0,0.55)",
   },
-  // '↓ 빈칸': 메모 단추 바로 위(자리는 solve.css .qm-next-fab). 같은 모양, 조금 낮게(36)
-  nextFab: {
+  // '↓ 빈칸': 메모 단추 바로 위(자리는 solve.css .qm-next-fab). 같은 모양, 조금 낮게(36). ★만 가리기 중('↓ ★')에는 분홍
+  nextFab: (star) => ({
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4,
     height: 36, minWidth: 42, borderRadius: 8,
-    background: "#242424", border: "1px solid #f59e0b", color: "#f59e0b",
+    background: "#242424", border: `1px solid ${star ? STAR : "#f59e0b"}`, color: star ? STAR : "#f59e0b",
     fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
     boxShadow: "0 6px 18px rgba(0,0,0,0.55)",
-  },
+  }),
   noteFabCount: {
     minWidth: 19, height: 19, padding: "0 5px", borderRadius: 5,
     background: "#f59e0b", color: "#000", fontSize: 12, fontWeight: 800,
@@ -413,7 +467,12 @@ const S = {
   }),
 };
 
-export default function SolveView({ set, onBack }) {
+// target: 처음 열 자리(없으면 이어 보기) — App 이 넘긴다
+//  { kind: "note", questionId, blankNo }  질문 메모의 '빈칸 보기': 그 빈칸으로 가서 깜빡임. 이어 볼 자리는 바꾸지 않는다(엿보기)
+//  { kind: "switch", qIndex, heading, p, f, toHard }  '하드로/보통으로': 짝 문제집에서 읽던 절과 같은 절로
+// knownSets: 부른 쪽이 이미 가진 문제집 목록(짝 찾기용 — 없으면 대시보드 기억, 그것도 없으면 받아 봄)
+// backLabel: 머리 줄 ← 단추 글(메모에서 왔으면 '← 메모로'), onSwitchSet(짝 문제집, target): 보통 ↔ 하드
+export default function SolveView({ set, target = null, knownSets = null, backLabel = "← 목록으로", onBack, onSwitchSet }) {
   const setId = set.id;
   const [baseQuestions, setBaseQuestions] = useState([]); // 서버가 준 순서(순번대로·다시 풀기에 씀)
   const [questions, setQuestions] = useState([]); // 푸는 순서(랜덤이면 섞인 것)
@@ -434,11 +493,26 @@ export default function SolveView({ set, onBack }) {
   const [noteInfo, setNoteInfo] = useState(null);
   const [noteCount, setNoteCount] = useState(null);
   const [toast, setToast] = useState(null);
-  const [resumeChip, setResumeChip] = useState(false); // '지난번 읽던 곳에서 이어 봅니다' 띠
+  // 머리 줄 아래 작은 띠: { kind: "resume" }('지난번 읽던 곳에서 이어 봅니다') | { kind: "note", text, back }(메모에서 옴)
+  const [chip, setChip] = useState(null);
   const toastTimer = useRef(null);
+  // ★(헷갈림 표시): 문항마다 ★ 단 빈칸 번호 { [문항 id]: [번호…] } — 이어 보기 기록에 남고 끝낸 뒤·'처음부터'에도 지우지 않는다
+  const [stars, setStars] = useState({});
+  const [starMode, setStarMode] = useState(false); // ★ 표시 중: 빈칸을 누르면 열지 않고 ★ 를 달고 뗀다
+  const [filterPre, setFilterPre] = useState(null); // ★만 가리기를 켰으면 켜기 전 연 빈칸 번호(끄면 되돌림), 꺼져 있으면 null
+  const [counts, setCounts] = useState({}); // 지나온 빈칸 문항의 연 빈칸 수 { [문항 id]: 수 } — 결과 화면
   // 필기 모드(S펜): 켬/끔은 이 기기에 기억(inkMode.js). 필기는 문항마다 이 기기(IndexedDB)에 — src/ink/
   const [inkOn, setInkOn] = useState(loadInkMode);
   const [username] = useState(() => localStorage.getItem("username") || "");
+  // 짝(보통 ↔ 하드) 문제집: { set, toHard, baseId } | null(짝 없음) | undefined(아직 모름 — 목록을 받아 봄).
+  // 대시보드에서 왔으면 대시보드 기억, 메모에서 왔으면 메모 화면이 받은 목록으로 바로(머리 줄 단추가 늦게 생겨 글이 밀리지 않게)
+  const [pair, setPair] = useState(() => {
+    for (const list of [knownSets, readDashCache(username)?.sets]) if (hasSet(list, set.id)) return pairOf(list, set.id);
+    return undefined;
+  });
+  const targetRef = useRef(target); // 처음 열 자리(다시 시도 때도 같은 자리로)
+  const peekRef = useRef(null); // 메모에서 엿보는 중: { saved: 열기 전 기록, anchor: 그 문항의 읽던 자리 } — 저장할 때 이어 볼 자리를 지킨다
+  const [restoreTick, setRestoreTick] = useState(0); // 읽던 자리 맞추기를 다시 돌릴 때('읽던 곳으로')
 
   const headRef = useRef(null); // 위에 붙은 머리 묶음(아래 끝 = 읽는 줄)
   const bodyRef = useRef(null); // 문항 카드 본문(읽던 자리·읽은 정도의 기준)
@@ -448,9 +522,16 @@ export default function SolveView({ set, onBack }) {
   const saveTimer = useRef(0);
   const lastJump = useRef(null); // '↓ 빈칸'으로 마지막에 간 빈칸 { i, y } — 그 뒤 스크롤하지 않았으면 다음 번호부터
 
+  const showToast = useCallback((message, type = "success") => {
+    clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 2500);
+  }, []);
+
   // 문항 불러오기. loadTry 를 올리면('다시 시도') 다시 부른다.
   // 이 기기에 남은 공부 기록이 지금 문항 묶음과 맞으면 이어 보고(문항·순서·연 빈칸·읽던 자리), 아니면 문항이 하나면 바로 시작.
   // 문항을 받는 동안 다른 기기 공부 기록 받기도 함께 기다린다(최대 1.5초, api/study.js) — 다른 기기에서 읽던 곳부터 이어 보게
+  // 처음 열 자리(target)가 있으면 그 문항·빈칸(메모)이나 같은 절(보통 ↔ 하드)로. ★ 는 어느 쪽이든 되살린다
   const [loadTry, setLoadTry] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -461,20 +542,56 @@ export default function SolveView({ set, onBack }) {
         const list = Array.isArray(data) ? data : [];
         const saved = loadStudy(username, setId);
         const init = initialSolveState(saved, list);
+        const tgt = targetRef.current;
+        const t = tgt ? applyTarget(init, list, tgt) : null;
+        const st = t && t.found ? t : init;
         setBaseQuestions(list);
-        setQuestions(init.questions);
-        setMode(init.mode);
-        setCurrentIndex(init.index);
-        setResults(init.results);
-        setFillRevealed(init.revealed);
+        setQuestions(st.questions);
+        setMode(st.mode);
+        setCurrentIndex(st.index);
+        setResults(st.results);
+        setFillRevealed(st.revealed);
+        setStars(st.stars);
+        setCounts(st.counts);
+        setFilterPre(st.filterPre);
+        setStarMode(false);
         setDone(false);
         setLoadError("");
-        const cq = init.questions[init.index];
-        restoreRef.current = init.resumed && init.anchor && cq ? { qid: cq.id, anchor: init.anchor } : null;
-        setResumeChip(init.resumed);
-        // 열 때마다 '마지막으로 본 때'(대시보드)를 남긴다. 내용은 바꾸지 않는다(open) — 이 기기가 아직 받지 못한
+        lastJump.current = null;
+        const cq = st.questions[st.index];
+        const note = !!(t && t.found && tgt.kind === "note");
+        if (t && t.found) {
+          // 메모의 빈칸: 읽는 줄 아래 조금 띄워 두고 깜빡인다(늦게 바뀌는 배치는 읽던 자리처럼 따라가며 맞춤)
+          restoreRef.current = !cq ? null
+            : t.focusBlank != null ? { qid: cq.id, anchor: { k: "b", i: t.focusBlank, d: focusGap() }, flash: t.focusBlank }
+            : t.anchor ? { qid: cq.id, anchor: t.anchor } : null;
+        } else {
+          restoreRef.current = init.resumed && init.anchor && cq ? { qid: cq.id, anchor: init.anchor } : null;
+        }
+        // 메모에서 엿보기: 이어 볼 자리(보던 문항·읽던 자리)는 그대로 지킨다. 같은 문항을 읽던 중이었으면 '읽던 곳으로' 단추.
+        // 이어 볼 기록이 없으면(처음 엶·끝낸 문제집·문항 묶음이 바뀜) 지킬 것이 없어 보통처럼 저장 — 메모에서 와 읽은 것이 남게
+        const initCur = init.resumed ? init.questions[init.index] : null;
+        const backAnchor = note && initCur && cq && String(initCur.id) === String(cq.id) ? init.anchor : null;
+        peekRef.current = note && init.resumed ? { saved, anchor: backAnchor } : null;
+        if (note) {
+          setChip({ kind: "note", text: t.focusBlank != null ? `메모의 빈칸 ${t.focusBlank + 1}` : "메모의 문항", back: !!backAnchor });
+        } else {
+          // 메모의 문항을 못 찾았으면 보통으로 연 것과 같다(이어 보기 안내도 그대로)
+          setChip((!t || !t.found) && init.resumed ? { kind: "resume" } : null);
+        }
+        if (tgt && tgt.kind === "note" && t.missing) {
+          showToast(t.missing === "question" ? "메모의 문항을 찾지 못했습니다(지웠거나 바뀜)" : "메모의 빈칸을 찾지 못했습니다(문항이 바뀜)", "info");
+        } else if (tgt && tgt.kind === "switch" && t.found) {
+          const kind = tgt.toHard ? "하드" : "보통";
+          showToast(t.anchor && t.anchor.k === "h" ? `${kind} 문제집 · 같은 절로 왔습니다` : `${kind} 문제집으로 바꿨습니다`, "info");
+        }
+        // 열 때마다 '마지막으로 본 때'(대시보드)를 남긴다(★ 는 남김). 내용은 바꾸지 않는다(open) — 이 기기가 아직 받지 못한
         // 다른 기기의 진도를 열기만 해서 덮지 않게(utils/studyState.js saveStudy)
-        saveStudy(username, setId, init.resumed ? saved : { ids: list.map((q) => String(q.id)) }, { open: true });
+        saveStudy(
+          username, setId,
+          init.resumed ? saved : studySnapshot({ base: list, questions: list, mode: null, index: 0, stars: init.stars }),
+          { open: true },
+        );
       } catch (e) {
         console.error(e);
         // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
@@ -484,7 +601,17 @@ export default function SolveView({ set, onBack }) {
       }
     })();
     return () => { alive = false; };
-  }, [setId, loadTry, username]);
+  }, [setId, loadTry, username, showToast]);
+
+  // 짝 문제집을 아직 모르면(대시보드·메모를 거치지 않음, 목록이 오래됨) 목록을 받아 찾는다. 못 받으면 단추만 안 보인다
+  useEffect(() => {
+    if (pair !== undefined) return undefined;
+    let alive = true;
+    getSets()
+      .then((list) => { if (alive) setPair(hasSet(list, setId) ? pairOf(list, setId) : null); })
+      .catch(() => { if (alive) setPair(null); });
+    return () => { alive = false; };
+  }, [pair, setId]);
 
   function retryLoad() {
     setLoadingQ(true);
@@ -502,12 +629,6 @@ export default function SolveView({ set, onBack }) {
   }, [setId]);
 
   useEffect(() => () => clearTimeout(toastTimer.current), []);
-
-  function showToast(message, type = "success") {
-    clearTimeout(toastTimer.current);
-    setToast({ message, type });
-    toastTimer.current = setTimeout(() => setToast(null), 2500);
-  }
 
   const current = questions[currentIndex];
   const currentId = current ? current.id : null;
@@ -545,18 +666,41 @@ export default function SolveView({ set, onBack }) {
     () => (fillRevealed.length === fillBlankCount ? fillRevealed : Array(fillBlankCount).fill(false)),
     [fillRevealed, fillBlankCount],
   );
+  // 지금 문항의 ★: 번호 목록과 빈칸마다 [참/거짓]
+  const curStarList = (currentId != null && stars[String(currentId)]) || NO_STARS;
+  const fillStars = useMemo(() => flagsOf(fillBlankCount, curStarList), [fillBlankCount, curStarList]);
+  const starCount = curStarList.length;
+  // 본문에 넘기는 빈칸 상태: 1 = 열림, 2 = ★ (TableAwareText 는 값이 바뀐 빈칸이 든 줄만 다시 그림)
+  const blankView = useMemo(
+    () => fillRev.map((v, i) => (v ? 1 : 0) | (fillStars[i] ? 2 : 0)),
+    [fillRev, fillStars],
+  );
+  // 사용자가 스스로 연 빈칸[참/거짓]: ★만 가리기가 대신 연 ★ 아닌 빈칸은 뺀다(꺼져 있으면 화면 그대로).
+  // 머리 줄 '연 빈칸 n/전체'·목차의 절마다 수·결과 화면의 수, ★만 가리기를 끌 때 돌아갈 상태
+  const fillOpened = useMemo(
+    () => (filterPre ? flagsOf(fillBlankCount, openedIndices(fillRev, fillStars, filterPre)) : fillRev),
+    [fillRev, fillStars, filterPre, fillBlankCount],
+  );
+  const openedCount = useMemo(() => fillOpened.reduce((n, v) => n + (v ? 1 : 0), 0), [fillOpened]);
   const fillLong = isFill && (current?.text || "").length > LONG_FILL_CHARS;
   const showToc = fillLong && !current?.answerImageUrl && fillHeadings.filter((h) => h.kind !== "title").length >= 2;
-  const showNext = showing && isFill && !current.answerImageUrl && fillBlankCount >= NEXT_BLANK_MIN;
+  // ★ 도구: 빈칸이 있는 빈칸 문항. '★만 가리기'는 빈칸이 많은(긴) 문항에만 — 가려 볼 만큼일 때
+  const starTools = isFill && !current?.answerImageUrl && fillBlankCount > 0;
+  const starFilterTool = starTools && (fillLong || fillBlankCount >= NEXT_BLANK_MIN);
+  const starRun = !!filterPre; // ★만 가리기 켬 — '↓' 가 ★ 빈칸을 차례로 돈다
+  // 문항 머리 줄 오른쪽 단추 묶음(하드로/보통으로 · ★만 가리기 · 목차 · 모두 보기/가리기)이 있나
+  const metaTools = !!((pair && onSwitchSet) || starFilterTool || (starTools && showToc) || (fillLong && starTools));
+  const showNext = showing && isFill && !current.answerImageUrl && (fillBlankCount >= NEXT_BLANK_MIN || (starRun && starCount > 0));
   // 문항 하나짜리 빈칸 문제집(노션 페이지): 머리 줄은 '연 빈칸/전체', 막대는 읽은 정도
   const singleFill = questions.length === 1 && isFill && fillBlankCount > 0;
-  const revealedCount = singleFill ? fillRev.reduce((n, v) => n + (v ? 1 : 0), 0) : 0;
+  const revealedCount = singleFill ? openedCount : 0;
 
   // 이벤트 처리기가 읽는 지금 상태
   useLayoutEffect(() => {
     live.current = {
       ready: !loadingQ && !loadError, base: baseQuestions, questions, mode, index: currentIndex,
       results, revealed: fillRev, done, qid: currentId, n: fillBlankCount,
+      stars, counts, filterPre, starMode: starMode && starTools,
     };
   });
 
@@ -570,17 +714,20 @@ export default function SolveView({ set, onBack }) {
     const anchor = r && String(r.qid) === String(s.qid)
       ? r.anchor
       : captureAnchor(bodyRef.current, lineOf(headRef.current));
-    saveStudy(username, setId, studySnapshot({ ...s, anchor }));
+    let snap = studySnapshot({ ...s, anchor });
+    // 메모에서 엿보는 중이면 이어 볼 자리는 열기 전 그대로(연 빈칸·★ 은 지금 것)
+    if (peekRef.current) snap = keepResume(snap, peekRef.current.saved);
+    saveStudy(username, setId, snap);
   }, [username, setId]);
   const scheduleSave = useCallback(() => {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(persist, 500);
   }, [persist]);
 
-  // 상태가 바뀌면(빈칸 열고 닫기·문항 이동·채점·끝냄) 0.5초 뒤 저장
+  // 상태가 바뀌면(빈칸 열고 닫기·★·문항 이동·채점·끝냄) 0.5초 뒤 저장
   useEffect(() => {
     scheduleSave();
-  }, [scheduleSave, mode, currentIndex, results, fillRev, done, questions]);
+  }, [scheduleSave, mode, currentIndex, results, fillRev, done, questions, stars, counts, filterPre]);
 
   // 앱이 가려지거나(홈 화면·다른 앱) 닫힐 때는 바로 저장
   useEffect(() => {
@@ -637,6 +784,11 @@ export default function SolveView({ set, onBack }) {
       raf = 0;
       applyAnchor(body, lineOf(headRef.current), r.anchor);
       expected = window.scrollY;
+      // 메모의 빈칸: 처음 맞춘 뒤 한 번 깜빡여 어느 칸인지 보이게
+      if (r.flash != null && !r.flashed) {
+        r.flashed = true;
+        pulse(body.querySelector(`[data-ink-blank="${r.flash}"]`));
+      }
     };
     const ro = typeof ResizeObserver === "function"
       ? new ResizeObserver(() => { if (!raf && !stopped) raf = requestAnimationFrame(apply); })
@@ -666,13 +818,13 @@ export default function SolveView({ set, onBack }) {
     window.addEventListener("scroll", onScroll, { passive: true });
     // 정리(StrictMode 의 두 번 실행 포함)에서는 자리를 버리지 않는다 — 다시 실행되면 이어서 맞춤
     return stop;
-  }, [showing, currentId]);
+  }, [showing, currentId, restoreTick]);
 
   useEffect(() => {
-    if (!resumeChip) return undefined;
-    const t = setTimeout(() => setResumeChip(false), RESUME_CHIP_MS);
+    if (!chip) return undefined;
+    const t = setTimeout(() => setChip(null), chip.kind === "note" ? NOTE_CHIP_MS : RESUME_CHIP_MS);
     return () => clearTimeout(t);
-  }, [resumeChip]);
+  }, [chip]);
 
   function toggleInk() {
     const next = !inkOn;
@@ -680,12 +832,35 @@ export default function SolveView({ set, onBack }) {
     saveInkMode(next);
   }
 
-  // 빈칸 하나 열고 닫기. 고정된 함수(빈칸 230개의 FillBlank memo 가 맞게) — 지금 문항은 live 에서 읽는다
+  // 빈칸 하나 누름: 열고 닫기, ★ 표시 중이면 ★ 달기/떼기. 손가락·마우스 누름(FillBlank)과 필기 모드의 손가락 콕·펜 두 번 콕
+  // (InkSurface onBlankTap)이 모두 여기로 온다. 고정된 함수(빈칸 230개의 FillBlank memo 가 맞게) — 지금 문항은 live 에서 읽는다
   const toggleFill = useCallback((i) => {
     const s = live.current;
     const n = s ? s.n : 0;
     // 질문 메모 맥락용: 열든 닫든 마지막으로 누른 빈칸을 기억(문항 id 로 묶어 다른 문항으로 넘어가면 쓰지 않음)
     setLastBlank({ qid: s ? s.qid : null, i });
+    if (s && s.starMode) {
+      if (s.qid == null || !(i >= 0 && i < n)) return;
+      const id = String(s.qid);
+      setStars((prev) => {
+        const next = toggleIndex(prev[id], i);
+        const out = { ...prev };
+        if (next.length) out[id] = next;
+        else delete out[id];
+        return out;
+      });
+      // ★만 가리기 중이면 그 빈칸도 가리기 규칙대로: ★ 를 달면 가리고, 떼면 연다(가리기가 연 칸이 ★ 가 되어
+      // 스스로 연 빈칸으로 세지거나, 뗀 칸만 가려진 채 남지 않게)
+      if (s.filterPre) {
+        const had = (s.stars[id] || NO_STARS).includes(i);
+        setFillRevealed((prev) => {
+          const base = prev.length === n ? [...prev] : Array(n).fill(false);
+          base[i] = had;
+          return base;
+        });
+      }
+      return;
+    }
     setFillRevealed((prev) => {
       // prev(실제 상태)로 base를 만들고 base[i]를 토글 — fillRev(외부 파생값) 참조 금지
       const base = prev.length === n ? [...prev] : Array(n).fill(false);
@@ -698,7 +873,8 @@ export default function SolveView({ set, onBack }) {
   const renderBlank = useCallback((i, { inTable, state }) => (
     <FillBlank
       index={i}
-      revealed={!!state}
+      revealed={!!(state & 1)}
+      star={!!(state & 2)}
       answer={fillAnswers[i]}
       inTable={inTable}
       fixed={inkLayer}
@@ -729,7 +905,8 @@ export default function SolveView({ set, onBack }) {
 
   // '↓ 빈칸': 읽는 줄 아래의 다음 가린 빈칸으로 가서 잠깐 깜빡인다(빈칸을 열지는 않음).
   // 그 빈칸이 이미 화면 안(떠 있는 단추들 위)이면 스크롤하지 않고 깜빡이기만. 연달아 누르면(그사이 스크롤 안 함) 다음 번호로.
-  // 아래에 더 없으면 맨 앞의 가린 빈칸으로 돌아가고, 가린 빈칸이 하나도 없으면 알린다
+  // 아래에 더 없으면 맨 앞의 가린 빈칸으로 돌아가고, 가린 빈칸이 하나도 없으면 알린다.
+  // ★만 가리기를 켰으면 '↓ ★': 연 것·가린 것 상관없이 ★ 빈칸을 차례로 돈다(열어 본 뒤 다음 ★ 로 넘어가게)
   function goNextHidden() {
     const body = bodyRef.current;
     const s = live.current;
@@ -738,10 +915,10 @@ export default function SolveView({ set, onBack }) {
     const hidden = [];
     for (const el of body.querySelectorAll("[data-ink-blank]")) {
       const i = Number(el.getAttribute("data-ink-blank"));
-      if (!s.revealed[i]) hidden.push({ el, i });
+      if (starRun ? fillStars[i] : !s.revealed[i]) hidden.push({ el, i });
     }
     if (!hidden.length) {
-      showToast("가린 빈칸이 더 없습니다", "info");
+      showToast(starRun ? "★ 표시한 빈칸이 없습니다" : "가린 빈칸이 더 없습니다", "info");
       return;
     }
     const lj = lastJump.current;
@@ -760,7 +937,70 @@ export default function SolveView({ set, onBack }) {
     }
     lastJump.current = { i: target.i, y };
     pulse(target.el);
-    if (wrapped) showToast("맨 앞의 가린 빈칸으로 돌아왔습니다", "info");
+    if (wrapped) showToast(starRun ? "맨 앞의 ★ 빈칸으로 돌아왔습니다" : "맨 앞의 가린 빈칸으로 돌아왔습니다", "info");
+  }
+
+  // ★ 표시 켜고 끄기(★ 단 빈칸은 늘 보이고, 켜 있는 동안만 누르면 ★ 를 달고 뗀다). 단추는 위에 붙은 머리 줄에 —
+  // 긴 페이지 가운데를 읽다가도 그 자리에서 켜고 끈다. 켤 때 무엇이 바뀌는지 짧게 알린다(빈칸 테두리도 분홍)
+  function toggleStarMode() {
+    const next = !starMode;
+    setStarMode(next);
+    if (next) showToast("★ 표시 중 · 빈칸을 누르면 ★", "info");
+  }
+
+  // ★만 가리기: 켜면 ★ 아닌 빈칸은 모두 열고 ★ 빈칸만 가린다('↓ ★'로 차례로). 끄면 가리기가 대신 연 빈칸은 다시 가린다
+  // (켜기 전에 연 빈칸 + 켠 동안 스스로 연 ★ 빈칸만 열린 채로 — fillOpened)
+  function toggleStarFilter() {
+    lastJump.current = null;
+    if (filterPre) {
+      setFillRevealed([...fillOpened]);
+      setFilterPre(null);
+      return;
+    }
+    if (!starCount) return;
+    setFilterPre(indicesOf(fillRev));
+    setFillRevealed(starOnlyRevealed(fillBlankCount, curStarList));
+    // 켜면 '↓ ★' 단추가 늘 보인다(showNext). 안내는 짧게 — 길면 오른쪽 아래 '↓ ★' 단추를 가린다
+    showToast(`★ ${starCount}개만 가렸습니다`, "info");
+  }
+
+  // 모두 보기/가리기: ★만 가리기는 끈다(되돌릴 상태 없이 — 사용자가 고른 상태가 새 기준)
+  function setAllRevealed(v) {
+    setFillRevealed(Array(fillBlankCount).fill(v));
+    setFilterPre(null);
+    lastJump.current = null;
+  }
+
+  // 메모에서 엿보다가 '읽던 곳으로': 열기 전에 읽던 자리로 가고, 이제부터는 보통처럼 지금 자리를 남긴다
+  function backToReading() {
+    const p = peekRef.current;
+    setChip(null);
+    if (!p || !p.anchor || !current) return;
+    peekRef.current = null;
+    lastJump.current = null;
+    restoreRef.current = { qid: current.id, anchor: p.anchor };
+    setRestoreTick((n) => n + 1);
+  }
+
+  // 보통 ↔ 하드: 지금 자리를 저장하고, 읽던 절(제목)·그 절 안 비율을 짝 문제집에 넘긴다(빈칸 번호는 둘이 달라 쓰지 않음).
+  // 대시보드 카드의 하드모드 켬/끔도 바꾼 쪽으로(목록으로 가서 다시 풀어도 같은 쪽이 열리게)
+  function switchPair() {
+    if (!pair || !onSwitchSet || !current) return;
+    const body = bodyRef.current;
+    const line = lineOf(headRef.current);
+    const hid = isFill ? currentHeading() : null;
+    const h = hid != null ? fillHeadings.find((x) => x.hid === hid) : null;
+    const cap = captureAnchor(body, line);
+    const qIndex = Math.max(0, baseQuestions.findIndex((q) => String(q.id) === String(current.id)));
+    persist();
+    rememberHardMode(username, pair.baseId, pair.toHard);
+    onSwitchSet(pair.set, {
+      qIndex,
+      heading: h ? { kind: h.kind, label: h.label, hid: h.hid, total: fillHeadings.length } : null,
+      p: h ? sectionProgress(body, line, h.hid) : 0,
+      f: cap && Number.isFinite(cap.f) ? cap.f : null,
+      toHard: pair.toHard,
+    });
   }
 
   // 진행 표시(여러 문항): 머리줄 숫자는 지금 보는 문항 번호, 막대는 끝낸 문항 수(지나온 문항 + 지금 문항을 채점했으면 1).
@@ -771,6 +1011,7 @@ export default function SolveView({ set, onBack }) {
     : 0;
 
   function recordAnswer(correct, userAnswer) {
+    peekRef.current = null; // 메모에서 왔어도 답을 냈으면 보통처럼 이 자리를 남긴다
     setResults((r) => ({ ...r, [currentIndex]: { correct, userAnswer } }));
     setShowExplanation(false);
   }
@@ -792,15 +1033,22 @@ export default function SolveView({ set, onBack }) {
     recordAnswer(v === current.answer, v);
   }
 
-  // 화면 위치·안내를 새 문항(또는 처음) 기준으로
+  // 화면 위치·안내를 새 문항(또는 처음) 기준으로. 문항을 옮기면 메모 엿보기도 끝(이제부터 보통처럼 자리를 남김)
   function resetView() {
     restoreRef.current = null;
     lastJump.current = null;
-    setResumeChip(false);
+    peekRef.current = null;
+    setChip(null);
+    setFilterPre(null);
     window.scrollTo(0, 0);
   }
 
   function handleNext() {
+    // 결과 화면의 '연 빈칸 N/전체': 떠나는 빈칸 문항의 스스로 연 빈칸 수를 남긴다(★만 가리기가 연 칸은 빼고)
+    if (current && isFill && fillBlankCount > 0) {
+      const id = String(current.id);
+      setCounts((c) => ({ ...c, [id]: openedCount }));
+    }
     if (currentIndex < questions.length - 1) {
       setCurrentIndex((i) => i + 1);
       setShowExplanation(false);
@@ -822,6 +1070,8 @@ export default function SolveView({ set, onBack }) {
     setMode(selectedMode);
     setCurrentIndex(0);
     setResults({});
+    setCounts({});
+    setStarMode(false);
     setShowExplanation(false);
     setUserInput("");
     setFillRevealed(Array(blankCountOf(order[0])).fill(false));
@@ -842,6 +1092,8 @@ export default function SolveView({ set, onBack }) {
     setQuestions(baseQuestions);
     setCurrentIndex(0);
     setResults({});
+    setCounts({});
+    setStarMode(false);
     setShowExplanation(false);
     setUserInput("");
     setFillRevealed([]);
@@ -851,9 +1103,10 @@ export default function SolveView({ set, onBack }) {
     resetView();
   }
 
-  // 이어 보기 띠의 '처음부터': 이 문제집 기록을 지우고 맨 위·전부 가림부터
+  // 이어 보기 띠의 '처음부터': 이 문제집 기록(연 빈칸·자리·지나온 문항)을 지우고 맨 위·전부 가림부터.
+  // ★(헷갈림 표시)는 따로 모은 것이라 남긴다
   function restartFromTop() {
-    clearStudy(username, setId);
+    saveStudy(username, setId, studySnapshot({ base: baseQuestions, questions: baseQuestions, mode: null, index: 0, stars }));
     handleRetry();
   }
 
@@ -878,7 +1131,7 @@ export default function SolveView({ set, onBack }) {
       onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
       onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
     >
-      ← 목록으로
+      {backLabel}
     </button>
   );
 
@@ -943,7 +1196,22 @@ export default function SolveView({ set, onBack }) {
       ([i, r]) => questions[parseInt(i)] && !isNoGrade(questions[parseInt(i)]) && r.correct
     ).length;
     const rate = total > 0 ? Math.round((gradableCorrect / total) * 100) : 0;
-    const blankTotal = questions.reduce((n, q) => n + blankCountOf(q), 0);
+    // 빈칸 문항: 연 빈칸(문항을 떠날 때 센 수 — 이어 보다 끝내 앞 문항 수를 모르면 전체만)·★ 수
+    const fillQs = questions.filter((q) => normalizeType(q.type) === "fill" && !q.answerImageUrl && blankCountOf(q) > 0);
+    const blankTotal = fillQs.reduce((n, q) => n + blankCountOf(q), 0);
+    const openedOf = (q) => counts[String(q.id)];
+    const starsOf = (q) => (stars[String(q.id)] || NO_STARS).length;
+    const openedKnown = fillQs.every((q) => Number.isInteger(openedOf(q)));
+    const openedTotal = fillQs.reduce((n, q) => n + (openedOf(q) || 0), 0);
+    const starTotal = questions.reduce((n, q) => n + starsOf(q), 0);
+    const blankLine = (opened, all, starred) => [
+      Number.isInteger(opened) ? `연 빈칸 ${opened}/${all}` : `빈칸 ${all}개`,
+      starred > 0 ? `★ ${starred}개` : null,
+    ].filter(Boolean).join(" · ");
+    const studySub = [
+      blankTotal > 0 ? blankLine(openedKnown ? openedTotal : null, blankTotal, starTotal) : null,
+      questions.length > 1 || blankTotal === 0 ? `학습 문항 ${questions.length}개` : null,
+    ].filter(Boolean).join(" · ");
     return (
       <div style={S.page}>
         <nav style={S.nav} className="qm-solve-nav">
@@ -969,9 +1237,7 @@ export default function SolveView({ set, onBack }) {
                 // 채점할 문항이 없으면(빈칸·답안 이미지 문항만) 점수 대신 학습 완료로 — 빨간 '0 / 0' 은 다 틀린 것처럼 보였다
                 <>
                   <div style={S.studyDone}>학습 완료</div>
-                  <div style={S.studySub}>
-                    {blankTotal > 0 ? `빈칸 ${blankTotal}개 · ` : ""}학습 문항 {questions.length}개
-                  </div>
+                  <div style={S.studySub}>{studySub}</div>
                 </>
               )}
               {total > 0 && total < questions.length && (
@@ -997,6 +1263,9 @@ export default function SolveView({ set, onBack }) {
                       <div style={S.resultItemText}>
                         <strong style={{ color: "#f59e0b" }}>{i + 1}번</strong>
                         {" "}— {plainPreview(q.text, 50) || "(내용 없음)"}
+                        {fillQs.includes(q) && (
+                          <span style={S.resultItemSub}>{blankLine(openedOf(q), blankCountOf(q), starsOf(q))}</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -1098,6 +1367,25 @@ export default function SolveView({ set, onBack }) {
               {questions.length > 0 ? currentIndex + 1 : 0} / {questions.length}
             </span>
           )}
+          {/* ★ 표시: 필기 모드 단추 옆(위에 붙은 머리 줄 — 긴 페이지 어디서든 그 자리에서 켜고 끔). 켜고 꺼도 크기가 그대로라
+              머리 묶음 높이가 바뀌어 글이 밀리지 않는다(★ 수는 단추 모서리에 겹쳐 띄움) */}
+          {showing && starTools && (
+            <button
+              type="button"
+              className="qm-star-toggle"
+              style={S.starToggle(starMode)}
+              onClick={toggleStarMode}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.8"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+              aria-pressed={starMode}
+              aria-label={`★ 표시${starCount ? ` (★ ${starCount}개)` : ""}`}
+              title={starMode ? "★ 표시 끝내기" : "★ 표시 — 켜면 빈칸을 누를 때 열지 않고 헷갈림 ★ 를 달고 뗍니다"}
+            >
+              <span aria-hidden="true" style={S.starGlyph}>★</span>
+              <span className="qm-star-toggle-label">표시</span>
+              {starCount > 0 && <span style={S.starToggleCount} aria-hidden="true">{starCount}</span>}
+            </button>
+          )}
           {showing && <InkModeButton on={inkOn} onToggle={toggleInk} />}
         </nav>
         {inkActive && <InkToolbar store={ink} />}
@@ -1107,12 +1395,21 @@ export default function SolveView({ set, onBack }) {
             : <div style={S.progressFill(progressPct)} />}
         </div>
         {showing && <InkNotices store={ink} enabled={inkActive} />}
-        {showing && resumeChip && (
+        {showing && chip && (
           <div style={S.chipBand}>
             <div style={S.chip} role="status">
-              <span>지난번 읽던 곳에서 이어 봅니다</span>
-              <button style={S.chipBtn} onClick={restartFromTop}>처음부터</button>
-              <button style={S.chipClose} onClick={() => setResumeChip(false)} aria-label="안내 닫기">✕</button>
+              {chip.kind === "note" ? (
+                <>
+                  <span>{chip.text}</span>
+                  {chip.back && <button style={S.chipBtn} onClick={backToReading}>읽던 곳으로</button>}
+                </>
+              ) : (
+                <>
+                  <span>지난번 읽던 곳에서 이어 봅니다</span>
+                  <button style={S.chipBtn} onClick={restartFromTop}>처음부터</button>
+                </>
+              )}
+              <button style={S.chipClose} onClick={() => setChip(null)} aria-label="안내 닫기">✕</button>
             </div>
           </div>
         )}
@@ -1141,32 +1438,66 @@ export default function SolveView({ set, onBack }) {
             )}
 
             <div className="qm-solve-card-body" ref={bodyRef}>
-              {/* 문항 번호 + 유형 (+ 본문이 긴 빈칸 문항은 목차·모두 보기/가리기 — 긴 본문 끝까지 내려가지 않아도 되게) */}
-              <div style={S.qMeta}>
-                <span style={S.qNum}>Q{currentIndex + 1}</span>
-                <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype] ?? "학습"}</span>
-                {!current.answerImageUrl && fillLong && fillBlankCount > 0 && (
-                  <div style={S.qMetaBtns}>
-                    {showToc && (
-                      <SolveToc
-                        headings={fillHeadings}
-                        blankState={fillRev}
-                        blankCount={fillBlankCount}
-                        getCurrent={currentHeading}
-                        onJump={jumpToHeading}
-                      />
-                    )}
-                    <button
-                      style={S.revealToggleBtn}
-                      onClick={() => setFillRevealed(Array(fillBlankCount).fill(!fillRev.every(Boolean)))}
-                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
-                      onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                    >
-                      {fillRev.every(Boolean) ? "모두 가리기" : "모두 보기"}
-                    </button>
-                  </div>
-                )}
-              </div>
+              {/* 문항 번호 + 유형 (+ 하드로/보통으로 · ★만 가리기, 본문이 긴 빈칸 문항은 목차·모두 보기/가리기 —
+                  긴 본문 끝까지 내려가지 않아도 되게). ★ 표시 켜고 끄기는 위에 붙은 머리 줄에(읽던 자리에서 바로) */}
+              {(!singleFill || metaTools) && (
+                <div style={S.qMeta}>
+                  {/* 문항 하나짜리 빈칸 문제집(노션 페이지)은 'Q1 · 빈칸 채우기'가 알려 주는 것이 없어 빼고 단추 자리로 —
+                      휴대폰(412px)에서 머리 줄이 한 줄에 들어가게. 단추도 없으면(짧은 페이지) 줄째 뺀다 */}
+                  {!singleFill && <span style={S.qNum}>Q{currentIndex + 1}</span>}
+                  {!singleFill && <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype] ?? "학습"}</span>}
+                  {metaTools && (
+                    <div style={S.qMetaBtns}>
+                      {pair && onSwitchSet && (
+                        <button
+                          style={{ ...S.metaBtn, ...S.pairBtn(pair.toHard) }}
+                          className="qm-meta-btn"
+                          onClick={switchPair}
+                          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                          title={pair.toHard ? "하드 문제집(빈칸이 더 많음)의 같은 절로" : "보통 문제집의 같은 절로"}
+                        >
+                          {pair.toHard ? "하드로" : "보통으로"}
+                        </button>
+                      )}
+                      {starFilterTool && (
+                        <button
+                          style={{ ...S.metaBtn, ...S.starBtn(starRun, !starRun && !starCount) }}
+                          className="qm-meta-btn"
+                          onClick={toggleStarFilter}
+                          disabled={!starRun && !starCount}
+                          aria-pressed={starRun}
+                          aria-label={`★만 가리기${starCount ? ` (★ ${starCount}개)` : ""}`}
+                          title={starRun ? "★만 가리기 끄기(가리기가 연 빈칸은 다시 가림)" : starCount ? "★ 아닌 빈칸은 모두 열고 ★ 빈칸만 가리기" : "★ 표시한 빈칸이 없습니다(머리 줄 ★ 로 표시)"}
+                        >
+                          ★만 가리기
+                        </button>
+                      )}
+                      {starTools && showToc && (
+                        <SolveToc
+                          headings={fillHeadings}
+                          blankState={fillOpened}
+                          starState={fillStars}
+                          blankCount={fillBlankCount}
+                          getCurrent={currentHeading}
+                          onJump={jumpToHeading}
+                        />
+                      )}
+                      {fillLong && starTools && (
+                        <button
+                          style={S.revealToggleBtn}
+                          className="qm-meta-btn"
+                          onClick={() => setAllRevealed(!fillRev.every(Boolean))}
+                          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        >
+                          {fillRev.every(Boolean) ? "모두 가리기" : "모두 보기"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* 문제 텍스트 (빈칸 채우기는 아래 토글 UI에서 렌더링) */}
               {!isFill && (
@@ -1279,21 +1610,23 @@ export default function SolveView({ set, onBack }) {
                 <div>
                   {/* 문제 텍스트 + 빈칸 토글 버튼 (표 문법 포함 가능)
                       가린 빈칸에는 번호(i + 1)를 표시 — 글·표 칸을 통틀어 읽는 순서대로 answers[i] 와 같은 번호.
-                      '■ '·'□ ' 제목 줄은 색·굵기만 다르게(줄 위치는 그대로 — 필기가 어긋나지 않게) */}
+                      '■ '·'□ ' 제목 줄은 색·굵기만 다르게(줄 위치는 그대로 — 필기가 어긋나지 않게).
+                      ★ 표시 중(qm-star-mode)에는 빈칸 테두리 색만 바뀐다(solve.css) */}
                   <InkSurface
                     store={ink}
                     enabled={inkActive}
                     layerOn={inkLayer}
                     onBlankTap={toggleFill}
+                    className={starMode && starTools ? "qm-star-mode" : undefined}
                     style={S.fillText}
                   >
-                    <TableAwareText text={current.text} renderBlank={renderBlank} blankState={fillRev} headings />
+                    <TableAwareText text={current.text} renderBlank={renderBlank} blankState={blankView} headings />
                   </InkSurface>
                   {/* 모두 보기 / 모두 가리기 */}
                   <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
                     <button
                       style={S.revealAllBtn}
-                      onClick={() => setFillRevealed(Array(fillBlankCount).fill(true))}
+                      onClick={() => setAllRevealed(true)}
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
                       onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                     >
@@ -1301,7 +1634,7 @@ export default function SolveView({ set, onBack }) {
                     </button>
                     <button
                       style={S.hideAllBtn}
-                      onClick={() => setFillRevealed(Array(fillBlankCount).fill(false))}
+                      onClick={() => setAllRevealed(false)}
                       onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
                       onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                     >
@@ -1349,16 +1682,16 @@ export default function SolveView({ set, onBack }) {
           보지 않아, 펜을 띄운 채 손바닥이 닿으면 눌려 쓰던 자리가 움직였다. 바로 아래 메모 단추와 같은 손바닥 무시를 받는다 */}
       {showNext && (
         <button
-          style={S.nextFab}
+          style={S.nextFab(starRun)}
           className="qm-next-fab"
           onClick={goNextHidden}
           onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
           onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-          title="다음 가린 빈칸으로 (열지는 않음)"
-          aria-label="다음 가린 빈칸으로 이동"
+          title={starRun ? "다음 ★ 빈칸으로 (열지는 않음)" : "다음 가린 빈칸으로 (열지는 않음)"}
+          aria-label={starRun ? "다음 ★ 빈칸으로 이동" : "다음 가린 빈칸으로 이동"}
         >
           <span aria-hidden="true">↓</span>
-          <span>빈칸</span>
+          <span>{starRun ? "★" : "빈칸"}</span>
         </button>
       )}
 

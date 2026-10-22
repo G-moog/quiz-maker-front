@@ -60,13 +60,20 @@ export default function App() {
   const [band, setBand] = useState(null);
   const [view, setView] = useState("dashboard");
   const [currentSet, setCurrentSet] = useState(null);
+  // 풀기 화면을 열 자리(SolveView target): null(이어 보기) | 메모의 빈칸 { kind: "note", from: "notes", … } | 보통 ↔ 하드 { kind: "switch", … }.
+  // from: "notes" 면 뒤로 가기·← 단추가 메모 목록으로. solveSeq: 같은 풀기 화면에서 짝 문제집으로 바꿀 때 화면을 새로 만든다
+  const [solveTarget, setSolveTarget] = useState(null);
+  const [solveSeq, setSolveSeq] = useState(0);
+  const [notesReturn, setNotesReturn] = useState(false); // 메모 목록으로 돌아감(거르기·스크롤 되살림)
+  const solveFromNotes = solveTarget?.from === "notes";
   const [role, setRole] = useState(() => localStorage.getItem("role") || "USER");
   const [busy, setBusy] = useState(false);
   const recoveryPending = useRef(START_LINK === "recovery");
   const bootSeq = useRef(0); // 늦게 끝난 옛 판정이 새 판정을 덮지 않게
   const editorDirty = useRef(false); // 편집기에 저장하지 않은 내용이 있는지(EditorView 가 알려 줌)
 
-  // 뒤로 가기(안드로이드 뒤로·브라우저 뒤로): 대시보드가 바닥이고 풀기·편집·메모는 한 칸, 미리보기는 편집 위에 한 칸 더.
+  // 뒤로 가기(안드로이드 뒤로·브라우저 뒤로): 대시보드가 바닥이고 풀기·편집·메모는 한 칸, 미리보기는 편집 위에 한 칸 더,
+  // 메모에서 연 풀기는 메모 위에 한 칸 더.
   // 앱 화면(phase app)일 때만. 바깥 칸을 먼저 선언한다 — 미리보기에서 대시보드로 한꺼번에 갈 때
   // 효과 정리가 바깥 → 안쪽 순서로 돌아 바깥 release 가 두 칸을 함께 걷는다(history.go 한 번)
   const inApp = phase === "app";
@@ -76,6 +83,11 @@ export default function App() {
     setView("dashboard");
   });
   useBack(inApp && view === "preview", () => setView("editor"));
+  // 메모에서 연 풀기 화면은 메모 목록 위에 한 칸 더(뒤로 가기 → 메모 목록 → 대시보드). 짝 문제집으로 바꿔도 같은 칸
+  useBack(inApp && view === "solve" && solveFromNotes, () => {
+    setNotesReturn(true);
+    setView("notes");
+  });
   // 대시보드 메뉴에서 연 '비밀번호 바꾸기'도 뒤로 가기로 닫는다(재설정 링크로 온 화면은 돌아갈 곳이 없어 그대로)
   useBack(phase === "password" && pwMode === "change", () => setPhase("app"));
 
@@ -248,7 +260,35 @@ export default function App() {
 
   function handleSolve(set) {
     setCurrentSet(set);
+    setSolveTarget(null);
+    setSolveSeq((n) => n + 1);
     setView("solve");
+  }
+
+  // 질문 메모의 '빈칸 보기': 그 문제집(목록에 없어도 메모의 id·제목으로)을 그 문항·빈칸에서 연다
+  function handleNoteSolve(set, target) {
+    setCurrentSet(set);
+    setSolveTarget({ ...target, kind: "note", from: "notes" });
+    setSolveSeq((n) => n + 1);
+    setView("solve");
+  }
+
+  // 풀기 화면의 '하드로/보통으로': 짝 문제집을 같은 절에서. 어디서 왔는지(from)는 그대로 — 뒤로 가기가 다른 쪽 문제집이 아니라
+  // 대시보드(메모에서 왔으면 메모 목록)로 가게 history 칸은 더 쌓지 않는다
+  function handleSwitchSet(set, target) {
+    setCurrentSet(set);
+    setSolveTarget((prev) => ({ ...target, kind: "switch", from: prev?.from ?? null, sets: prev?.sets ?? null }));
+    setSolveSeq((n) => n + 1);
+  }
+
+  function backToNotes() {
+    setNotesReturn(true);
+    setView("notes");
+  }
+
+  function openNotes() {
+    setNotesReturn(false);
+    setView("notes");
   }
 
   if (phase === "checking") {
@@ -362,7 +402,7 @@ export default function App() {
 
   function renderApp() {
     if (view === "notes") {
-      return <NotesView onBack={() => setView("dashboard")} />;
+      return <NotesView resume={notesReturn} onBack={() => setView("dashboard")} onOpenSolve={handleNoteSolve} />;
     }
 
     if (view === "editor") {
@@ -388,8 +428,13 @@ export default function App() {
     if (view === "solve") {
       return (
         <SolveView
+          key={solveSeq}
           set={currentSet}
-          onBack={() => setView("dashboard")}
+          target={solveTarget}
+          knownSets={solveTarget?.sets ?? null}
+          backLabel={solveFromNotes ? "← 메모로" : "← 목록으로"}
+          onBack={solveFromNotes ? backToNotes : () => setView("dashboard")}
+          onSwitchSet={handleSwitchSet}
         />
       );
     }
@@ -399,7 +444,7 @@ export default function App() {
         onLogout={handleLogout}
         onOpenEditor={handleOpenEditor}
         onSolve={handleSolve}
-        onOpenNotes={() => setView("notes")}
+        onOpenNotes={openNotes}
         onChangePassword={() => { setPwMode("change"); setPhase("password"); }}
         role={role}
       />

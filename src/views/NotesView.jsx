@@ -6,8 +6,21 @@ import { STAY, useBack } from "../utils/backStack";
 import {
   NOTE_CONTENT_MAX, buildCopyText, copyToClipboard, formatNoteTime, groupLabel, groupNotes,
 } from "../utils/notes";
+import { noteTarget } from "../utils/solveStudy";
 import NoteContextText from "../components/NoteContextText";
 import { PencilIcon, TrashIcon } from "../components/NoteIcons";
+
+// '빈칸 보기'로 풀기 화면에 갔다가 돌아올 때 되살릴 목록 상태(이 탭 메모리, 한 번 쓰면 버림):
+// { user, notes, sets(Map), filter, stay, expanded, scrollY } — '불러오는 중' 없이 같은 거르기·같은 자리로 그리고 뒤에서 새로 받는다
+let returnMemory = null;
+const currentUser = () => {
+  try { return localStorage.getItem("username") || ""; } catch { return ""; }
+};
+function keepReturnMemory(m) { returnMemory = m; }
+function peekReturnMemory(resume) {
+  return resume && returnMemory && returnMemory.user === currentUser() ? returnMemory : null;
+}
+function dropReturnMemory() { returnMemory = null; }
 
 // 질문 메모 목록: 문제를 풀다가 적어 둔 질문을 문제집별로 모아 보고, 해결 표시·고치기·지우기,
 // 미해결 메모를 한꺼번에 복사(Claude 에게 붙여 넣어 답을 조사하게)한다.
@@ -89,6 +102,12 @@ const S = {
     ...(open ? { whiteSpace: "pre-wrap" } : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }),
   }),
   metaRow: { display: "flex", alignItems: "center", gap: 4, minHeight: 32 },
+  // '빈칸 보기'(그 문제집을 그 빈칸에서 열기): 작은 글 단추 — 고치기·지우기 아이콘과 6px 떨어지게
+  goBtn: {
+    height: 28, padding: "0 8px", marginRight: 2, borderRadius: 6, flexShrink: 0, whiteSpace: "nowrap",
+    background: "none", border: "1px solid rgba(245,158,11,0.45)", color: "#f59e0b",
+    fontSize: 12, fontWeight: 700, cursor: "pointer",
+  },
   meta: { flex: 1, minWidth: 0, fontSize: 11.5, color: "#6f6f6f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   // 고치기·지우기: SVG 아이콘, 누르는 자리 36×32, 둘 사이 6px(잘못 누르지 않게)
   actions: { display: "flex", gap: 6, flexShrink: 0 },
@@ -163,15 +182,23 @@ function EditBox({ value, ...rest }) {
   return <textarea ref={ref} style={S.editArea} rows={3} value={value} {...rest} />;
 }
 
-export default function NotesView({ onBack }) {
-  const [notes, setNotes] = useState([]);
-  const [liveSets, setLiveSets] = useState(null); // 지금 내 문제집 Map(id → 문제집). 못 불러오면 null
-  const [loadState, setLoadState] = useState("loading"); // loading · ok · error
+// onOpenSolve(문제집, { questionId, blankNo, sets }): 메모의 '빈칸 보기'(App 이 풀기 화면을 그 자리로 연다).
+// resume: 그 풀기 화면에서 돌아옴 — 떠날 때의 거르기·펼침·스크롤을 되살린다
+export default function NotesView({ onBack, onOpenSolve, resume = false }) {
+  const [mem] = useState(() => peekReturnMemory(resume));
+  const [notes, setNotes] = useState(() => mem?.notes ?? []);
+  const [liveSets, setLiveSets] = useState(() => mem?.sets ?? null); // 지금 내 문제집 Map(id → 문제집). 못 불러오면 null
+  const [loadState, setLoadState] = useState(mem ? "ok" : "loading"); // loading · ok · error
   const [loadError, setLoadError] = useState("");
-  const [filter, setFilter] = useState("open");
+  const [filter, setFilter] = useState(() => mem?.filter ?? "open");
   // 이 거르기에서 방금 해결·미해결로 바꾼 메모는 칩을 바꿀 때까지 그 자리에 남긴다(잘못 눌렀으면 바로 되돌리게)
-  const [stay, setStay] = useState(() => new Set());
-  const [expanded, setExpanded] = useState(() => new Set());
+  const [stay, setStay] = useState(() => new Set(mem?.stay ?? []));
+  const [expanded, setExpanded] = useState(() => new Set(mem?.expanded ?? []));
+  // 돌아왔으면 떠날 때의 스크롤 자리로(목록은 기억한 것으로 이미 그려져 있음). 기억은 한 번 쓰고 버린다
+  useLayoutEffect(() => {
+    if (mem) window.scrollTo(0, mem.scrollY || 0);
+    dropReturnMemory();
+  }, [mem]);
   const [busy, setBusy] = useState(() => new Set());
   const busyRef = useRef(new Set());
   const [editing, setEditing] = useState(null); // { id, text, saving, error }
@@ -273,6 +300,18 @@ export default function NotesView({ onBack }) {
     onBack();
   }
 
+  // '빈칸 보기': 지금 목록 상태를 기억해 두고(돌아오면 되살림) 그 문제집을 메모의 문항·빈칸에서 연다.
+  // 하드 문제집 메모도 그 하드 문제집으로, 대시보드를 거치지 않았어도 메모의 id·제목으로 연다(utils/solveStudy noteTarget)
+  function openInSolve(t) {
+    if (editChanged() && !confirm("고치던 메모를 저장하지 않고 나갈까요?")) return;
+    keepReturnMemory({
+      user: currentUser(), notes, sets: liveSets, filter, stay: [...stay], expanded: [...expanded], scrollY: window.scrollY,
+    });
+    onOpenSolve(t.set, {
+      questionId: t.questionId, blankNo: t.blankNo, sets: liveSets ? [...liveSets.values()] : null,
+    });
+  }
+
   async function saveEdit() {
     if (!editing || editing.saving) return;
     const text = editing.text.trim();
@@ -356,6 +395,8 @@ export default function NotesView({ onBack }) {
       formatNoteTime(n.createdAt),
       n.resolved && n.resolvedAt ? `해결 ${formatNoteTime(n.resolvedAt)}` : null,
     ].filter(Boolean).join(" · ");
+    // 문제집이 남아 있으면 그 자리로 가는 단추(지운 문제집 메모는 없음)
+    const target = onOpenSolve ? noteTarget(n, liveSets) : null;
     return (
       <div key={n.id} style={S.card} data-note-id={n.id}>
         <button
@@ -406,6 +447,17 @@ export default function NotesView({ onBack }) {
           )}
           <div style={S.metaRow}>
             <span style={S.meta}>{meta}</span>
+            {!isEditing && target && (
+              <button
+                style={S.goBtn}
+                onClick={() => openInSolve(target)}
+                onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.background = "rgba(245,158,11,0.12)"; }}
+                onPointerLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                title={target.blankNo ? `「${target.set.title}」의 빈칸 ${target.blankNo}로 가기` : `「${target.set.title}」의 이 문항 열기`}
+              >
+                {target.blankNo ? "빈칸 보기" : "문제 보기"}
+              </button>
+            )}
             {!isEditing && (
               <span style={S.actions}>
                 <button
