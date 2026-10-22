@@ -1,12 +1,19 @@
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { getQuestions, addQuestion, updateQuestion, deleteQuestion } from "../api/quiz";
 import { IMAGE_ACCEPT, uploadImage } from "../api/image";
 import FillText from "../components/FillText";
 import TableAwareText from "../components/TableAwareText";
 import { buildTableTemplate, plainPreview } from "../utils/textBlocks";
+import { parseAnswers } from "../utils/answers";
+import { fillLockReason, fromInline, toInline } from "../utils/fillInline";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
+// App 의 뒤로 가기 확인과 같은 문구
+const LEAVE_MESSAGE = "저장하지 않은 내용이 있습니다. 나갈까요?";
+const SWITCH_MESSAGE = "고치던 문항을 저장하지 않고 넘어갈까요?";
+const PREVIEW_MESSAGE = "저장하지 않은 내용이 있습니다. 저장하고 미리보기로 갈까요?\n(미리보기는 저장된 내용만 보여 줍니다)";
+const PREVIEW_DELAY_MS = 250; // 글을 치다 멈춘 뒤 미리보기를 다시 그리기까지(빈칸 수백 개 페이지가 타자마다 다시 그려지지 않게)
 
 const TYPE_COLOR = {
   multiple: { text: "#60a5fa", bg: "rgba(96,165,250,0.1)", border: "#60a5fa" },
@@ -44,10 +51,24 @@ function parseOptions(opts) {
   try { return JSON.parse(opts); } catch { return ["", "", "", ""]; }
 }
 
-function parseAnswers(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  try { return JSON.parse(raw); } catch { return []; }
+// 저장할 내용만 이은 글 — 폼을 연 때(또는 저장한 뒤)와 다르면 '저장하지 않은 내용이 있음'
+function formSig(f) {
+  if (!f) return "";
+  return JSON.stringify([
+    f.type, f.text, f.options, f.answerIndex, f.answer, f.explanation,
+    f.questionImageUrl, f.answerImageUrl, f.answerMode,
+  ]);
+}
+
+// 값이 ms 동안 더 바뀌지 않으면 그 값. 다른 폼(key)으로 바뀌면 기다리지 않고 바로 지금 값
+function useSettled(value, key, ms) {
+  const [settled, setSettled] = useState({ value, key });
+  useEffect(() => {
+    if (settled.value === value && settled.key === key) return undefined;
+    const t = setTimeout(() => setSettled({ value, key }), ms);
+    return () => clearTimeout(t);
+  }, [value, key, ms, settled]);
+  return settled.key === key ? settled.value : value;
 }
 
 // 화면 폭에 따라 바뀌는 배치(.qm-ed-*)는 index.css 참고: 넓은 화면은 왼쪽 목록 + 오른쪽 편집,
@@ -183,15 +204,21 @@ const S = {
     color: v === "O" ? "#34d399" : "#f87171",
     transition: "all 0.15s ease",
   }),
-  // 빈칸 정답 입력 행
-  fillAnswerRow: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 },
-  fillAnswerLabel: { color: "#f59e0b", fontWeight: 700, fontSize: 12, minWidth: 44, flexShrink: 0 },
   fillHint: {
     fontSize: 13, color: "#555555", marginBottom: 16,
     padding: "10px 12px", background: "#1a1a1a", border: "1px solid #2e2e2e",
     borderRadius: 7, lineHeight: 1.6,
   },
   fillPreviewLabel: { fontSize: 12, color: "#a0a0a0", marginBottom: 8, marginTop: 4 },
+  // 문제 칸 바로 아래 한 줄: 빈칸 수 또는 {{ }} 오류(치다 멈춘 뒤 갱신)
+  fillStatus: (bad) => ({
+    fontSize: 12, lineHeight: 1.5, color: bad ? "#f87171" : "#8a8a8a",
+    marginTop: -6, marginBottom: 12, overflowWrap: "anywhere",
+  }),
+  fillNote: {
+    fontSize: 12, lineHeight: 1.5, color: "#f5b544", marginBottom: 12,
+    padding: "8px 10px", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 7, background: "rgba(245,158,11,0.08)",
+  },
 
   // 버튼: 화면(편집 패널) 아래에 늘 붙어 있게 — 긴 빈칸 문항(1만 자)에서도 끝까지 내려가지 않고 저장
   btnRow: {
@@ -276,30 +303,50 @@ function blockEnter(e) {
   if (e.key === "Enter" && !e.nativeEvent.isComposing) e.preventDefault();
 }
 
-export default function EditorView({ set, onBack, onPreview }) {
+export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
   const [questions, setQuestions] = useState([]);
   const [form, setForm] = useState(null);
+  // 폼을 연 때(또는 저장한 뒤)의 내용(formSig). 지금 폼과 다르면 저장하지 않은 내용이 있다
+  const [baseSig, setBaseSig] = useState("");
   const [saving, setSaving] = useState(false);
-  const [uploadingQ, setUploadingQ] = useState(false); // 문제 이미지 업로드 중
-  const [uploadingA, setUploadingA] = useState(false); // 답안 이미지 업로드 중
+  // 그림을 올리는 중인 폼(key): { question, answer }. 올리는 동안 폼을 닫거나 바꾸면 그 폼에는 붙이지 않는다
+  const [uploading, setUploading] = useState({});
   const [loadError, setLoadError] = useState(""); // 문항 목록을 못 불러왔을 때의 오류(빈 목록과 가리려고)
+  const [loadTry, setLoadTry] = useState(0);
+  const [fillError, setFillError] = useState(""); // 저장하려다 막힌 {{ }} 오류
   const [showTableInsert, setShowTableInsert] = useState(false);
   const [tableRows, setTableRows] = useState(2);
   const [tableCols, setTableCols] = useState(2);
   const textareaRef = useRef(null);
+  const formKeySeq = useRef(0);
+  const formRef = useRef(form); // 비동기(저장·그림) 뒤에 지금 열린 폼을 보려고
+  useEffect(() => { formRef.current = form; });
 
-  useEffect(() => { fetchQ(); }, []);
+  // 문항 목록. 늦게 온 옛 응답(다른 문제집)은 버린다
+  useEffect(() => {
+    let alive = true;
+    getQuestions(set.id).then(
+      (list) => {
+        if (!alive) return;
+        setQuestions(list);
+        setLoadError("");
+      },
+      (e) => {
+        if (!alive) return;
+        console.error(e);
+        // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
+        if (e.message !== SESSION_EXPIRED_MESSAGE) setLoadError(e.message || "문항을 불러오지 못했습니다.");
+      }
+    );
+    return () => { alive = false; };
+  }, [set.id, loadTry]);
 
-  async function fetchQ() {
-    try {
-      setQuestions(await getQuestions(set.id));
-      setLoadError("");
-    } catch (e) {
-      console.error(e);
-      // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
-      if (e.message !== SESSION_EXPIRED_MESSAGE) setLoadError(e.message || "문항을 불러오지 못했습니다.");
-    }
-  }
+  const dirty = form !== null && formSig(form) !== baseSig;
+  // App 에 알림: 뒤로 가기(안드로이드)로 나갈 때 묻는 데 쓴다. 화면을 떠나면 '없음'
+  const dirtyCb = useRef(onDirtyChange);
+  useEffect(() => { dirtyCb.current = onDirtyChange; });
+  useEffect(() => { dirtyCb.current?.(dirty); }, [dirty]);
+  useEffect(() => () => dirtyCb.current?.(false), []);
 
   // 휴대폰(목록·편집을 한 화면에 하나씩)에서 편집 폼을 맨 위부터 보이게. 목록에서 폼을 열 때는 목록의 스크롤 위치를
   // 기억해 두었다가, 폼을 닫으면(취소·← 문항 목록·새 문항 저장) 아래 효과가 그 자리로 되돌린다.
@@ -317,23 +364,59 @@ export default function EditorView({ set, onBack, onPreview }) {
     wasEditing.current = editing;
   }, [editing]);
 
-  // 유형 버튼 클릭 → 빈 폼 표시 (API 호출 없음)
-  function handleSelectType(type) {
-    setForm(emptyForm(type, questions.length));
-    scrollPageTop();
+  // 폼 열기·닫기. 폼마다 새 key — 늦게 끝난 그림 올리기·저장이 다른 폼에 붙지 않게
+  function openForm(next) {
+    const f = { ...next, key: ++formKeySeq.current };
+    setForm(f);
+    setBaseSig(formSig(f));
+    setFillError("");
+  }
+  function closeForm() {
+    setForm(null);
+    setBaseSig("");
+    setFillError("");
   }
 
-  // 기존 문항 클릭 → 편집 폼
-  function handleSelectQuestion(q) {
+  // 다른 문항·유형으로 넘어갈 때 고치던 것이 있으면 묻는다('취소' 단추는 묻지 않음 — 버리려고 누른 것)
+  function okToSwitch() {
+    return !dirty || confirm(SWITCH_MESSAGE);
+  }
+
+  // 유형 버튼 클릭 → 빈 폼 표시 (API 호출 없음)
+  function handleSelectType(type) {
+    if (!okToSwitch()) return;
     scrollPageTop();
-    setForm({
+    openForm(emptyForm(type, questions.length));
+  }
+
+  // 기존 문항 클릭 → 편집 폼. 빈칸 문항은 글 안에 정답을 넣은 '{{정답}}' 꼴로 고친다(utils/fillInline.js)
+  function handleSelectQuestion(q) {
+    if (form?.id === q.id) return;
+    if (!okToSwitch()) return;
+    scrollPageTop();
+    const type = normalizeType(q.type);
+    const answers = parseAnswers(q.answers);
+    let text = q.text || "";
+    let fillLock = "";
+    let fillExtra = 0;
+    if (type === "fill") {
+      fillLock = fillLockReason(text, answers);
+      if (!fillLock) {
+        const r = toInline(text, answers);
+        text = r.inline;
+        fillExtra = r.extra.length;
+      }
+    }
+    openForm({
       id: q.id,
-      type: normalizeType(q.type),
-      text: q.text || "",
+      type,
+      text,
       options: parseOptions(q.options),
       answerIndex: q.answerIndex ?? 0,
       answer: q.answer || "",
-      answers: parseAnswers(q.answers),
+      answers,
+      fillLock,
+      fillExtra,
       explanation: q.explanation || "",
       orderIndex: q.orderIndex,
       questionImageUrl: q.questionImageUrl || "",
@@ -342,33 +425,69 @@ export default function EditorView({ set, onBack, onPreview }) {
     });
   }
 
-  // 저장
+  // 문제 칸에서 그 자리를 골라 보여 준다({{ }} 오류 자리)
+  function selectInText(at, length) {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.focus();
+    try { ta.setSelectionRange(at, at + length); } catch { /* 그대로 */ }
+  }
+
+  const byOrder = (a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0) || Number(a.id) - Number(b.id);
+
+  // 저장. 성공하면 true. 서버가 돌려준 문항으로 목록의 그 칸만 바꾼다(문항 전체를 다시 받지 않음)
   async function handleSave() {
-    if (!form) return;
-    if (!form.text.trim()) { alert("문제 내용을 입력해주세요."); return; }
+    if (!form || saving) return false;
+    let text = form.text;
+    let answers = null;
+    if (form.type === "fill") {
+      if (form.fillLock) {
+        answers = form.answers || [];
+      } else {
+        const r = fromInline(form.text);
+        if (!r.ok) {
+          setFillError(r.error);
+          selectInText(r.at, r.length);
+          return false;
+        }
+        text = r.text;
+        answers = r.answers;
+      }
+    }
+    if (!text.trim()) { alert("문제 내용을 입력해주세요."); return false; }
+    const saved = form;
     setSaving(true);
+    setFillError("");
     try {
       const payload = {
-        type: form.type,
-        text: form.text,
-        options: form.type === "multiple" ? JSON.stringify(form.options) : null,
-        answerIndex: form.type === "multiple" ? form.answerIndex : null,
-        answer: form.type === "fill" ? null : form.answer,
-        answers: form.type === "fill" ? (form.answers || []) : null,
-        explanation: form.explanation,
-        orderIndex: form.orderIndex,
-        questionImageUrl: form.questionImageUrl || null,
-        answerImageUrl: form.answerMode === "image" ? (form.answerImageUrl || null) : null,
+        type: saved.type,
+        text,
+        options: saved.type === "multiple" ? JSON.stringify(saved.options) : null,
+        answerIndex: saved.type === "multiple" ? saved.answerIndex : null,
+        answer: saved.type === "fill" ? null : saved.answer,
+        answers: saved.type === "fill" ? answers : null,
+        explanation: saved.explanation,
+        orderIndex: saved.orderIndex,
+        questionImageUrl: saved.questionImageUrl || null,
+        answerImageUrl: saved.answerMode === "image" ? (saved.answerImageUrl || null) : null,
       };
-      if (form.id) {
-        await updateQuestion(form.id, payload);
+      const still = () => formRef.current?.key === saved.key;
+      if (saved.id) {
+        const q = await updateQuestion(saved.id, payload);
+        if (q && q.id != null) setQuestions((list) => list.map((x) => (x.id === q.id ? q : x)));
+        else setLoadTry((n) => n + 1);
+        // 저장한 그때의 내용이 새 기준(저장하는 동안 더 친 글은 그대로 '저장 안 함'으로 남음)
+        if (still()) setBaseSig(formSig(saved));
       } else {
-        await addQuestion(set.id, payload);
-        setForm(null);
+        const q = await addQuestion(set.id, payload);
+        if (q && q.id != null) setQuestions((list) => [...list, q].sort(byOrder));
+        else setLoadTry((n) => n + 1);
+        if (still()) closeForm();
       }
-      await fetchQ();
+      return true;
     } catch (e) {
       alert(e.message);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -379,47 +498,41 @@ export default function EditorView({ set, onBack, onPreview }) {
     if (!confirm("문항을 삭제할까요?")) return;
     try {
       await deleteQuestion(id);
-      if (form?.id === id) setForm(null);
-      fetchQ();
+      setQuestions((list) => list.filter((q) => q.id !== id));
+      if (formRef.current?.id === id) closeForm();
     } catch (e) { alert(e.message); }
   }
 
   // 이미지 업로드 핸들러 (field: "question" | "answer")
+  // 올리는 동안 폼을 닫거나 다른 문항으로 바꾸면 끝난 그림을 붙이지 않는다(폼 key 확인)
   async function handleImageUpload(file, field) {
-    if (!file) return;
-    if (field === "question") setUploadingQ(true); else setUploadingA(true);
+    if (!file || !form) return;
+    const key = form.key;
+    setUploading((u) => ({ ...u, [field]: key }));
     try {
       const { url } = await uploadImage(file);
-      setForm((f) => ({
-        ...f,
-        ...(field === "question" ? { questionImageUrl: url } : { answerImageUrl: url }),
-      }));
+      setForm((f) => (f && f.key === key
+        ? { ...f, ...(field === "question" ? { questionImageUrl: url } : { answerImageUrl: url }) }
+        : f));
     } catch (e) {
-      alert(e.message);
+      if (formRef.current?.key === key) alert(e.message);
     } finally {
-      if (field === "question") setUploadingQ(false); else setUploadingA(false);
+      setUploading((u) => (u[field] === key ? { ...u, [field]: null } : u));
     }
   }
 
   function setOpt(idx, val) {
-    const opts = [...(form.options ?? ["", "", "", ""])];
-    opts[idx] = val;
-    setForm((f) => ({ ...f, options: opts }));
+    setForm((f) => {
+      const opts = [...(f.options ?? ["", "", "", ""])];
+      opts[idx] = val;
+      return { ...f, options: opts };
+    });
   }
 
-  // 텍스트 반영: fill 타입이면 ___ 개수에 맞춰 answers 배열 자동 조정
+  // 글 바꾸기. 빈칸 문항도 글만 바꾼다 — 정답은 글 안의 {{ }} 에 있어 빈칸을 지우거나 끼워도 밀리지 않는다
   function applyTextChange(newText) {
-    if (form.type === "fill") {
-      const count = (newText.match(/___/g) || []).length;
-      const cur = form.answers || [];
-      setForm((f) => ({
-        ...f,
-        text: newText,
-        answers: Array.from({ length: count }, (_, i) => cur[i] ?? ""),
-      }));
-    } else {
-      setForm((f) => ({ ...f, text: newText }));
-    }
+    setForm((f) => ({ ...f, text: newText }));
+    if (fillError) setFillError("");
   }
 
   function handleTextChange(e) {
@@ -442,9 +555,42 @@ export default function EditorView({ set, onBack, onPreview }) {
     });
   }
 
+  // 화면의 ← (문제집 목록으로): 저장하지 않은 내용이 있으면 묻는다
+  function handleBack() {
+    if (dirty && !confirm(LEAVE_MESSAGE)) return;
+    onBack();
+  }
+
+  // 미리보기는 저장된 내용을 서버에서 다시 읽어 보여 준다 — 고치던 것이 있으면 저장하고 갈지 묻는다
+  async function handlePreview() {
+    if (dirty) {
+      if (!confirm(PREVIEW_MESSAGE)) return;
+      if (!(await handleSave())) return;
+    }
+    onPreview(set);
+  }
+
+  // 미리보기(표·빈칸)는 글을 치다 멈춘 뒤에만 다시 그린다 — 빈칸 수백 개 페이지를 타자마다 다시 만들지 않게
+  const formKey = form?.key ?? 0;
+  const settledText = useSettled(form?.text ?? "", formKey, PREVIEW_DELAY_MS);
+  const isFill = form?.type === "fill";
+  const fillLock = isFill ? form.fillLock : "";
+  const lockedAnswers = isFill && fillLock ? form.answers : null;
+  const fillParsed = useMemo(() => {
+    if (!isFill) return null;
+    if (fillLock) return { ok: true, text: settledText, answers: lockedAnswers || [] };
+    return fromInline(settledText);
+  }, [isFill, fillLock, lockedAnswers, settledText]);
+  const fillPreview = useMemo(() => {
+    if (!fillParsed?.ok || !fillParsed.text.includes("___")) return null;
+    return <FillText key={formKey} text={fillParsed.text} answers={fillParsed.answers} mode="learn" answered={false} />;
+  }, [fillParsed, formKey]);
+
   const isEdit = !!form?.id;
   const opts = form?.options ?? ["", "", "", ""];
-  const fillBlankCount = form?.type === "fill" ? (form.text.match(/___/g) || []).length : 0;
+  const fillBlankCount = fillParsed?.ok ? fillParsed.answers.length : 0;
+  const uploadingQ = !!form && uploading.question === form.key;
+  const uploadingA = !!form && uploading.answer === form.key;
 
   return (
     <div style={S.page}>
@@ -452,9 +598,11 @@ export default function EditorView({ set, onBack, onPreview }) {
         <div style={S.navLeft}>
           <button
             style={S.backBtn}
-            onClick={onBack}
+            onClick={handleBack}
             onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
             onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+            aria-label="문제집 목록으로"
+            title="문제집 목록으로"
           >←</button>
           <span style={S.navTitle} className="qm-ed-title" title={set.title}>{set.title}</span>
         </div>
@@ -463,7 +611,8 @@ export default function EditorView({ set, onBack, onPreview }) {
           <button
             style={S.previewBtn}
             className="qm-ed-nav-btn"
-            onClick={() => onPreview(set)}
+            onClick={handlePreview}
+            disabled={saving}
             onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
             onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           ><span className="qm-wide-only">출력 </span>미리보기</button>
@@ -490,7 +639,7 @@ export default function EditorView({ set, onBack, onPreview }) {
           {loadError && (
             <div style={S.loadError} role="alert">
               문항을 불러오지 못했습니다. ({loadError})
-              <button style={S.retryBtn} onClick={fetchQ}>다시 시도</button>
+              <button style={S.retryBtn} onClick={() => setLoadTry((n) => n + 1)}>다시 시도</button>
             </div>
           )}
           {questions.length === 0 ? (
@@ -511,6 +660,8 @@ export default function EditorView({ set, onBack, onPreview }) {
                   onClick={(e) => handleDelete(e, q.id)}
                   onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
                   onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
+                  aria-label={`${i + 1}번 문항 삭제`}
+                  title="문항 삭제"
                 >✕</button>
               </div>
             ))
@@ -526,31 +677,43 @@ export default function EditorView({ set, onBack, onPreview }) {
             </div>
           ) : (
             <>
-              <button className="qm-ed-back" style={S.edBackBtn} onClick={() => setForm(null)}>
+              <button className="qm-ed-back" style={S.edBackBtn} onClick={closeForm}>
                 ← 문항 목록
               </button>
               <div style={S.typeBadge(form.type)}>{TYPE_LABEL[form.type]}</div>
               <div style={S.modeLabel}>{isEdit ? "문항 편집" : "새 문항 작성"}</div>
 
               {/* 문제 텍스트 */}
-              <label style={S.fieldLabel}>
+              <label style={S.fieldLabel} htmlFor="qm-ed-text">
                 문제
-                {form.type === "fill" && (
+                {isFill && !fillLock && (
                   <span style={{ color: "#f59e0b", fontSize: 11, fontWeight: 400, marginLeft: 8 }}>
-                    빈칸은 ___ 로 표시 (자동 감지)
+                    빈칸은 {"{{정답}}"} 처럼 글 안에 정답을 넣어 표시
                   </span>
                 )}
               </label>
+              {isFill && fillLock && (
+                <div style={S.fillNote} role="note">
+                  {fillLock} 이 편집기에서는 글·빈칸 정답을 고칠 수 없습니다. 해설·그림만 고칠 수 있고, 글은 노션에서 고쳐 다시 올려 주세요.
+                </div>
+              )}
+              {isFill && !fillLock && form.fillExtra > 0 && (
+                <div style={S.fillNote} role="note">
+                  저장된 정답이 빈칸보다 {form.fillExtra}개 많습니다. 저장하면 남는 정답은 지워집니다.
+                </div>
+              )}
               <textarea
+                id="qm-ed-text"
                 ref={textareaRef}
                 style={S.textarea}
                 value={form.text}
                 onChange={handleTextChange}
+                readOnly={isFill && !!fillLock}
                 onFocus={focusGold}
                 onBlur={blurGray}
                 placeholder={
-                  form.type === "fill"
-                    ? "예: 가식 완료 후 ___을 덮어 ___cm 간격으로 심는다."
+                  isFill
+                    ? "예: 가식 완료 후 {{흙}}을 덮어 {{30}}cm 간격으로 심는다."
                     : "문제를 입력하세요"
                 }
               />
@@ -560,6 +723,12 @@ export default function EditorView({ set, onBack, onPreview }) {
               >
                 ↕ 우하단 모서리를 드래그하여 크기 조절
               </div>
+              {/* 빈칸 문항: 빈칸 수 또는 {{ }} 오류(치다 멈춘 뒤). 저장하려다 막힌 오류가 먼저 */}
+              {isFill && !fillLock && (fillError || (fillParsed && settledText.trim())) && (
+                <div style={S.fillStatus(!!fillError || !fillParsed?.ok)} role={fillError ? "alert" : undefined} data-fill-status="">
+                  {fillError || (fillParsed.ok ? `빈칸 ${fillBlankCount}개` : fillParsed.error)}
+                </div>
+              )}
 
               {/* ── 표 삽입 ── */}
               <button
@@ -593,7 +762,7 @@ export default function EditorView({ set, onBack, onPreview }) {
               )}
 
               {/* ── 표 미리보기 (FILL 유형은 아래 학습 미리보기에서 함께 표시) ── */}
-              {form.type !== "fill" && form.text.includes("|") && (
+              {!isFill && settledText.includes("|") && (
                 <div style={{ marginBottom: 16 }}>
                   <div style={S.fillPreviewLabel}>💡 표 미리보기</div>
                   <div style={{
@@ -601,7 +770,7 @@ export default function EditorView({ set, onBack, onPreview }) {
                     border: "1px solid #2e2e2e", borderRadius: 8,
                     color: "#f1f1f1", fontSize: 14,
                   }}>
-                    <TableAwareText text={form.text} />
+                    <TableAwareText text={settledText} />
                   </div>
                 </div>
               )}
@@ -713,8 +882,9 @@ export default function EditorView({ set, onBack, onPreview }) {
               {/* ── 주관식 ── */}
               {form.type === "short" && form.answerMode !== "image" && (
                 <>
-                  <label style={S.fieldLabel}>모범 답안</label>
+                  <label style={S.fieldLabel} htmlFor="qm-ed-answer">모범 답안</label>
                   <textarea
+                    id="qm-ed-answer"
                     rows={1}
                     style={{ ...S.input, ...S.oneLineArea }}
                     value={form.answer}
@@ -746,64 +916,32 @@ export default function EditorView({ set, onBack, onPreview }) {
               )}
 
               {/* ── 빈칸 채우기 ── */}
-              {form.type === "fill" && form.answerMode !== "image" && (
-                <>
-                  {fillBlankCount === 0 ? (
-                    <div style={S.fillHint}>
-                      문제에{" "}
-                      <span style={{ color: "#f59e0b", fontWeight: 700 }}>___</span>
-                      {" "}를 입력하면 빈칸 정답 입력창이 자동으로 나타납니다.
+              {/* ── 빈칸 채우기: 정답은 문제 글 안의 {{정답}}. 아래는 치다 멈춘 뒤 다시 그리는 학습 미리보기 ── */}
+              {isFill && form.answerMode !== "image" && (
+                fillBlankCount === 0 && fillParsed?.ok ? (
+                  <div style={S.fillHint}>
+                    문제 글에{" "}
+                    <span style={{ color: "#f59e0b", fontWeight: 700 }}>{"{{정답}}"}</span>
+                    {" "}처럼 정답을 넣으면 그 자리가 빈칸이 됩니다.
+                  </div>
+                ) : fillPreview && (
+                  <>
+                    <div style={{ ...S.divider, marginTop: 20 }} />
+                    <div style={S.fillPreviewLabel}>💡 학습 미리보기</div>
+                    <div style={{
+                      padding: "14px 16px", background: "#1a1a1a",
+                      border: "1px solid #2e2e2e", borderRadius: 8, marginBottom: 16,
+                    }}>
+                      {fillPreview}
                     </div>
-                  ) : (
-                    <>
-                      <label style={S.fieldLabel}>빈칸 정답 ({fillBlankCount}개)</label>
-                      {(form.answers || []).map((ans, i) => (
-                        <div key={i} style={S.fillAnswerRow}>
-                          <span style={S.fillAnswerLabel}>빈칸{i + 1}</span>
-                          <textarea
-                            rows={1}
-                            style={{ ...S.input, ...S.oneLineArea, marginBottom: 0, flex: 1, minWidth: 0 }}
-                            value={ans}
-                            onChange={(e) => {
-                              const next = [...(form.answers || [])];
-                              next[i] = oneLine(e.target.value);
-                              setForm((f) => ({ ...f, answers: next }));
-                            }}
-                            onKeyDown={blockEnter}
-                            onFocus={focusGold}
-                            onBlur={blurGray}
-                            placeholder={`빈칸 ${i + 1}의 정답`}
-                          />
-                        </div>
-                      ))}
-
-                      {/* 학습 미리보기 */}
-                      {form.text.includes("___") && (
-                        <>
-                          <div style={{ ...S.divider, marginTop: 20 }} />
-                          <div style={S.fillPreviewLabel}>💡 학습 미리보기</div>
-                          <div style={{
-                            padding: "14px 16px", background: "#1a1a1a",
-                            border: "1px solid #2e2e2e", borderRadius: 8, marginBottom: 16,
-                          }}>
-                            <FillText
-                              key={form.text + (form.answers || []).join(",")}
-                              text={form.text}
-                              answers={form.answers || []}
-                              mode="learn"
-                              answered={false}
-                            />
-                          </div>
-                        </>
-                      )}
-                    </>
-                  )}
-                </>
+                  </>
+                )
               )}
 
               {/* ── 해설 (공통) ── */}
-              <label style={S.fieldLabel}>해설 (선택)</label>
+              <label style={S.fieldLabel} htmlFor="qm-ed-explanation">해설 (선택)</label>
               <textarea
+                id="qm-ed-explanation"
                 rows={1}
                 style={{ ...S.input, ...S.oneLineArea, marginBottom: 20 }}
                 value={form.explanation}
@@ -818,7 +956,7 @@ export default function EditorView({ set, onBack, onPreview }) {
               <div style={S.btnRow}>
                 <button
                   style={S.cancelBtn}
-                  onClick={() => setForm(null)}
+                  onClick={closeForm}
                   onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
                   onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
                 >취소</button>

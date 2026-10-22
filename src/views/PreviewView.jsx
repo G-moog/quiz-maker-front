@@ -103,16 +103,23 @@ export default function PreviewView({ set, onBack }) {
   const [questions, setQuestions] = useState([]);
   const [loadError, setLoadError] = useState(""); // 불러오기 실패를 빈 문제지로 보이지 않게
 
+  // 문항 받기(늦게 온 옛 응답은 버림)
   useEffect(() => {
-    (async () => {
-      try {
-        setQuestions(await getQuestions(set.id));
-      } catch (e) {
+    let alive = true;
+    getQuestions(set.id).then(
+      (list) => { if (alive) setQuestions(list); },
+      (e) => {
+        if (!alive) return;
         console.error(e);
         // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
         if (e.message !== SESSION_EXPIRED_MESSAGE) setLoadError(e.message || "문항을 불러오지 못했습니다.");
       }
-    })();
+    );
+    return () => { alive = false; };
+  }, [set.id]);
+
+  // 인쇄용 규칙은 이 화면이 떠 있는 동안만
+  useEffect(() => {
     const style = document.createElement("style");
     style.textContent = printStyle;
     document.head.appendChild(style);
@@ -132,6 +139,8 @@ export default function PreviewView({ set, onBack }) {
             onClick={onBack}
             onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
             onPointerLeave={(e) => { e.currentTarget.style.color = "#a0a0a0"; }}
+            aria-label="편집으로 돌아가기"
+            title="편집으로 돌아가기"
           >
             ←
           </button>
