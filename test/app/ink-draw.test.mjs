@@ -132,3 +132,21 @@ test('선 묶음: 끝에 하나 더하면 앞 묶음들은 그대로(같은 선�
     assert.deepEqual(a[i].list, b[i].list);
   }
 });
+
+test('예측 점: 그리는 선 끝에만 — 많아야 3개, 너무 앞선 시간은 버리고, 먼 자리는 24px 까지만', async () => {
+  const { PREDICT_MAX_MS, PREDICT_MAX_POINTS, PREDICT_MAX_PX, predictTail } = await import('../../src/ink/geometry.js');
+  assert.equal(PREDICT_MAX_POINTS, 3);
+  const last = [100, 200, 0.62];
+  // 힘은 마지막 실제 점 그대로, 좌표는 소수 1자리
+  assert.deepEqual(predictTail(last, [{ x: 103.04, y: 201.06, t: 1008 }, { x: 106, y: 202, t: 1016 }], 1000), [[103, 201.1, 0.62], [106, 202, 0.62]]);
+  assert.equal(predictTail(last, Array.from({ length: 6 }, (_, i) => ({ x: 101 + i, y: 200, t: 1000 + i })), 1000).length, PREDICT_MAX_POINTS);
+  // 지금보다 PREDICT_MAX_MS 넘게 앞선 예측부터는 버린다
+  assert.deepEqual(predictTail(last, [{ x: 101, y: 200, t: 1010 }, { x: 102, y: 200, t: 1000 + PREDICT_MAX_MS + 1 }], 1000), [[101, 200, 0.62]]);
+  // 마지막 점에서 너무 먼 예측은 그 방향으로 PREDICT_MAX_PX 까지만, 그 뒤는 없음
+  const far = predictTail(last, [{ x: 100 + 3 * PREDICT_MAX_PX, y: 200, t: 1005 }, { x: 300, y: 200, t: 1006 }], 1000);
+  assert.deepEqual(far, [[100 + PREDICT_MAX_PX, 200, 0.62]]);
+  // 시각을 모르면 시간 한도는 보지 않는다, 틀린 값은 건너뜀
+  assert.deepEqual(predictTail(last, [null, { x: NaN, y: 1 }, { x: 101, y: 201 }], NaN), [[101, 201, 0.62]]);
+  assert.deepEqual(predictTail(last, [], 1000), []);
+  assert.deepEqual(predictTail(null, [{ x: 1, y: 1 }], 1000), []);
+});

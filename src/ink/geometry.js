@@ -124,6 +124,35 @@ export function inertiaStep(v, dt, tau = INERTIA_TAU) {
 const r1 = (v) => Math.round(v * 10) / 10;
 const r2 = (v) => Math.round(v * 100) / 100;
 
+// ── 예측 점(그리는 중인 선에만) ──
+// 브라우저가 알려 주는 '곧 올 펜 자리'(PointerEvent.getPredictedEvents)를 그리는 중인 선 끝에 잠깐 붙여 선이 펜촉을
+// 더 바짝 따라오게 한다(체감 지연 줄이기). 저장하지 않는다 — 다음 움직임에서 새 예측으로 바꾸고, 뗄 때 버린다.
+// 너무 앞선 예측(시간·거리)은 자르고, 펜이 멈추면 걷는다(멈춘 자리보다 앞서 그려진 꼬리가 남지 않게)
+export const PREDICT_MAX_POINTS = 3;
+export const PREDICT_MAX_MS = 25; // 지금 이벤트보다 이만큼 넘게 앞선 예측은 버린다
+export const PREDICT_MAX_PX = 24; // 마지막 실제 점에서 이만큼 넘게 떨어진 예측은 이 거리까지만(방향은 그대로)
+export const PREDICT_HOLD_MS = 60; // 새 움직임 없이 이만큼 지나면 예측 꼬리를 걷는다
+
+// last: 마지막 실제 점 [x, y, 힘], preds: 예측 자리 [{ x, y, t }](영역 기준 px, t = 이벤트 시각), now: 지금 이벤트 시각
+// → 그리는 선에 붙일 점들 [[x, y, 힘]…](힘은 마지막 실제 점 그대로 — 예측 이벤트의 힘은 믿을 수 없다)
+export function predictTail(last, preds, now) {
+  const out = [];
+  if (!last || !preds?.length) return out;
+  for (const q of preds) {
+    if (out.length >= PREDICT_MAX_POINTS) break;
+    if (!q || !Number.isFinite(q.x) || !Number.isFinite(q.y)) continue;
+    if (Number.isFinite(q.t) && Number.isFinite(now) && q.t - now > PREDICT_MAX_MS) break;
+    const d = distance(last[0], last[1], q.x, q.y);
+    if (d > PREDICT_MAX_PX) {
+      const k = PREDICT_MAX_PX / d;
+      out.push([r1(last[0] + (q.x - last[0]) * k), r1(last[1] + (q.y - last[1]) * k), last[2]]);
+      break;
+    }
+    out.push([r1(q.x), r1(q.y), last[2]]);
+  }
+  return out;
+}
+
 // 점 더하기: 앞 점과 0.75px 보다 가까우면 버린다(좌표는 소수 1자리). 더했으면 true
 export function addPoint(pts, x, y, p) {
   const last = pts[pts.length - 1];

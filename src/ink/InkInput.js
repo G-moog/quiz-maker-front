@@ -1,7 +1,8 @@
 import {
-  DRAW_SCALE, ERASER_RADIUS, HL_COLOR, HL_OPACITY, HL_WIDTH, INERTIA_MAX, INERTIA_START, INERTIA_STOP, PEN_WIDTH, TAP_MS,
-  TAP_SLOP, TOUCH_SLOP, addPoint, centerlinePath, distance, inertiaStep, isDoubleTap, isLargeContact, isTap, midpoint,
-  outlinePath, palmBlocked, pushSample, releaseVelocity, strokeTouches, tapBlockedByScroll, tapSlop,
+  DRAW_SCALE, ERASER_RADIUS, HL_COLOR, HL_OPACITY, HL_WIDTH, INERTIA_MAX, INERTIA_START, INERTIA_STOP, PEN_WIDTH,
+  PREDICT_HOLD_MS, TAP_MS, TAP_SLOP, TOUCH_SLOP, addPoint, centerlinePath, distance, inertiaStep, isDoubleTap,
+  isLargeContact, isTap, midpoint, outlinePath, palmBlocked, predictTail, pushSample, releaseVelocity, strokeTouches,
+  tapBlockedByScroll, tapSlop,
 } from "./geometry.js";
 
 // 필기 모드의 입력 처리(DOM). 필기 영역 요소에 붙어 펜·손·마우스를 가른다.
@@ -18,7 +19,9 @@ import {
 //             접촉 크기도 보지 않는다: 크기 문턱이 기기와 맞지 않아도 단추는 눌리게)
 // 이 리스너들은 필기 모드를 켰을 때만 붙는다(InkSurface) — 끄면 앱은 예전 그대로
 // hooks: { onBlankTap(i), onEvent(type, detail), livePath(kind) } — livePath 는 그리는 중인 선을 그릴 <path>
-// 펜 시험 페이지가 onEvent 로 무슨 일이 있었는지 센다.
+// 펜 시험 페이지가 onEvent 로 무슨 일이 있었는지 센다('stroke' 에는 그 선의 입력 값: 움직임·점 수·예측 점·입력 → 그림 시간).
+// 그리는 중인 선: 점은 getCoalescedEvents 로 빠짐없이 모으고, 그림은 rAF 한 번에 path 의 d 만 바꾼다(React 를 거치지 않음).
+// 브라우저가 예측 점(getPredictedEvents)을 주면 그리는 선 끝에만 잠깐 붙인다(저장하지 않음 — geometry.predictTail)
 
 // 입력칸·(빈칸이 아닌) 단추 위에서 누르면 필기를 시작하지 않고 원래 동작(포커스·클릭)을 하게 둔다
 const INTERACTIVE = "input, textarea, select, a[href], label, [contenteditable]:not([contenteditable='false']), button:not([data-ink-blank])";
@@ -57,9 +60,10 @@ export class InkInput {
     this.inertiaRaf = 0;
     this.inertia = null;
     this.liveRaf = 0;
+    this.predTimer = 0;
     for (const k of ["onDown", "onMove", "onUp", "onCancel", "onClick", "onBlockDefault",
       "onWinDown", "onWinMove", "onWinUp", "onWinClick", "onWinTouch", "onWinBlur", "onVisibility", "onWinScroll",
-      "stopInertia", "stepInertia", "drawLive"]) {
+      "stopInertia", "stepInertia", "drawLive", "dropPrediction"]) {
       this[k] = this[k].bind(this);
     }
   }
@@ -277,6 +281,8 @@ export class InkInput {
       id: e.pointerId, type: e.pointerType, x0: e.clientX, y0: e.clientY, t0: t, far: 0, key: this.store.getSnapshot().key,
       blank: blankEl ? Number(blankEl.dataset.inkBlank) : null, eraser, last: p, shown: false, captured: false,
       slop: eraser ? TAP_SLOP : tapSlop(e.pointerType, !!blankEl),
+      // 그리는 선 끝에 잠깐 붙일 예측 점(저장 안 함)과 펜 시험 페이지에 알릴 입력 값
+      pred: [], moveAt: t, moves: 0, samples: 0, predMoves: 0, predMax: 0, predAhead: 0, frames: 0, lagSum: 0, lagMax: 0,
       stroke: eraser ? null : tool === "hl"
         ? { tool: "hl", color: HL_COLOR, w: HL_WIDTH, pts: [] }
         : { tool: "pen", color, w: PEN_WIDTH, pts: [] },
@@ -302,7 +308,11 @@ export class InkInput {
     // 영역 자리는 움직일 때마다 다시 잰다 — 긋는 중에 위쪽 글·그림이 바뀌어 영역이 밀려도 점이 글에 맞게(좌표는 영역 기준)
     const r = this.el.getBoundingClientRect();
     const list = typeof e.getCoalescedEvents === "function" ? e.getCoalescedEvents() : null;
-    for (const ev of list && list.length ? list : [e]) {
+    const evs = list && list.length ? list : [e];
+    a.moves += 1;
+    a.samples += evs.length;
+    a.moveAt = timeOf(e);
+    for (const ev of evs) {
       a.far = Math.max(a.far, distance(a.x0, a.y0, ev.clientX, ev.clientY));
       if (a.far >= a.slop && !a.captured) {
         a.captured = true;
@@ -323,7 +333,38 @@ export class InkInput {
       }
     }
     if (a.eraser) return;
+    this.predict(e, r, a);
     if (!a.shown && (a.far >= a.slop || (a.type === "pen" && timeOf(e) - a.t0 >= TAP_MS))) this.reveal(a);
+    if (a.shown && !this.liveRaf) this.liveRaf = requestAnimationFrame(this.drawLive);
+  }
+
+  // 예측 점: 이번 움직임의 예측으로 바꾼다(없으면 비움). 새 움직임 없이 PREDICT_HOLD_MS 가 지나면 걷는다
+  predict(e, r, a) {
+    clearTimeout(this.predTimer);
+    this.predTimer = 0;
+    let list;
+    try {
+      list = typeof e.getPredictedEvents === "function" ? e.getPredictedEvents() : null;
+    } catch {
+      list = null; // 합성 이벤트 등
+    }
+    const last = a.stroke.pts[a.stroke.pts.length - 1];
+    a.pred = list && list.length
+      ? predictTail(last, list.map((ev) => ({ x: ev.clientX - r.left, y: ev.clientY - r.top, t: ev.timeStamp })), timeOf(e))
+      : [];
+    if (!a.pred.length) return;
+    a.predMoves += 1;
+    a.predMax = Math.max(a.predMax, list.length);
+    const tip = a.pred[a.pred.length - 1];
+    a.predAhead = Math.max(a.predAhead, distance(last[0], last[1], tip[0], tip[1]));
+    this.predTimer = setTimeout(this.dropPrediction, PREDICT_HOLD_MS);
+  }
+
+  dropPrediction() {
+    this.predTimer = 0;
+    const a = this.active;
+    if (!a || !a.pred?.length) return;
+    a.pred = [];
     if (a.shown && !this.liveRaf) this.liveRaf = requestAnimationFrame(this.drawLive);
   }
 
@@ -375,7 +416,12 @@ export class InkInput {
   // 선 저장. 긋는 사이에 문항이 바뀌었으면(다른 문항에 붙지 않게) 버린다
   commitStroke(a, why) {
     const ok = this.store.getSnapshot().key === a.key && this.store.addStroke(a.stroke);
-    this.emit(ok ? "stroke" : "stroke-dropped", { tool: a.stroke.tool, points: a.stroke.pts.length, type: a.type, why });
+    this.emit(ok ? "stroke" : "stroke-dropped", {
+      tool: a.stroke.tool, points: a.stroke.pts.length, type: a.type, why,
+      ms: a.moveAt - a.t0, moves: a.moves, samples: a.samples, predMoves: a.predMoves, predMax: a.predMax,
+      predAhead: Math.round(a.predAhead * 10) / 10, frames: a.frames,
+      lagAvg: a.frames ? Math.round((a.lagSum / a.frames) * 10) / 10 : null, lagMax: Math.round(a.lagMax * 10) / 10,
+    });
     return ok;
   }
 
@@ -620,15 +666,22 @@ export class InkInput {
     this.emit("erase", { n: hits.length });
   }
 
-  drawLive() {
+  // 한 그림에 한 번(rAF): 지금까지 모은 점 + 예측 점으로 그리는 중인 선의 d 만 바꾼다. ts - moveAt = 마지막 입력에서 그림 시작까지
+  drawLive(ts) {
     this.liveRaf = 0;
     const a = this.active;
     if (!a || !a.stroke) return;
     const s = a.stroke;
     const path = this.hooks.livePath(s.tool);
     if (!path) return;
+    if (Number.isFinite(ts) && ts >= a.moveAt) {
+      a.frames += 1;
+      a.lagSum += ts - a.moveAt;
+      a.lagMax = Math.max(a.lagMax, ts - a.moveAt);
+    }
+    const pts = a.pred.length ? s.pts.concat(a.pred) : s.pts;
     if (s.tool === "hl") {
-      path.setAttribute("d", centerlinePath(s.pts));
+      path.setAttribute("d", centerlinePath(pts));
       path.setAttribute("fill", "none");
       path.setAttribute("stroke", s.color);
       path.setAttribute("stroke-width", String(s.w * DRAW_SCALE));
@@ -636,7 +689,7 @@ export class InkInput {
       path.setAttribute("stroke-linejoin", "round");
       path.setAttribute("stroke-opacity", String(HL_OPACITY));
     } else {
-      path.setAttribute("d", outlinePath(s.pts, s.w));
+      path.setAttribute("d", outlinePath(pts, s.w));
       path.setAttribute("fill", s.color);
     }
   }
@@ -644,6 +697,8 @@ export class InkInput {
   clearLive() {
     if (this.liveRaf) cancelAnimationFrame(this.liveRaf);
     this.liveRaf = 0;
+    clearTimeout(this.predTimer);
+    this.predTimer = 0;
     for (const kind of ["pen", "hl"]) this.hooks.livePath(kind)?.setAttribute("d", "");
   }
 }
