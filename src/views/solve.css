@@ -67,3 +67,39 @@
     padding-bottom: 96px;
   }
 }
+
+/* ── ★ 헷갈림 표시 ──
+   빈칸 단추(.qm-blank 는 index.css 에서 position: relative) 오른쪽 위에 겹쳐 띄운다 — 단추 크기·줄 배치는 그대로(필기 위치 지킴).
+   누르는 것은 단추가 받는다(★ 자체는 pointer-events 없음) */
+.qm-blank-star {
+  position: absolute;
+  top: -8px;
+  right: -6px;
+  z-index: 2;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  color: #f472b6;
+  -webkit-text-stroke: 0;
+  text-shadow: 0 0 2px #0f0f0f, 0 0 3px #0f0f0f;
+  pointer-events: none;
+}
+/* ★ 표시 중: 빈칸을 누르면 ★ 를 달고 뗀다는 표시로 ★ 없는 빈칸의 테두리도 분홍빛(색만 — 배치 그대로) */
+.qm-star-mode .qm-blank:not([data-star]) {
+  border-color: rgba(244, 114, 182, 0.6) !important;
+}
+
+/* 문항 머리 줄 단추들(하드로·★ 표시·★만 가리기·목차·모두 보기): 휴대폰에서는 좌우 여백을 줄여 412px 에서 한 줄에 들어가게
+   (넘치면 다음 줄로 — 가로로 넘치지 않음). 인라인 style 의 padding 을 덮으려고 !important */
+@media (max-width: 480px) {
+  .qm-meta-btn {
+    padding-left: 7px !important;
+    padding-right: 7px !important;
+  }
+}
+/* 좁은 휴대폰: '★ 표시 중' 띠의 설명은 빼고 '★ 표시 중 · 수 · 끝'만 */
+@media (max-width: 400px) {
+  .qm-star-band-hint {
+    display: none;
+  }
+}

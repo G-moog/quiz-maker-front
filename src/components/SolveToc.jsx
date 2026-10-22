@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useBack } from "../utils/backStack";
+import { countIn } from "../utils/solveStudy";
 
 // 목차: 긴 페이지 빈칸 문항의 '■ 절 / □ 소제목' 목록. 문항 머리 줄의 '목차' 단추로 열고, 누르면 그 제목으로 간 뒤 닫는다.
 //  headings: textModel(text).headings, blankState: 빈칸마다 열렸나(절마다 '연 빈칸/전체' 표시), getCurrent(): 지금 읽는 제목 번호
+//  starState: 빈칸마다 ★ 를 달았나(절마다 '★N' — 헷갈린 칸이 어느 절에 몰렸는지 보이게)
 //  onJump(hid): 그 제목으로 스크롤(닫는 것은 여기서). 안드로이드 뒤로 가기·Esc 로도 닫힌다(useBack — 앱이 닫히지 않게)
 //  창은 화면 위쪽에 작게(본문을 덜 가리게), 목록이 길면 창 안에서 스크롤.
 const S = {
@@ -45,11 +47,12 @@ const S = {
   }),
   label: { flex: 1, minWidth: 0, overflowWrap: "anywhere" },
   count: (all) => ({ flexShrink: 0, fontSize: 11.5, fontWeight: 600, color: all ? "#34d399" : "#7a7a7a" }),
+  stars: { flexShrink: 0, fontSize: 11.5, fontWeight: 700, color: "#f472b6" },
 };
 
 const LEVEL = { title: 0, h1: 1, h2: 2 };
 
-export default function SolveToc({ headings, blankState, blankCount, getCurrent, onJump }) {
+export default function SolveToc({ headings, blankState, starState, blankCount, getCurrent, onJump }) {
   const [open, setOpen] = useState(false);
   const [current, setCurrent] = useState(null);
   const btnRef = useRef(null);
@@ -112,6 +115,7 @@ export default function SolveToc({ headings, blankState, blankCount, getCurrent,
       <button
         ref={btnRef}
         style={S.btn}
+        className="qm-meta-btn"
         onClick={openToc}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -139,18 +143,22 @@ export default function SolveToc({ headings, blankState, blankCount, getCurrent,
               {headings.map((h, j) => {
                 const range = ranges[j];
                 const total = range ? range[1] - range[0] : 0;
-                let opened = 0;
-                if (total > 0 && blankState) for (let i = range[0]; i < range[1]; i++) if (blankState[i]) opened += 1;
+                const opened = total > 0 ? countIn(blankState, range[0], range[1]) : 0;
+                const starred = total > 0 ? countIn(starState, range[0], range[1]) : 0;
                 const isCur = current === h.hid;
+                const label = total > 0
+                  ? `${h.label} (연 빈칸 ${opened}개 / ${total}개${starred ? `, ★ ${starred}개` : ""})`
+                  : h.label;
                 return (
                   <button
                     key={h.hid}
                     style={S.item(h.kind, isCur)}
                     onClick={() => jump(h.hid)}
                     aria-current={isCur ? "location" : undefined}
-                    aria-label={total > 0 ? `${h.label} (연 빈칸 ${opened}개 / ${total}개)` : h.label}
+                    aria-label={label}
                   >
                     <span style={S.label}>{h.label}</span>
+                    {starred > 0 && <span style={S.stars}>★{starred}</span>}
                     {total > 0 && <span style={S.count(opened === total)}>{opened}/{total}</span>}
                   </button>
                 );
