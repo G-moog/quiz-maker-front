@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createNote } from "../api/notes";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
+import { useBack } from "../utils/backStack";
 import {
   NOTE_CONTENT_MAX, NOTE_CONTEXT_MAX, clearNoteDraft, loadNoteDraft, saveNoteDraft,
 } from "../utils/notes";
@@ -8,7 +9,9 @@ import NoteContextText from "./NoteContextText";
 
 // 질문 메모 창 (풀기 화면 오른쪽 아래 '질문 메모' 단추로 연다)
 //  info: { setId, setTitle, questionId, qNo, blankNo, context } — 지금 보는 문제집·문항·빈칸
-//  저장에 실패하면 창을 닫지 않고, 쓴 글을 이 기기(localStorage 'qm:note-draft:v1')에 남긴다.
+//  쓰는 동안 글을 늘 이 기기(localStorage 'qm:note-draft:v1')에 초안으로 남긴다 — 뒤로 가기·앱 닫힘으로 창이 닫혀도
+//  잃지 않게. 저장에 성공하거나 '취소'에서 버리기로 답하면 지운다. 저장에 실패하면 창을 닫지 않는다(failed 표시).
+//  안드로이드 뒤로 가기는 창만 닫는다(useBack — 앱이 닫히지 않게). 이때는 묻지 않고 초안을 남긴다.
 //  다음에 창을 열면 그 초안을 먼저 불러온다(그때의 문제집·빈칸 정보째).
 //   · '지금 빈칸/문항으로 옮기기': 글은 두고 문제집·빈칸 정보만 지금 화면 것으로 바꾼다
 //   · '버리고 새로 쓰기': 글이 있으면 먼저 묻는다
@@ -123,23 +126,35 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
   const [withCtx, setWithCtx] = useState(draft ? draft.withCtx !== false : true);
   const [content, setContent] = useState(draft ? draft.content : "");
   const [fromDraft, setFromDraft] = useState(!!draft);
-  // 초안을 이 기기에 남겨 두는 중(저장에 실패했거나 불러온 초안) — 글을 고치면 초안도 따라 고친다
+  // 불러온 초안이 저장 실패로 남은 것인가(예전 초안은 실패 때만 남았으므로 표시가 없으면 실패로 봄) — 안내 글만 다르다
+  const [draftFailed] = useState(() => !!draft && draft.failed !== false);
+  // 닫을 때 묻지 않고 초안을 남겨 두는 중(저장에 실패했거나 불러온 초안)
   const [keepDraft, setKeepDraft] = useState(!!draft);
+  const [failed, setFailed] = useState(draftFailed); // 이 글이 저장에 실패한 적이 있나(초안에 함께 남김)
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [orphan, setOrphan] = useState(false); // 초안의 문제집·문항이 지워져 거절됨
   const [ctxOpen, setCtxOpen] = useState(false);
   const savingRef = useRef(false);
+  const ownDraft = useRef(!!draft); // 이 창이 쓴(또는 불러온) 초안이 있나 — 글을 다 지우면 그 초안도 지운다
   const textRef = useRef(null);
   const sheetRef = useRef(null);
   const footRef = useRef(null);
   const box = useVisibleBox();
 
+  // 안드로이드 뒤로 가기: 창만 닫는다(쓴 글은 아래 초안으로 남아 있음)
+  useBack(true, () => onClose());
+
+  // 쓰는 대로 초안 저장(글자마다 — 작은 값이라 바로 써도 가볍다. 미뤄 두면 그사이 창이 닫힐 때 잃는다)
   useEffect(() => {
-    if (!keepDraft) return;
-    if (content.trim()) saveNoteDraft({ user, info, withCtx, content });
-    else clearNoteDraft();
-  }, [keepDraft, user, info, withCtx, content]);
+    if (content.trim()) {
+      saveNoteDraft({ user, info, withCtx, content, failed });
+      ownDraft.current = true;
+    } else if (ownDraft.current) {
+      clearNoteDraft();
+      ownDraft.current = false;
+    }
+  }, [user, info, withCtx, content, failed]);
 
   // 자판이 올라와 창이 줄었거나 오류 글이 붙어 아래 줄이 커졌을 때: 쓰는 중인 입력칸이 아래 줄에 가리지 않게 창 안을 내린다
   useLayoutEffect(() => {
@@ -179,11 +194,13 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
     try {
       const note = await createNote(body);
       clearNoteDraft();
+      ownDraft.current = false;
       savingRef.current = false;
       onSaved(note, withoutSet ? { ...info, setId: null, questionId: null } : info);
     } catch (e) {
       // 쓴 글은 잃지 않게: 이 기기에 남기고 창은 그대로(로그인이 만료되면 다시 로그인한 뒤 불러온다)
-      saveNoteDraft({ user, info, withCtx, content });
+      saveNoteDraft({ user, info, withCtx, content, failed: true });
+      setFailed(true);
       setKeepDraft(true);
       setOrphan(
         !withoutSet && e.status === 400 && (info.setId != null || info.questionId != null) &&
@@ -200,8 +217,12 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
 
   function requestClose() {
     if (savingRef.current) return;
-    // 이 기기에 남겨 둔 초안이 아니면, 쓴 글을 버리기 전에 묻는다
-    if (!keepDraft && trimmed && !confirm("쓴 메모를 저장하지 않고 닫을까요?")) return;
+    // 이 기기에 남겨 둔 초안이 아니면, 쓴 글을 버리기 전에 묻는다(버리기로 하면 쓰는 동안 남긴 초안도 지움)
+    if (!keepDraft && trimmed) {
+      if (!confirm("쓴 메모를 저장하지 않고 닫을까요?")) return;
+      clearNoteDraft();
+      ownDraft.current = false;
+    }
     onClose();
   }
 
@@ -218,8 +239,10 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
   function discardDraft() {
     if (trimmed && !confirm("불러온 메모 글을 버리고 새로 쓸까요?")) return;
     clearNoteDraft();
+    ownDraft.current = false;
     setKeepDraft(false);
     setFromDraft(false);
+    setFailed(false);
     setInfo(freshInfo);
     setWithCtx(true);
     setCtxOpen(false);
@@ -261,7 +284,7 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
 
         {fromDraft && (
           <div style={S.draftRow}>
-            <span style={S.draftText}>저장하지 못한 메모를 불러왔습니다.</span>
+            <span style={S.draftText}>{draftFailed ? "저장하지 못한 메모를 불러왔습니다." : "쓰다 만 메모를 불러왔습니다."}</span>
             {canMove && (
               <button style={S.linkBtn} onClick={moveToFresh} disabled={saving}>
                 {freshInfo.blankNo ? "지금 빈칸으로 옮기기" : "지금 문항으로 옮기기"}
