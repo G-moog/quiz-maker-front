@@ -3,7 +3,7 @@
 // 서버에는 올리지 않는다. 열지 못하면(사생활 보호 창 일부·저장 공간 부족) 약속(Promise)이 거절되고,
 // 부르는 쪽(inkStore)은 작은 경고만 보인다.
 // 저장·읽기는 부른 순서대로 한 줄로 처리한다(앞 저장이 다시 열기로 늦어져도 뒤 저장을 덮어쓰지 않게, 저장 직후 읽으면 저장한 값이 보이게).
-import { archiveKeyOf, archivePrefix, archiveValue, archivesToPrune, needsArchive } from "./inkRecord.js";
+import { archiveKeyOf, archivePrefix, archiveValue, archivesToPrune, latestArchive, needsArchive } from "./inkRecord.js";
 
 const DB_NAME = "qm-ink";
 const STORE = "ink";
@@ -138,6 +138,23 @@ export function saveInk(key, value, { archiveStale = false } = {}) {
   }));
   if (value) p.then(() => requestPersistOnce(), () => {});
   return p;
+}
+
+// 이 문항(key)에 보관한 예전 필기 가운데 가장 최근 것 { key, value }, 없으면 null — '예전 필기 흐리게 보기'.
+// 보관이 없으면(대부분) 열쇠만 보고 끝난다
+export function loadLatestArchive(key) {
+  return queued(() => retry("readonly", (st, out) => {
+    out.result = null;
+    const range = rangeOf(archivePrefix(key));
+    const keysReq = st.getAllKeys(range);
+    keysReq.onsuccess = () => {
+      if (!keysReq.result.length) return;
+      const valsReq = st.getAll(range);
+      valsReq.onsuccess = () => {
+        out.result = latestArchive(keysReq.result.map((k, i) => ({ key: k, value: valsReq.result[i] })));
+      };
+    };
+  }));
 }
 
 // 열쇠가 prefix 로 시작하는 기록 모두 [{ key, value }] (백업 내보내기·가져오기)

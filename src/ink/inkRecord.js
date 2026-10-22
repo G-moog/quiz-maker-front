@@ -50,6 +50,25 @@ export function archiveValue(existing, key, now) {
   return { ...existing, archivedAt: now, sourceKey: key };
 }
 
+// 같은 문항의 보관 기록들 [{ key, value }] 가운데 가장 최근에 보관한 것(archivedAt, 같으면 마지막으로 쓴 때) — '예전 필기 흐리게 보기'.
+// 보관 열쇠가 아니거나 선이 없는 것은 건너뛴다. 없으면 null
+export function latestArchive(list) {
+  let best = null;
+  let bestAt = -Infinity;
+  let bestUpd = -Infinity;
+  for (const it of list || []) {
+    if (!isObj(it) || !isArchiveKey(it.key) || !rawHasStrokes(it.value)) continue;
+    const at = numOr(it.value.archivedAt, 0);
+    const upd = recordUpdatedAt(it.value);
+    if (at > bestAt || (at === bestAt && upd > bestUpd)) {
+      best = it;
+      bestAt = at;
+      bestUpd = upd;
+    }
+  }
+  return best;
+}
+
 // 정리할 보관 열쇠들. list = [{ key, archivedAt }]. 최근 것부터 keep 개는 남기고, 그 밖의 것 중 maxAge 보다 오래된 것만
 export function archivesToPrune(list, now, keep = ARCHIVE_KEEP, maxAge = ARCHIVE_MAX_AGE_MS) {
   const sorted = [...list].sort((a, b) => numOr(b.archivedAt, 0) - numOr(a.archivedAt, 0));
