@@ -3,7 +3,7 @@ import {
   PASSWORD_RECOVERY_EVENT, SESSION_EXPIRED_EVENT, SESSION_EXPIRED_MESSAGE, clearSession, saveUser,
 } from "./utils/session";
 import { decideAfterMe, hostKindOf, recoveryFromHash } from "./utils/startup";
-import { configState, connectionError, fetchMe, loadSession } from "./api/supabase";
+import { configState, connectionError, fetchMe, loadSession, serverDownError } from "./api/supabase";
 import { logout } from "./api/auth";
 import { PROD_HOSTS, REQUIRED_SCHEMA } from "./config";
 import LoginView from "./views/LoginView";
@@ -16,7 +16,7 @@ import PreviewView from "./views/PreviewView";
 import SolveView from "./views/SolveView";
 import NotesView from "./views/NotesView";
 
-// 시작 판정(설계서 3.4절): 주소 종류 → 세션 확인 → qm_me → 화면.
+// 시작 판정(설계서 3.4절): 주소 종류 → 서버 확인(정지·연결 실패) → 세션 확인 → qm_me → 화면.
 // 세션은 supabase-js 가 스스로 갱신하므로 24시간마다 끊기지 않는다. 로그인이 끊기면(갱신 실패·다른 탭 로그아웃)
 // api 층이 qm:session-expired 를 내고, 여기서 로그인 화면으로 보낸다.
 
@@ -113,8 +113,13 @@ export default function App() {
     }
   }
 
-  // 세션 확인 → enter. seq 는 부르는 쪽이 올린다(늦게 끝난 옛 판정을 버리려고)
+  // 서버 확인 → 세션 확인 → enter. seq 는 부르는 쪽이 올린다(늦게 끝난 옛 판정을 버리려고)
   async function boot(seq) {
+    // 세션을 보기 전에(supabase-js 클라이언트를 만들기 전에) 서버가 닿는지 먼저 본다. 정지(540)·연결 실패면 곧바로 안내 —
+    // 만료된 토큰을 갱신하려 오래 다시 시도하지 않고, 이 기기의 세션도 건드리지 않는다(Resume 뒤 '다시 시도'로 그대로 이어짐)
+    const down = await serverDownError();
+    if (seq !== bootSeq.current) return;
+    if (down) return showStatus(down.paused && !down.offline ? "paused" : "offline", down.message);
     let r;
     try {
       r = await loadSession();

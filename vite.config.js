@@ -24,5 +24,9 @@ export default defineConfig(() => {
   checkPublicConfig()
   return {
     plugins: [react()],
+    // 운영 빌드 표시(src/utils/startup.js): 운영 빌드는 어느 주소로 열어도 '운영'으로 판정한다(git-master 별칭 등)
+    define: {
+      __QM_PRODUCTION_BUILD__: JSON.stringify(process.env.VERCEL_ENV === 'production'),
+    },
   }
 })

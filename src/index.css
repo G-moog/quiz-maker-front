@@ -403,9 +403,10 @@ textarea::-webkit-resizer {
 .qm-ed-nav-btn {
   padding: 7px 18px;
 }
+/* --qm-band-h: 미리보기·로컬 주소의 띠 높이(components/EnvBand.jsx 가 넣음, 운영 주소는 0) */
 .qm-ed-layout {
   display: flex;
-  height: calc(100vh - 52px);
+  height: calc(100vh - 52px - var(--qm-band-h, 0px));
 }
 .qm-ed-sidebar {
   display: flex;

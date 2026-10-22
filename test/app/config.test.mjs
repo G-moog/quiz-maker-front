@@ -4,9 +4,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, PROD_HOSTS, REQUIRED_SCHEMA,
-  assertPublicKey, assertSupabaseUrl, checkConfig,
+  assertProdHosts, assertPublicKey, assertSupabaseUrl, checkConfig,
 } from '../../src/config.js';
-import { decideAfterMe, hostKindOf, recoveryFromHash } from '../../src/utils/startup.js';
+import { PRODUCTION_BUILD, decideAfterMe, hostKindOf, recoveryFromHash } from '../../src/utils/startup.js';
 
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const jwt = (payload) => `${b64u({ alg: 'HS256', typ: 'JWT' })}.${b64u(payload)}.c2lnbmF0dXJl`;
@@ -68,6 +68,32 @@ test('설정 전체 검사: 비어 있음·짝이 안 맞음·운영 빌드', ()
   assert.deepEqual(checkConfig({ url: URL_OK, key: KEY_OK, prodHosts: ['quiz-maker-xx.vercel.app'], production: true }), { ok: true });
 });
 
+test('운영 주소 꼴 검사: 호스트 이름만(스킴·경로·끝의 / ·포트 없음)', () => {
+  assert.doesNotThrow(() => assertProdHosts([]));
+  assert.doesNotThrow(() => assertProdHosts(['quiz-maker-xx.vercel.app', 'quiz.example.com', 'prod.localhost']));
+  const bad = [
+    'https://quiz-maker-xx.vercel.app',
+    'quiz-maker-xx.vercel.app/',
+    'https://quiz-maker-xx.vercel.app/',
+    'quiz-maker-xx.vercel.app/app',
+    'quiz-maker-xx.vercel.app:443',
+    ' quiz-maker-xx.vercel.app',
+    'localhost',
+    '-bad.vercel.app',
+    '',
+    null,
+  ];
+  for (const h of bad) {
+    assert.throws(() => assertProdHosts([h]), /PROD_HOSTS\[0\] 꼴이 틀렸습니다/, String(h));
+  }
+  assert.throws(() => assertProdHosts('quiz-maker-xx.vercel.app'), /배열이어야/);
+  // 설정 전체 검사도 운영 주소 꼴을 본다 — 비어 있는 설정·운영 빌드 어느 쪽이든
+  const prodHosts = ['https://quiz-maker-xx.vercel.app/'];
+  assert.match(checkConfig({ url: URL_OK, key: KEY_OK, prodHosts, production: true }).error, /PROD_HOSTS\[0\]/);
+  assert.match(checkConfig({ url: URL_OK, key: KEY_OK, prodHosts }).error, /PROD_HOSTS\[0\]/);
+  assert.match(checkConfig({ url: '', key: '', prodHosts }).error, /PROD_HOSTS\[0\]/);
+});
+
 test('저장소의 지금 설정값은 검사를 통과하거나 아직 비어 있다(비밀 키가 들어가 있지 않음)', () => {
   const r = checkConfig({ url: SUPABASE_URL, key: SUPABASE_PUBLISHABLE_KEY, prodHosts: PROD_HOSTS });
   assert.ok(r.ok || r.empty, JSON.stringify(r));
@@ -84,6 +110,19 @@ test('주소 종류: 운영 · 옛 Railway · 그 밖(미리보기·로컬)', ()
   assert.equal(hostKindOf('quiz-maker-git-supabase-g-moog.vercel.app', opts), 'preview');
   assert.equal(hostKindOf('localhost', opts), 'preview');
   assert.equal(hostKindOf('localhost', { prodHosts: [], legacyHost: 'quiz-maker.up.railway.app' }), 'preview');
+});
+
+test('주소 종류: Vercel 운영 빌드는 어느 주소로 열어도 운영(git-master 별칭·배포별 주소)', () => {
+  // Node 시험에는 빌드 표시가 없다 → 운영 빌드 아님
+  assert.equal(PRODUCTION_BUILD, false);
+  const opts = { prodHosts: ['quiz-maker-xx.vercel.app'], legacyHost: 'quiz-maker.up.railway.app', productionBuild: true };
+  assert.equal(hostKindOf('quiz-maker-xx.vercel.app', opts), 'prod');
+  assert.equal(hostKindOf('quiz-maker-xx-git-master-g-moog.vercel.app', opts), 'prod');
+  assert.equal(hostKindOf('quiz-maker-xx-a1b2c3d4e-g-moog.vercel.app', opts), 'prod');
+  // 옛 Railway 주소는 빌드와 상관없이 옛 주소
+  assert.equal(hostKindOf('quiz-maker.up.railway.app', opts), 'legacy');
+  // 운영 빌드가 아니면 주소로만 정한다
+  assert.equal(hostKindOf('quiz-maker-xx-git-master-g-moog.vercel.app', { ...opts, productionBuild: false }), 'preview');
 });
 
 test('qm_me 결과 → 화면(설계서 3.4절 순서)', () => {

@@ -31,7 +31,7 @@ Supabase 주소와 publishable 키는 공개 값이라 저장소에 그대로 �
 |---|---|
 | `SUPABASE_URL` | 프로젝트 주소(`https://<ref>.supabase.co`, 경로 없이) |
 | `SUPABASE_PUBLISHABLE_KEY` | **publishable 키(`sb_publishable_…`)만.** secret(`sb_secret_…`)·service_role 키와 DB 비밀번호는 이 저장소 어디에도 넣지 않습니다. |
-| `PROD_HOSTS` | 운영 주소(Vercel production 도메인, 호스트 이름만). 비밀번호 재설정 링크도 여기로 돌아옵니다. |
+| `PROD_HOSTS` | 운영 주소(Vercel production 도메인, **호스트 이름만** — 예: `quiz-maker-xx.vercel.app`, `https://`·경로·끝의 `/` 없이). 꼴이 틀리면 앱이 시작하지 않고 빌드도 실패합니다. '주소가 바뀌었습니다' 화면의 링크가 첫 값을 씁니다. |
 | `LEGACY_APP_HOST` | 옛 Railway 앱 주소. 여기서 열리면 '주소가 바뀌었습니다' 화면만 보입니다. |
 | `REQUIRED_SCHEMA` | 앱이 요구하는 DB 판(마지막 마이그레이션의 `schema_version`). DB 가 낮으면 '서버 준비 중'. |
 | `SHOW_EXCEL` | 엑셀 단추를 보일지(기본 `false`, 아래 '엑셀'). |
@@ -42,6 +42,7 @@ Supabase 주소와 publishable 키는 공개 값이라 저장소에 그대로 �
 - 키가 publishable 꼴이 아니면(secret 키, service_role JWT, 옛 JWT 꼴 키, 그 밖) **앱은 시작하지 않고**('앱 설정이 잘못되었습니다') **빌드도 실패합니다**(`vite.config.js`). 비밀 키가 공개 번들에 실리는 것을 막으려는 것입니다.
 - 주소·키가 **아직 비어 있으면**(Supabase 프로젝트를 만들기 전) 로컬·미리보기 빌드는 경고만 하고 빌드합니다. 앱은 '앱 설정이 비어 있습니다' 화면만 보입니다.
 - Vercel **운영 빌드**(`VERCEL_ENV=production`, Vercel 이 스스로 넣는 값)는 주소·키가 비어 있거나 `PROD_HOSTS` 가 비어 있으면 실패합니다.
+- `PROD_HOSTS` 의 값이 호스트 이름 꼴이 아니면(`https://…`, 끝의 `/`, 경로) 어느 빌드든 실패합니다.
 
 ## 개발과 시험
 
@@ -61,15 +62,18 @@ npm run test:db    # 마이그레이션·DB 함수(PGlite, 운영 Supabase 에 �
 
 ## 주소별 시작 화면
 
-앱은 열릴 때 주소 종류를 보고, 세션을 확인한 뒤 `qm_me()`(이름·역할·DB 판·전환 상태)로 화면을 정합니다.
+앱은 열릴 때 주소 종류를 보고, 로그인 없이 부를 수 있는 `qm_schema_version` 으로 서버가 닿는지 먼저 본 뒤, 세션을 확인하고 `qm_me()`(이름·역할·DB 판·전환 상태)로 화면을 정합니다.
+
+- 주소 종류: `PROD_HOSTS` 에 있는 주소는 운영, 옛 Railway 주소는 옛 주소, 그 밖(미리보기·로컬)은 미리보기입니다. 단, **Vercel 운영 빌드는 어느 주소로 열어도 운영**으로 봅니다(운영 배포는 `…-git-master-….vercel.app` 같은 다른 주소로도 열리므로).
 
 | 경우 | 화면 |
 |---|---|
 | 옛 Railway 주소 | '주소가 바뀌었습니다'(새 주소 링크) |
+| 540(Free 프로젝트 정지, CORS 머리 있음) | '서버가 쉬는 중입니다 → supabase.com 대시보드 → Resume project'. 세션은 그대로 두어 Resume 뒤 '다시 시도'만 누르면 됩니다. |
+| 연결 실패(인터넷 끊김, 또는 CORS 머리 없는 540 — 브라우저는 둘을 가리지 못함) | '서버에 연결하지 못했습니다' + 인터넷 확인과 '쉬는 중일 수 있음(Resume project)' 안내 |
 | 세션 없음 | 로그인(이메일 + 비밀번호, '비밀번호를 잊었어요') |
-| 로그인 만료(갱신 실패, 다른 탭에서 로그아웃, 토큰 거절) | 로그인 + '로그인이 만료되었습니다' |
+| 로그인 만료(갱신 거절, 다른 탭에서 로그아웃, 토큰 거절) | 로그인 + '로그인이 만료되었습니다' |
 | DB 함수 없음(PGRST202) 또는 DB 판 < `REQUIRED_SCHEMA` | '서버 준비 중' |
-| 540(Free 프로젝트 정지) 또는 연결 실패 + `qm_schema_version` 도 실패 | '서버가 쉬는 중입니다 → supabase.com 대시보드 → Resume project' |
 | 계정 준비 전(`ready:false`) | '계정 준비 필요'(도구 `node quiz.mjs login --backend supabase` 한 번) |
 | 운영 주소 + 전환 전(`live:false`) | '전환 준비 중'(데이터를 부르지 않음. 전환 날 go-live 전, 복원 중) |
 | 운영 주소 + `live:true` | 앱 |
@@ -78,6 +82,8 @@ npm run test:db    # 마이그레이션·DB 함수(PGlite, 운영 Supabase 에 �
 | 재설정 메일의 링크 | '새 비밀번호 정하기' |
 
 - 세션은 supabase-js 가 이 기기의 localStorage 에 두고 만료 전에 스스로 갱신합니다(24시간마다 끊기지 않음). 로그아웃은 이 기기만 끊습니다.
+- 서버가 정지(540)했을 때 supabase-js 가 세션을 지우지 않도록, Auth 요청의 540 은 '연결 실패'로 바꿔 넘깁니다(`src/api/supabase.js` 의 `pauseAwareFetch`). 쓰는 도중 정지되면 각 화면이 'Resume project' 안내를 보이고, 로그인 화면으로 쫓겨나지 않습니다.
+- 세션 갱신이 연결 문제로 다시 시도 중이면(supabase-js 는 30초 가까이 붙잡음) 5초 뒤 서버를 직접 보고, 닿지 않으면 기다리지 않고 연결 안내를 보입니다.
 - 앱 안의 이름(`localStorage.username`)은 `qm_me` 의 username(옛 아이디 그대로)입니다. 필기·하드모드·메모 초안의 열쇠라 바뀌면 안 됩니다.
 - 로그인한 채 비밀번호를 바꾸려면 대시보드 머리의 이름(배지) → '비밀번호 바꾸기'.
 
@@ -89,6 +95,11 @@ npm run test:db    # 마이그레이션·DB 함수(PGlite, 운영 Supabase 에 �
 
 Vercel(한 번): 저장소 `G-moog/quiz-maker-front` 를 import, Framework Vite, 출력 `dist`, Node 22 이상, Production branch `master`, 환경 변수 없음.
 Supabase Authentication → URL Configuration(한 번): Site URL = 운영 주소, Redirect URLs = **운영 주소 하나만**(`https://*.vercel.app/**` 같은 넓은 와일드카드는 넣지 않음).
+
+비밀번호 재설정 링크
+
+- '비밀번호를 잊었어요'의 링크는 **요청한 그 주소**로 돌아오게 보냅니다(운영 주소에서 요청하면 운영 주소). Redirect URLs 에 없는 주소(미리보기·로컬)면 Supabase 가 Site URL(운영 주소)로 보냅니다.
+- **merge 전에는 운영 주소에 master 의 옛 앱이 떠 있어 재설정 링크가 동작하지 않습니다.** 그동안 비밀번호는 로그인된 기기에서 이름(배지) → '비밀번호 바꾸기'로 바꿉니다. 미리보기에서 재설정을 꼭 시험해야 하면 계정 이름으로 좁힌 `https://*-<계정이름>.vercel.app/**` 를 Redirect URLs 에 잠깐 넣었다가 시험 뒤 뺍니다(설계서 3.2-6).
 
 ## 운영 규칙
 
@@ -122,4 +133,4 @@ Supabase Free 는 7일 동안 아무도 쓰지 않으면 프로젝트를 정지�
 
 - Vercel Hobby 의 크론 한도(개수·하루 1번)를 등록 전에 확인합니다.
 - 이 PC 의 매일 백업(도구 `backup`, 작업 스케줄러)도 같은 역할을 합니다. Pro 를 고르면 둘 다 필요 없습니다(백업은 매주로).
-- 정지되면 앱은 '서버가 쉬는 중입니다' 화면을 띄웁니다. supabase.com 대시보드 → 프로젝트 → Resume project 를 누르고 몇 분 뒤 다시 엽니다.
+- 정지되면 앱은 열 때 '서버가 쉬는 중입니다' 화면을 띄웁니다(정지 응답에 CORS 머리가 없으면 '서버에 연결하지 못했습니다' + '쉬는 중일 수 있음'). 쓰는 도중이면 화면마다 같은 안내가 뜹니다. supabase.com 대시보드 → 프로젝트 → Resume project 를 누르고 몇 분 뒤 '다시 시도'를 누릅니다. 이 기기의 로그인은 그대로 남아 다시 로그인하지 않아도 됩니다.

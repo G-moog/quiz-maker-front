@@ -54,7 +54,8 @@ function parseAnswers(raw) {
 // 폭 900px 이하(휴대폰·태블릿 세로)는 목록과 편집 폼을 한 화면에 하나씩 전체 폭으로 보여 준다.
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType) — 휴대폰에서 누른 뒤 흐린 채 남지 않게.
 const S = {
-  page: { minHeight: "100vh", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
+  // --qm-band-h: 미리보기·로컬 주소의 띠 높이(components/EnvBand.jsx) — 띠가 있어도 편집 화면이 한 화면에 맞게
+  page: { minHeight: "calc(100vh - var(--qm-band-h, 0px))", background: "#0f0f0f", fontFamily: "system-ui, sans-serif" },
   nav: {
     background: "#1a1a1a", borderBottom: "1px solid #2e2e2e",
     display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,

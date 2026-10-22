@@ -7,8 +7,10 @@
 export const SUPABASE_URL = "";
 // publishable 키(sb_publishable_ 로 시작). 지금은 비어 있음
 export const SUPABASE_PUBLISHABLE_KEY = "";
-// 운영 주소(Vercel production 도메인, 호스트 이름만. 예: "quiz-maker-xx.vercel.app"). Vercel 프로젝트를 만든 뒤 채운다 — 지금은 없음
-// 여기 없는 주소(미리보기·로컬)에서는 리허설 띠나 '운영 데이터' 확인을 보인다(설계서 3.4절)
+// 운영 주소(Vercel production 도메인, 호스트 이름만. 예: "quiz-maker-xx.vercel.app" — https:// · 경로 · 끝의 / 없이).
+// Vercel 프로젝트를 만든 뒤 채운다 — 지금은 없음. 꼴이 틀리면 앱이 시작하지 않고 빌드도 실패한다(assertProdHosts).
+// 여기 없는 주소(미리보기·로컬)에서는 리허설 띠나 '운영 데이터' 확인을 보인다(설계서 3.4절).
+// 단, Vercel 운영 빌드는 어느 주소로 열어도(운영 배포의 git-master 별칭 등) 운영으로 본다(utils/startup.js)
 export const PROD_HOSTS = [];
 // 옛 Railway 앱 주소: 여기서 열리면 '주소가 바뀌었습니다' 화면만 보인다
 export const LEGACY_APP_HOST = "quiz-maker.up.railway.app";
@@ -69,9 +71,31 @@ export function assertSupabaseUrl(url) {
   }
 }
 
+// 운영 주소 꼴 검사: 배열이고, 값마다 호스트 이름만(영문·숫자·'-'·'.', 점이 하나 이상). 스킴·경로·포트·끝의 '/' 가 붙으면
+// 주소 판정이 '미리보기'로 빗나가고(전환 전 운영 주소에서 쓰기를 받음) 링크도 https://https://… 가 되므로 멈춘다
+const HOST_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
+export function assertProdHosts(hosts) {
+  if (!Array.isArray(hosts)) {
+    throw new Error('src/config.js 의 PROD_HOSTS 는 배열이어야 합니다(예: ["quiz-maker-xx.vercel.app"]).');
+  }
+  hosts.forEach((h, i) => {
+    if (typeof h !== "string" || !HOST_RE.test(h)) {
+      throw new Error(
+        `src/config.js 의 PROD_HOSTS[${i}] 꼴이 틀렸습니다. 호스트 이름만 적습니다(예: "quiz-maker-xx.vercel.app" — https:// · 경로 · 끝의 / 없이).`
+      );
+    }
+  });
+}
+
 // 설정 전체 검사. { ok: true } | { empty: true } (아직 비어 있음) | { error: "…" }
 // production: Vercel 운영 빌드처럼 반드시 채워져 있어야 하는 경우(비어 있어도 오류, 운영 주소도 필요)
+// 운영 주소(prodHosts) 꼴은 비어 있든 아니든 늘 검사한다
 export function checkConfig({ url, key, prodHosts = [], production = false } = {}) {
+  try {
+    assertProdHosts(prodHosts);
+  } catch (e) {
+    return { error: e.message };
+  }
   const hasUrl = typeof url === "string" && url.trim() !== "";
   const hasKey = typeof key === "string" && key.trim() !== "";
   if (!hasUrl && !hasKey) {
@@ -87,7 +111,7 @@ export function checkConfig({ url, key, prodHosts = [], production = false } = {
   } catch (e) {
     return { error: e.message };
   }
-  if (production && !(Array.isArray(prodHosts) && prodHosts.length > 0)) {
+  if (production && prodHosts.length === 0) {
     return { error: "운영 빌드인데 src/config.js 의 PROD_HOSTS(운영 주소)가 비어 있습니다." };
   }
   return { ok: true };

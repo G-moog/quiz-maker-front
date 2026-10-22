@@ -1,6 +1,6 @@
 import { connectionError, getSupabase, sessionExpiredError, signOutLocal } from "./supabase";
 import { clearSession } from "../utils/session";
-import { PASSWORD_MIN_LENGTH, PROD_HOSTS } from "../config";
+import { PASSWORD_MIN_LENGTH } from "../config";
 
 // 로그인·로그아웃·비밀번호(설계서 3절). 회원가입은 없다(Supabase 에서 새 가입을 끔).
 // 로그인한 뒤 이름·역할은 App 이 qm_me 로 받아 이 기기에 둔다(utils/session.js saveUser).
@@ -10,6 +10,9 @@ async function authError(error, action) {
   const status = typeof error?.status === "number" ? error.status : undefined;
   const code = error?.code || "";
   if (error?.name === "AuthRetryableFetchError" || status === 0) return connectionError(status || 0);
+  // 응답 몸이 JSON 이 아님(정지 540 의 평문 등) → auth-js 는 상태 없는 AuthUnknownError 를 낸다. 기술 문구 대신 연결 오류로 —
+  // connectionError 가 qm_schema_version 으로 540 을 가려 '서버가 쉬는 중입니다'를 낸다
+  if (error?.name === "AuthUnknownError" || status === undefined) return connectionError(0);
   if (status === 540) return connectionError(540);
   if (status >= 500) {
     const err = new Error(`서버 오류로 처리하지 못했습니다(HTTP ${status}). 잠시 뒤 다시 해 주세요.`);
@@ -66,10 +69,11 @@ export async function logout() {
   }
 }
 
-// 재설정 링크가 돌아올 주소: 운영 주소(설계서 3.5절). 운영 주소가 아직 없으면 지금 주소 —
-// Supabase 의 Redirect URLs 에 없는 주소면 Supabase 가 Site URL 로 바꿔 보낸다
+// 재설정 링크가 돌아올 주소: 지금 연 주소(운영 주소에서 요청하면 운영 주소). Supabase 의 Redirect URLs 에 없는 주소면
+// Supabase 가 Site URL(운영 주소)로 바꿔 보내므로 넓어지는 것은 없다. 미리보기에서 재설정을 시험하려면 설계서 3.2-6 대로
+// 계정 이름으로 좁힌 와일드카드를 잠깐 넣는다. 주의: merge 전에는 운영 주소에 옛 앱이 떠 있어 재설정 링크가 동작하지 않는다
+// (그동안은 로그인된 기기에서 '비밀번호 바꾸기')
 function recoveryRedirect() {
-  if (PROD_HOSTS.length > 0) return `https://${PROD_HOSTS[0]}/`;
   return `${window.location.origin}/`;
 }
 

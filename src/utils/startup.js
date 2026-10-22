@@ -2,10 +2,17 @@
 // Node 시험(test/app)도 그대로 불러오도록 확장자까지 적는다
 import { LEGACY_APP_HOST, PROD_HOSTS, REQUIRED_SCHEMA } from "../config.js";
 
-// 주소 종류: "prod"(운영 주소) · "legacy"(옛 Railway 앱 주소) · "preview"(그 밖: Vercel 미리보기·로컬)
-export function hostKindOf(hostname, { prodHosts = PROD_HOSTS, legacyHost = LEGACY_APP_HOST } = {}) {
+/* global __QM_PRODUCTION_BUILD__ */
+// Vercel 운영 빌드(VERCEL_ENV=production)인지. vite.config.js 가 빌드할 때 넣는다(로컬·미리보기 빌드와 Node 시험은 false)
+export const PRODUCTION_BUILD = typeof __QM_PRODUCTION_BUILD__ !== "undefined" && __QM_PRODUCTION_BUILD__ === true;
+
+// 주소 종류: "prod"(운영) · "legacy"(옛 Railway 앱 주소) · "preview"(그 밖: Vercel 미리보기·로컬)
+// Vercel 운영 빌드는 어느 주소로 열어도 운영이다 — 운영 도메인 말고도 git-master 별칭·배포별 주소로 같은 빌드가 열린다.
+// 그 밖의 빌드는 주소가 PROD_HOSTS 에 있을 때만 운영
+export function hostKindOf(hostname, { prodHosts = PROD_HOSTS, legacyHost = LEGACY_APP_HOST, productionBuild = PRODUCTION_BUILD } = {}) {
   const h = String(hostname || "").toLowerCase();
   if (legacyHost && h === legacyHost.toLowerCase()) return "legacy";
+  if (productionBuild) return "prod";
   if (prodHosts.some((p) => String(p).toLowerCase() === h)) return "prod";
   return "preview";
 }
