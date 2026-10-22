@@ -9,7 +9,7 @@ import {
 //  펜(S펜)  : 긋기 = 필기, 빈칸 두 번 콕 = 정답 보이기/가리기(한 번 콕은 아무 일 없음, 콕은 점을 남기지 않음).
 //             빈칸 위 콕은 촉이 PEN_BLANK_TAP_SLOP 만큼 미끄러져도 콕(TAP_MS 안). 브라우저가 입력을 가져가도(취소) 그은 선은 남긴다
 //  손가락   : 하나로 끌기 = 아무 일 없음(손바닥 대비), 빈칸 한 번 터치 = 지금처럼 토글(브라우저 click 그대로),
-//             둘로 밀기 = 페이지 스크롤(떼면 관성 — 둘을 거의 함께 뗄 때만, 하나를 대고 있는 동안은 멈춤), 벌리기(확대)는
+//             둘로 밀기 = 페이지 스크롤(하나를 먼저 떼면 남은 손가락으로 이어 감 — 혼자 미끄러지지 않음, 다 떼면 관성), 벌리기(확대)는
 //             영역의 touch-action: none 이 막는다. 손가락 하나는 글 위, 하나는 카드 밖(여백·머리 줄)이어도 거의 함께 닿았으면 두 손가락 스크롤.
 //             관성·스크롤을 멈추려고 친 터치(관성 중, 끝난 뒤 SCROLL_TAP_GUARD_MS 안, 페이지가 움직이는 중)는 빈칸을 열지 않는다
 //  마우스   : 왼쪽 끌기 = 필기, 움직이지 않은 클릭 = 빈칸 토글
@@ -598,8 +598,9 @@ export class InkInput {
     const g = this.gesture;
     if (touch.ignored || !touch.multi || !g) return;
     const live = this.liveTouches().filter((x) => x.multi);
-    if (live.length < 2) return;
-    // 두 손가락 가운데점이 내려간 만큼 위로(글이 손가락을 따라오게). 소수점은 모아 두었다가 1px 씩
+    // 두 손가락(이상), 또는 하나를 먼저 떼고 남은 손가락 하나(g.lift — 다 뗄 때까지 그 손가락으로 이어 감)
+    if (live.length < (g.lift ? 1 : 2)) return;
+    // 손가락 가운데점이 내려간 만큼 위로(글이 손가락을 따라오게). 소수점은 모아 두었다가 1px 씩
     const mid = midpoint(live).y;
     g.carry += g.mid - mid;
     g.mid = mid;
@@ -629,20 +630,18 @@ export class InkInput {
     this.touchClick = null;
   }
 
-  // 스크롤 중 손가락이 빠졌다: 둘 이상 남았으면 남은 손가락의 가운데점을 다시 잡고(셋 → 둘에서 페이지가 튀지 않게),
-  // 손가락 하나를 떼어 하나만 남았으면 그 손가락도 떨어지기를 기다린다 — 스크롤은 멈춰 있고, 곧(FLING_PAIR_MS) 떼면
-  // 첫 손가락을 뗄 때의 속도로 관성, 대고 있다가 떼면 관성 없음(남은 손가락이 닿아 있는 동안 미끄러지지 않게 — 브라우저처럼).
-  // 모두 떨어지면 끝(뗀 것이면 관성)
+  // 스크롤 중 손가락이 빠졌다: 남은 손가락의 가운데점을 다시 잡는다(셋 → 둘, 둘 → 하나에서 페이지가 튀지 않게).
+  // 손가락 하나를 떼어 하나만 남았으면 관성을 바로 주지 않고 남은 손가락으로 스크롤을 이어 간다(브라우저처럼 — 남은 손가락이
+  // 닿아 있는 동안 페이지가 혼자 미끄러지지 않고, 휙 밀다 차례로 뗄 때 그 사이에 멈칫하지도 않게). 그 손가락까지 떼면 끝 —
+  // 관성 속도는 geometry.flingVelocity(곧 떼면 첫 손가락을 뗄 때의 속도와 남은 손가락의 속도 중 빠른 것, 대고 있다 떼면 없음).
+  // 하나만 남았는데 뗀 것이 아니면(취소·손바닥) 관성 없이 끝
   fingerLeft(t, fling) {
     const g = this.gesture;
     if (!g) return;
     const live = this.liveTouches().filter((x) => x.multi);
-    if (live.length >= 2) {
+    if (live.length >= 2 || (live.length === 1 && fling)) {
       g.mid = midpoint(live).y;
-      return;
-    }
-    if (live.length === 1 && fling) {
-      if (!g.lift) g.lift = { at: t, v: releaseVelocity(g.samples, t) };
+      if (live.length === 1 && !g.lift) g.lift = { at: t, v: releaseVelocity(g.samples, t) };
       return;
     }
     this.endGesture(t, fling);

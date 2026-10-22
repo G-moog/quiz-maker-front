@@ -120,14 +120,17 @@ export function inertiaStep(v, dt, tau = INERTIA_TAU) {
   return { v: v * k, d: v * tau * (1 - k) };
 }
 
-// 두 손가락을 차례로 뗄 때: 첫 손가락을 뗀 뒤 남은 손가락이 이 ms 안에 떨어지면 '함께 뗌' — 첫 손가락을 뗄 때의 속도로 관성.
-// 더 오래 대고 있다 떼면 관성 없음(둘째 손가락이 닿아 있는 동안 화면이 미끄러지지 않게 — 그 사이 스크롤은 멈춰 있다)
+// 두 손가락을 차례로 뗄 때: 첫 손가락을 뗀 뒤 남은 손가락이 이 ms 안에 떨어지면 '함께 뗌'(휙 밀고 놓음) — 첫 손가락을 뗄 때의
+// 속도와 남은 손가락의 속도 중 빠른 것으로 관성(차례로 떼는 사이 남은 손가락이 느려져도 휙 민 만큼은 미끄러지게).
+// 그보다 늦으면 남은 손가락의 속도만 — 대고 있다 떼면(최근 움직임 없음) 관성 없음. 그 사이 페이지는 남은 손가락을 따라간다(InkInput)
 export const FLING_PAIR_MS = 120;
 
-// 두 손가락 스크롤을 끝낼 때의 관성 속도(px/ms). lift = 첫 손가락을 뗀 때와 그때의 속도 { at, v }(한 번에 다 뗐으면 null)
+// 두 손가락 스크롤을 끝낼 때의 관성 속도(px/ms). samples = 남은 손가락까지 이어 모은 스크롤 기록,
+// lift = 첫 손가락을 뗀 때와 그때의 속도 { at, v }(한 번에 다 뗐으면 null)
 export function flingVelocity(samples, now, lift = null) {
-  if (lift) return now - lift.at <= FLING_PAIR_MS ? lift.v : 0;
-  return releaseVelocity(samples, now);
+  const v = releaseVelocity(samples, now);
+  if (!lift || now - lift.at > FLING_PAIR_MS) return v;
+  return Math.abs(lift.v) > Math.abs(v) ? lift.v : v;
 }
 
 // 영역 밖(카드 여백·머리 줄)에 닿은 손가락을 두 손가락 스크롤에 함께 세는가: 영역 손가락과 거의 함께(OUTSIDE_JOIN_MS 안)

@@ -151,17 +151,24 @@ test('예측 점: 그리는 선 끝에만 — 많아야 3개, 너무 앞선 시�
   assert.deepEqual(predictTail(null, [{ x: 1, y: 1 }], 1000), []);
 });
 
-test('두 손가락 관성: 한 번에 떼면 그때 속도, 차례로 떼면 120ms 안일 때만 첫 손가락을 뗄 때의 속도', async () => {
+test('두 손가락 관성: 한 번에 떼면 그때 속도, 차례로 떼면 120ms 안은 첫 손가락 속도와 남은 손가락 속도 중 빠른 것, 늦으면 남은 손가락 속도', async () => {
   const { FLING_PAIR_MS, flingVelocity, releaseVelocity } = await import('../../src/ink/geometry.js');
   const samples = [{ t: 0, v: 0 }, { t: 50, v: 100 }];
   assert.equal(flingVelocity(samples, 50), releaseVelocity(samples, 50));
   assert.equal(flingVelocity(samples, 50, null), 2);
-  // 첫 손가락을 t=50 에 속도 2 로 뗌 → 남은 손가락을 곧 떼면 2, 오래 대고 있다 떼면 0(그 사이 화면은 멈춰 있음)
+  // 첫 손가락을 t=50 에 속도 2 로 뗌, 남은 손가락은 가만히 → 곧 떼면 2, 대고 있다 떼면 0
   const lift = { at: 50, v: 2 };
   assert.equal(flingVelocity(samples, 50 + 30, lift), 2);
   assert.equal(flingVelocity(samples, 50 + FLING_PAIR_MS, lift), 2);
   assert.equal(flingVelocity(samples, 50 + FLING_PAIR_MS + 1, lift), 0);
   assert.equal(flingVelocity(samples, 2000, lift), 0);
+  // 남은 손가락이 계속 밀다가 곧 뗌: 더 빠르면 그 속도(3), 느려졌으면 첫 손가락을 뗄 때의 속도(2)
+  assert.equal(flingVelocity([...samples, { t: 100, v: 250 }, { t: 150, v: 400 }], 150, lift), 3);
+  assert.equal(flingVelocity([...samples, { t: 100, v: 125 }], 100, lift), 2);
+  // 남은 손가락으로 한참 밀다 뗌: 그 손가락의 속도(브라우저처럼), 멈췄다 떼면 0
+  const long = [...samples, { t: 300, v: 350 }, { t: 400, v: 650 }];
+  assert.equal(flingVelocity(long, 400, lift), 3);
+  assert.equal(flingVelocity(long, 700, lift), 0);
 });
 
 test('영역 밖 손가락: 영역 손가락과 200ms 안에 함께 닿았고 가만히 있었으며 페이지가 움직이지 않았을 때만', async () => {
