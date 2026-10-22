@@ -15,6 +15,9 @@ import EditorView from "./views/EditorView";
 import PreviewView from "./views/PreviewView";
 import SolveView from "./views/SolveView";
 import NotesView from "./views/NotesView";
+import ErrorBoundary from "./components/ErrorBoundary";
+import { STAY, useBack } from "./utils/backStack";
+import { clearDashCache } from "./utils/dashboard";
 
 // 시작 판정(설계서 3.4절): 주소 종류 → 서버 확인(정지·연결 실패) → 세션 확인 → qm_me → 화면.
 // 세션은 supabase-js 가 스스로 갱신하므로 24시간마다 끊기지 않는다. 로그인이 끊기면(갱신 실패·다른 탭 로그아웃)
@@ -22,6 +25,8 @@ import NotesView from "./views/NotesView";
 
 const HOST_KIND = hostKindOf(window.location.hostname);
 const PREVIEW_OK_KEY = "qm:preview-live-ok"; // 미리보기 + 운영 데이터 확인(탭마다 한 번 — sessionStorage)
+// 편집기 ← 단추(EditorView)와 같은 문구
+const EDITOR_LEAVE_MESSAGE = "저장하지 않은 내용이 있습니다. 나갈까요?";
 
 // 재설정 메일의 링크로 들어왔는지는 supabase-js 가 주소를 지우기 전에 읽어 둔다
 const START_LINK = recoveryFromHash(window.location.hash);
@@ -59,9 +64,24 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const recoveryPending = useRef(START_LINK === "recovery");
   const bootSeq = useRef(0); // 늦게 끝난 옛 판정이 새 판정을 덮지 않게
+  const editorDirty = useRef(false); // 편집기에 저장하지 않은 내용이 있는지(EditorView 가 알려 줌)
+
+  // 뒤로 가기(안드로이드 뒤로·브라우저 뒤로): 대시보드가 바닥이고 풀기·편집·메모는 한 칸, 미리보기는 편집 위에 한 칸 더.
+  // 앱 화면(phase app)일 때만. 바깥 칸을 먼저 선언한다 — 미리보기에서 대시보드로 한꺼번에 갈 때
+  // 효과 정리가 바깥 → 안쪽 순서로 돌아 바깥 release 가 두 칸을 함께 걷는다(history.go 한 번)
+  const inApp = phase === "app";
+  useBack(inApp && view !== "dashboard", () => {
+    // 편집기에 저장하지 않은 내용이 있으면 묻고, 남기로 하면 칸을 다시 쌓는다
+    if (view === "editor" && editorDirty.current && !confirm(EDITOR_LEAVE_MESSAGE)) return STAY;
+    setView("dashboard");
+  });
+  useBack(inApp && view === "preview", () => setView("editor"));
+  // 대시보드 메뉴에서 연 '비밀번호 바꾸기'도 뒤로 가기로 닫는다(재설정 링크로 온 화면은 돌아갈 곳이 없어 그대로)
+  useBack(phase === "password" && pwMode === "change", () => setPhase("app"));
 
   function toLogin(notice = "") {
     clearSession();
+    clearDashCache();
     setRole("USER");
     setBand(null);
     setLoginNotice(notice);
@@ -216,6 +236,7 @@ export default function App() {
   }
 
   function handleOpenEditor(set) {
+    editorDirty.current = false;
     setCurrentSet(set);
     setView("editor");
   }
@@ -254,10 +275,14 @@ export default function App() {
     return renderStatus();
   }
 
+  // 화면 안쪽 경계: 한 화면이 그리다 실패하면 안내 + '목록으로'(대시보드). 화면이 바뀌면(key) 경계도 새로.
+  // '목록으로'는 기억해 둔 대시보드 목록도 버린다 — 그 목록 때문에 그리다 실패했다면 같은 자리에서 다시 멈추지 않게
   return (
     <>
       <EnvBand kind={band} />
-      {renderApp()}
+      <ErrorBoundary key={view} onHome={() => { clearDashCache(); setView("dashboard"); }}>
+        {renderApp()}
+      </ErrorBoundary>
     </>
   );
 
@@ -346,6 +371,7 @@ export default function App() {
           set={currentSet}
           onBack={() => setView("dashboard")}
           onPreview={handleOpenPreview}
+          onDirtyChange={(dirty) => { editorDirty.current = dirty; }}
         />
       );
     }
