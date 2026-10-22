@@ -1341,12 +1341,13 @@ export default function SolveView({ set, onBack }) {
         )}
       </div>
 
-      {/* ── 다음 가린 빈칸 (빈칸이 많은 문항) ── */}
+      {/* ── 다음 가린 빈칸 (빈칸이 많은 문항) ──
+          data-ink-palm-safe 는 달지 않는다: 오른쪽 아래는 글씨를 쓰는 손바닥이 놓이는 자리 — 안전 영역은 펜 호버·접촉 크기를
+          보지 않아, 펜을 띄운 채 손바닥이 닿으면 눌려 쓰던 자리가 움직였다. 바로 아래 메모 단추와 같은 손바닥 무시를 받는다 */}
       {showNext && (
         <button
           style={S.nextFab}
           className="qm-next-fab"
-          data-ink-palm-safe=""
           onClick={goNextHidden}
           onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
           onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
