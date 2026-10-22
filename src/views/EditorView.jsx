@@ -7,7 +7,11 @@ import { buildTableTemplate, plainPreview } from "../utils/textBlocks";
 import { parseAnswers } from "../utils/answers";
 import { fillLockReason, fromInline, toInline } from "../utils/fillInline";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
+import { STAY, useBack } from "../utils/backStack";
 import "./EditorView.css";
+
+// 목록·편집 폼을 한 화면에 하나씩 보이는 폭(index.css 의 편집기 @media 와 같은 값)
+const NARROW_QUERY = "(max-width: 900px)";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 // App 의 뒤로 가기 확인과 같은 문구
@@ -425,6 +429,21 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
     setFillError("");
     focusNext.current = { id: returnFocusId.current };
   }
+
+  // 좁은 화면(폼이 목록을 가림)에서 연 폼은 history 에 한 칸 — 안드로이드 뒤로 가기가 편집기를 떠나지 않고 '← 문항 목록'처럼
+  // 목록으로 돌아가게. 저장하지 않은 내용이 있으면 묻고, 남기로 하면 칸을 다시 쌓는다(STAY). 넓은 화면은 목록이 늘 보여 칸 없음
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && !!window.matchMedia?.(NARROW_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia?.(NARROW_QUERY);
+    if (!mq) return undefined;
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  useBack(editing && narrow, () => {
+    if (dirty && !confirm(LEAVE_MESSAGE)) return STAY;
+    closeForm();
+  });
 
   // 다른 문항·유형으로 넘어갈 때 고치던 것이 있으면 묻는다('취소' 단추는 묻지 않음 — 버리려고 누른 것)
   function okToSwitch() {
