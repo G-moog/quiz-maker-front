@@ -8,7 +8,7 @@ export const SUPABASE_URL = "https://mcqcmstyecoktxbozqyg.supabase.co";
 // publishable 키(sb_publishable_ 로 시작하는 공개 키)
 export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_PwxvwnquiYrE4LjVppTXhw_3JgilTg_";
 // 운영 주소(Vercel production 도메인, 호스트 이름만. 예: "quiz-maker-xx.vercel.app" — https:// · 경로 · 끝의 / 없이).
-// Vercel 프로젝트를 만든 뒤 채운다 — 지금은 없음. 꼴이 틀리면 앱이 시작하지 않고 빌드도 실패한다(assertProdHosts).
+// 꼴이 틀리면 앱이 시작하지 않고 빌드도 실패한다(assertProdHosts).
 // 여기 없는 주소(미리보기·로컬)에서는 리허설 띠나 '운영 데이터' 확인을 보인다(설계서 3.4절).
 // 단, Vercel 운영 빌드는 어느 주소로 열어도(운영 배포의 git-master 별칭 등) 운영으로 본다(utils/startup.js)
 // 첫 번째가 대표 주소(비밀번호 재설정 메일이 돌아오는 곳). 2026-10-22 산 도메인. vercel.app 주소는 Vercel 이 대표 주소로 넘겨준다(307)
@@ -116,4 +116,24 @@ export function checkConfig({ url, key, prodHosts = [], production = false } = {
     return { error: "운영 빌드인데 src/config.js 의 PROD_HOSTS(운영 주소)가 비어 있습니다." };
   }
   return { ok: true };
+}
+
+// vercel.json 의 Content-Security-Policy 가 지금 Supabase 주소를 허용하는지(문제가 없으면 null).
+// Supabase 주소가 바뀌었는데(복원으로 새 프로젝트 등) CSP 를 빠뜨리면 운영 앱이 서버에도 그림에도 닿지 못한다 — 빌드에서 멈춘다(vite.config.js)
+export function cspProblem(vercelConfig, supabaseUrl) {
+  if (!supabaseUrl) return null;
+  const rules = Array.isArray(vercelConfig?.headers) ? vercelConfig.headers : [];
+  const csp = rules.flatMap((r) => r.headers || []).find((h) => String(h.key).toLowerCase() === "content-security-policy");
+  if (!csp) return "vercel.json 에 Content-Security-Policy 가 없습니다.";
+  const origin = new URL(supabaseUrl).origin;
+  const directive = (name) => {
+    const part = String(csp.value).split(";").map((s) => s.trim()).find((s) => s.split(/\s+/)[0] === name);
+    return part ? part.split(/\s+/).slice(1) : [];
+  };
+  for (const name of ["connect-src", "img-src"]) {
+    if (!directive(name).includes(origin)) {
+      return `vercel.json 의 CSP ${name} 에 Supabase 주소(${origin})가 없습니다. src/config.js 의 SUPABASE_URL 을 바꿨다면 vercel.json 의 CSP 두 곳도 함께 바꿔야 합니다.`;
+    }
+  }
+  return null;
 }

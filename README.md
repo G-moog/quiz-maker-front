@@ -19,8 +19,10 @@
 | `src/api/` | DB 함수 부르기. 함수 이름과 반환 모양(camelCase)은 옛 `/api` 서버와 같아서 화면 코드는 그대로입니다. 오류도 옛 서버처럼 `status 400` + 옛 한국어 문구로 옵니다. |
 | `src/api/supabase.js` | 연결 하나, `call(이름, 인자)`, 오류 바꾸기(만료·서버 준비 중·쉬는 중·연결 실패) |
 | `src/utils/startup.js`, `src/App.jsx` | 시작 판정(아래 '주소별 시작 화면') |
-| `supabase/` | DB 스키마(마이그레이션 4개)와 운용 규칙 → [`supabase/README.md`](supabase/README.md) |
-| `api/keepalive.js` | (Free 요금제일 때만) 프로젝트 정지 막기용 Vercel 함수. 크론은 아직 등록하지 않았습니다(아래). |
+| `supabase/` | DB 스키마(마이그레이션 5개)와 운용 규칙 → [`supabase/README.md`](supabase/README.md) |
+| `api/keepalive.js` | Free 프로젝트 정지 막기용 Vercel 함수(`vercel.json` 크론이 하루 2번 부름, 아래). |
+| `vercel.json` | 보안 머리(CSP 등), `/assets` 1년 캐시, 정지 막기 크론. **Supabase 주소를 바꾸면 CSP 의 두 곳(connect-src·img-src)도 함께** — 빠뜨리면 빌드가 멈춥니다(`cspProblem`). |
+| `.github/workflows/keepalive.yml` | 정지 막기 두 번째 겹(GitHub Actions, 하루 2번). 서버가 쉬는 중(540)이면 실패해 GitHub 가 메일로 알립니다. |
 | `test/db/`, `test/app/` | DB 시험(PGlite), 설정·시작 판정 시험 |
 
 ## 설정 — `src/config.js` (환경 변수 없음)
@@ -32,7 +34,7 @@ Supabase 주소와 publishable 키는 공개 값이라 저장소에 그대로 �
 | `SUPABASE_URL` | 프로젝트 주소(`https://<ref>.supabase.co`, 경로 없이) |
 | `SUPABASE_PUBLISHABLE_KEY` | **publishable 키(`sb_publishable_…`)만.** secret(`sb_secret_…`)·service_role 키와 DB 비밀번호는 이 저장소 어디에도 넣지 않습니다. |
 | `PROD_HOSTS` | 운영 주소(Vercel production 도메인, **호스트 이름만** — 예: `quiz-maker-xx.vercel.app`, `https://`·경로·끝의 `/` 없이). 꼴이 틀리면 앱이 시작하지 않고 빌드도 실패합니다. '주소가 바뀌었습니다' 화면의 링크가 첫 값을 씁니다. |
-| `LEGACY_APP_HOST` | 옛 Railway 앱 주소. 여기서 열리면 '주소가 바뀌었습니다' 화면만 보입니다. |
+| `LEGACY_APP_HOST` | 옛 Railway 앱 주소. 여기서 열리면 '주소가 바뀌었습니다' 화면만 보입니다(옛 Railway 프로젝트는 2026-10-22 삭제되어 지금은 Railway 자체가 404 를 냅니다). |
 | `REQUIRED_SCHEMA` | 앱이 요구하는 DB 판(마지막 마이그레이션의 `schema_version`). DB 가 낮으면 '서버 준비 중'. |
 | `SHOW_EXCEL` | 엑셀 단추를 보일지(기본 `false`, 아래 '엑셀'). |
 | `PASSWORD_MIN_LENGTH` | 새 비밀번호 최소 길이. Supabase Authentication 의 최소 길이 설정과 같게(12). |
@@ -99,7 +101,7 @@ Supabase Authentication → URL Configuration(한 번): Site URL = 운영 주소
 비밀번호 재설정 링크
 
 - '비밀번호를 잊었어요'의 링크는 **요청한 그 주소**로 돌아오게 보냅니다(운영 주소에서 요청하면 운영 주소). Redirect URLs 에 없는 주소(미리보기·로컬)면 Supabase 가 Site URL(운영 주소)로 보냅니다.
-- **merge 전에는 운영 주소에 master 의 옛 앱이 떠 있어 재설정 링크가 동작하지 않습니다.** 그동안 비밀번호는 로그인된 기기에서 이름(배지) → '비밀번호 바꾸기'로 바꿉니다. 미리보기에서 재설정을 꼭 시험해야 하면 계정 이름으로 좁힌 `https://*-<계정이름>.vercel.app/**` 를 Redirect URLs 에 잠깐 넣었다가 시험 뒤 뺍니다(설계서 3.2-6).
+- 미리보기에서 재설정을 꼭 시험해야 하면 계정 이름으로 좁힌 `https://*-<계정이름>.vercel.app/**` 를 Redirect URLs 에 잠깐 넣었다가 시험 뒤 뺍니다(설계서 3.2-6).
 
 ## 운영 규칙
 
@@ -118,19 +120,13 @@ Supabase Authentication → URL Configuration(한 번): Site URL = 운영 주소
 - 옛 서버(Apache POI)가 하던 엑셀 내려받기·올리기는 새 구조에 아직 없습니다. 쓸지 정하지 않아서 `SHOW_EXCEL = false` 로 단추를 숨겼습니다(관리자여도 숨김).
 - 쓰기로 하면: `src/api/excel.js` 를 브라우저 엑셀(SheetJS 를 단추를 누를 때 불러옴)로 다시 쓰고, 여러 문항 넣기 DB 함수(`qm_add_questions`·`qm_create_set_with_questions`)를 새 마이그레이션으로 더한 뒤 `SHOW_EXCEL` 을 켭니다. 그 전에 켜면 단추가 '아직 준비되지 않았습니다'만 띄웁니다.
 
-## Free 요금제 정지 막기(만들어 두기만 함)
+## Free 요금제 정지 막기
 
-Supabase Free 는 7일 동안 아무도 쓰지 않으면 프로젝트를 정지합니다. `api/keepalive.js` 는 공개 값만 써서 로그인 없이 부를 수 있는 `qm_schema_version` 하나를 부르는 Vercel 함수입니다. **크론은 아직 등록하지 않았습니다**(요금제 미정). Free 로 정하면 저장소 맨 위에 `vercel.json` 을 만들어 시각을 12시간 달리한 크론 2개를 등록합니다.
+Supabase Free 는 7일 동안 아무도 쓰지 않으면 프로젝트를 정지합니다. 2026-10-22 Free 로 정하고 두 겹으로 막습니다.
 
-```json
-{
-  "crons": [
-    { "path": "/api/keepalive", "schedule": "0 3 * * *" },
-    { "path": "/api/keepalive", "schedule": "0 15 * * *" }
-  ]
-}
-```
+1. `vercel.json` 의 크론 2개(UTC 03시·15시, Hobby 는 식 하나에 하루 1번·시각은 그 시 안 아무 때나)가 `api/keepalive.js` 를 부릅니다. 함수는 공개 값만 써서 로그인 없이 부를 수 있는 `qm_schema_version` 하나를 부릅니다.
+   - Vercel 크론은 리다이렉트를 따라가지 않습니다. 배포 뒤 Vercel → Settings → Cron Jobs → Run → View Logs 에서 `GET /api/keepalive 200` 을 한 번 확인합니다(307 이면 vercel.app 주소의 리다이렉트 때문 — 두 번째 겹이 있으니 급하지 않음).
+2. `.github/workflows/keepalive.yml`(GitHub Actions, 하루 2번)이 같은 함수를 Supabase 에 바로 부릅니다. 쉬는 중(540)이거나 응답이 이상하면 실행이 실패하고 GitHub 가 저장소 주인에게 메일을 보냅니다. 저장소에 60일 동안 커밋이 없으면 GitHub 가 예약 실행을 멈추니, 그런 메일이 오면 Actions 화면에서 다시 켭니다.
 
-- Vercel Hobby 의 크론 한도(개수·하루 1번)를 등록 전에 확인합니다.
-- 이 PC 의 매일 백업(도구 `backup`, 작업 스케줄러)도 같은 역할을 합니다. Pro 를 고르면 둘 다 필요 없습니다(백업은 매주로).
 - 정지되면 앱은 열 때 '서버가 쉬는 중입니다' 화면을 띄웁니다(정지 응답에 CORS 머리가 없으면 '서버에 연결하지 못했습니다' + '쉬는 중일 수 있음'). 쓰는 도중이면 화면마다 같은 안내가 뜹니다. supabase.com 대시보드 → 프로젝트 → Resume project 를 누르고 몇 분 뒤 '다시 시도'를 누릅니다. 이 기기의 로그인은 그대로 남아 다시 로그인하지 않아도 됩니다.
+- Free 에는 Supabase 자동 백업이 없습니다. 백업은 문제 등록 도구의 `backup`(이 PC)과 앱 대시보드 ⋯ 메뉴의 '백업 내려받기'로 받습니다.

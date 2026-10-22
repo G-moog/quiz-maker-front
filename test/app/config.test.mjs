@@ -155,3 +155,16 @@ test('재설정 링크 주소(#…) 읽기', () => {
   assert.equal(recoveryFromHash(''), null);
   assert.equal(recoveryFromHash('#pentest'), null);
 });
+
+test('vercel.json CSP 가 지금 Supabase 주소를 허용한다(주소를 바꾸면 CSP 도 함께)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { cspProblem } = await import('../../src/config.js');
+  const vercel = JSON.parse(readFileSync(new URL('../../vercel.json', import.meta.url), 'utf8'));
+  assert.equal(cspProblem(vercel, SUPABASE_URL), null);
+  assert.match(cspProblem(vercel, 'https://other-project-ref.supabase.co'), /connect-src/);
+  assert.match(cspProblem({ headers: [] }, SUPABASE_URL), /Content-Security-Policy 가 없습니다/);
+  assert.equal(cspProblem(vercel, ''), null);
+  // 크론은 정지 막기 함수 하나를 하루 1번씩(Hobby 한도) 부른다
+  const crons = vercel.crons || [];
+  assert.ok(crons.length >= 1 && crons.every((c) => c.path === '/api/keepalive' && /^\d+ \d+ \* \* \*$/.test(c.schedule)), JSON.stringify(crons));
+});

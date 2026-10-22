@@ -1,0 +1,40 @@
+# Supabase Free 프로젝트 정지 막기(7일 동안 쓰지 않으면 정지됨).
+# 로그인 없이 부를 수 있는 공개 함수 qm_schema_version 하나를 하루 두 번 부른다. 주소·공개 키는 src/config.js 에서 읽는다(비밀값 없음).
+# Vercel 크론(vercel.json)과 겹쳐 두는 이유: Vercel 크론은 리다이렉트를 따라가지 않아 조용히 빠질 수 있고, 실패를 알리지 않는다.
+# 여기서는 서버가 쉬는 중(540)이거나 응답이 이상하면 실행이 실패하고 GitHub 가 저장소 주인에게 메일로 알린다.
+# 참고: 저장소에 60일 동안 커밋이 없으면 GitHub 가 예약 실행을 멈춘다(메일로 알림 → Actions 화면에서 다시 켬).
+name: keepalive
+
+on:
+  schedule:
+    - cron: "23 2,14 * * *"   # 매일 11:23·23:23(한국 시각) 무렵
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            package.json
+            src/config.js
+          sparse-checkout-cone-mode: false
+      - name: qm_schema_version 부르기
+        run: |
+          eval "$(node --input-type=module -e "
+            const c = await import('./src/config.js');
+            console.log('URL=' + JSON.stringify(c.SUPABASE_URL));
+            console.log('KEY=' + JSON.stringify(c.SUPABASE_PUBLISHABLE_KEY));
+          ")"
+          case "$KEY" in sb_publishable_*) ;; *) echo "공개 키가 아닙니다"; exit 1 ;; esac
+          code=$(curl -sS -o body.txt -w '%{http_code}' --retry 3 --retry-delay 30 --retry-all-errors \
+            -X POST "$URL/rest/v1/rpc/qm_schema_version" \
+            -H "apikey: $KEY" -H "Content-Type: application/json" -d '{}' || true)
+          echo "HTTP $code: $(head -c 200 body.txt)"
+          if [ "$code" = "540" ]; then echo "::error::Supabase 프로젝트가 쉬는 중입니다(540). supabase.com 대시보드 → Resume project"; exit 1; fi
+          [ "$code" = "200" ] || { echo "::error::응답이 200 이 아닙니다($code)"; exit 1; }

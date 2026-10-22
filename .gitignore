@@ -28,4 +28,8 @@ dist-ssr
 
 # Environment variables
 .env
-.env.*.local
+.env.*
+!.env.example
+
+# Vercel CLI
+.vercel

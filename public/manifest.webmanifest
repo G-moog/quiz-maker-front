@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "name": "Quiz Maker",
   "short_name": "Quiz Maker",
   "description": "노션 공부 페이지로 만든 빈칸 문제를 풀고, S펜으로 필기하며 공부하는 앱",

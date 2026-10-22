@@ -9,6 +9,7 @@ quiz-maker 의 Postgres 스키마(표·함수·권한·RLS·그림 버킷)입니
 | `migrations/20261023000200_qm_api.sql` | 옛 API 와 짝인 함수, 실행 권한 | 2 |
 | `migrations/20261023000300_qm_import.sql` | 계정 준비·옮기기·상태 함수, 실행 권한 | 3 |
 | `migrations/20261023000400_qm_storage.sql` | 그림 버킷 `question-images` 와 올리기 정책 | 4 |
+| `migrations/20261023000500_qm_safeupdate.sql` | Supabase pg-safeupdate 맞춤(함수 안 UPDATE 에 WHERE) | 5 |
 | `../docs/restore/reopen-import.sql` | 복원 때만 쓰는 '옮기기 다시 열기' 틀(마이그레이션 아님) | — |
 
 ## 시험
@@ -17,7 +18,7 @@ quiz-maker 의 Postgres 스키마(표·함수·권한·RLS·그림 버킷)입니
 npm run test:db
 ```
 
-- PGlite(메모리 안의 Postgres)에 Supabase 흉내(`test/db/supabase-mock.sql`: 역할 anon·authenticated, `auth.uid()`·`auth.jwt()`, storage)를 깔고 마이그레이션 4개를 **두 번** 돌린 뒤 시나리오를 시험합니다. 운영 Supabase 에는 붙지 않습니다.
+- PGlite(메모리 안의 Postgres)에 Supabase 흉내(`test/db/supabase-mock.sql`: 역할 anon·authenticated, `auth.uid()`·`auth.jwt()`, storage)를 깔고 마이그레이션 5개를 **두 번** 돌린 뒤 시나리오를 시험합니다. 운영 Supabase 에는 붙지 않습니다.
 - `test/db/migrations.lock.json` 에 마이그레이션 파일의 해시가 있습니다. 파일 내용이 바뀌거나, 파일이 사라지거나, lock 에 없는 파일이 생기면 시험이 실패합니다.
   - 새 파일을 더한 뒤: `node test/db/lock.mjs --add` (이미 있는 줄은 바꾸지 않음)
   - 지금 상태 보기: `node test/db/lock.mjs`
