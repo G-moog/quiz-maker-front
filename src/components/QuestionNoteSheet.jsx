@@ -4,8 +4,8 @@ import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 import { useBack } from "../utils/backStack";
 import {
   NOTE_CONTENT_MAX, NOTE_CONTEXT_MAX, clearNoteDraft, loadNoteDraft, saveNoteDraft,
-  clearNoteEditDraft, formatNoteTime, latestNoteEditDraft, loadNoteEditDraft, orderSheetNotes, saveNoteEditDraft,
-  sheetNoteLabel, sheetNoteRank,
+  clearNoteEditDraft, formatNoteTime, keepNewerNotes, loadNoteEditDraft, noteEditDraftsForSet, orderSheetNotes,
+  saveNoteEditDraft, sameNotePlace, sheetNoteLabel, sheetNoteRank,
 } from "../utils/notes";
 import NoteContextText from "./NoteContextText";
 import PrevNoteList from "./PrevNoteList";
@@ -24,21 +24,30 @@ import PrevNoteList from "./PrevNoteList";
 //  취소·저장 줄은 창 아래에 붙여 둔다(초안 안내·오류·긴 맥락이 한꺼번에 있어도 저장 단추가 자판에 가리지 않게).
 //
 //  이전 메모 고치기: 머리 줄의 '이전 메모 N' 단추로 이 문제집 메모 목록(PrevNoteList)을 펴고 접는다
-//  (휴대폰처럼 좁거나 낮은 화면은 접어서 시작 — 입력칸을 밀어내지 않게. 태블릿은 새로 쓸 때만 펴서 시작).
+//  (접어서 시작. 태블릿처럼 보이는 영역이 넉넉하면 새로 쓸 때, 목록이 오기 전에 입력칸을 건드리지 않았을 때만 편다 —
+//   늦게 온 목록이 쓰는(S펜으로 손글씨를 쓰는) 중인 입력칸을 밀어내지 않게).
 //  수는 이 문제집 메모 전부(해결 포함), 지금 빈칸에 쓴 메모가 있으면 노랗게.
-//  줄을 누르면 그 메모 고치기: 글이 입력칸에, 머리는 '메모 고치기', 저장은 updateNote(새 메모를 만들지 않음).
+//  줄을 누르면 그 메모 고치기: 글이 입력칸에, 머리는 '메모 고치기'(입력칸 위 상자에도 '고치는 메모' — 자판에 머리가
+//  밀려 올라가도 보이게), 저장은 updateNote(새 메모를 만들지 않음).
 //  쓰던 새 메모 글은 따로 두었다가 '새 메모로'에서 되살린다(그동안에도 새 메모 초안으로 이 기기에 남아 있음).
-//   · 고친 글은 메모마다 초안('qm:note-edit-draft:v1:<id>')으로 남긴다 — 뒤로 가기로 닫혀도 잃지 않게,
-//     다시 열면(같은 문제집) 그 메모 고치기로 돌아간다
+//   · 고친 글은 메모마다 초안('qm:note-edit-draft:v1:<id>')으로 남긴다 — 뒤로 가기로 닫혀도 잃지 않게.
+//     다시 열 때 그 메모와 같은 자리(같은 문항·같은 빈칸)에서 열면 그 고치기로 돌아가고, 다른 자리에서 열면
+//     새 메모 쓰기로 열고 '고치다 둔 메모 · 이어 고치기' 한 줄과 목록 줄 표시로만 알린다(새 질문을 쓰려고 연 창을 차지하지 않게)
 //   · 고친 글을 버리게 되는 때(다른 메모로·'새 메모로'·취소/✕)는 묻는다(메모 화면 NotesView 와 같은 말).
+//     이 기기에 남겨 둔 고친 글(불러옴·저장 실패)은 묻지 않고 초안으로 둔다 — 버리기는 그 안내 줄의 '버리기'로.
 //     뒤로 가기는 묻지 않고 초안을 남긴다(새 메모와 같음)
-//   · 고친 뒤에는 창을 닫지 않고 새 메모 쓰기로 돌아간다(목록의 그 줄도 고친 글로). 알림은 onSaved(메모, 정보, { edited: true })
-//   · 빈 글로는 저장하지 않는다(지우기는 메모 화면에서)
+//   · 고친 뒤에는 창을 닫지 않고 새 메모 쓰기로 돌아간다(목록의 그 줄도 고친 글로). 알림은 onSaved(메모, 정보, { edited: true }).
+//     되살린 새 메모 글은 잠깐(NEW_LOCK_MS) 저장을 막는다 — 저장을 두 번 눌러 쓰다 만 새 메모까지 저장되지 않게(글을 고치면 바로 풀림)
+//   · 고치던 메모가 그사이 지워졌으면(받은 목록에 없음·서버가 '존재하지 않는 메모') 고친 글을 그 메모의 자리·맥락으로
+//     '새 메모로 저장'한다(저장할 곳 없이 실패만 되풀이하지 않게)
+//   · 빈 글로는 저장하지 않는다(지우기는 '질문 메모' 목록에서)
 const S = {
   overlay: {
     position: "fixed", left: 0, right: 0, top: 0, bottom: 0, zIndex: 200, background: "rgba(0,0,0,0.7)",
     display: "flex", alignItems: "flex-start", justifyContent: "center",
-    padding: "max(12px, 5vh) 12px 12px",
+    // 긴 속성으로 따로(자판이 올라오면 paddingTop·paddingBottom 만 바꾼다 — 줄임 속성 padding 과 섞으면 자판이 내려갈 때
+    // React 가 padding-top 을 비워 창이 화면 맨 위에 붙는다)
+    paddingTop: "max(12px, 5vh)", paddingRight: 12, paddingBottom: 12, paddingLeft: 12,
   },
   sheet: {
     width: "100%", maxWidth: 520, maxHeight: "100%", overflowY: "auto",
@@ -70,6 +79,15 @@ const S = {
     color: "#e8c27a", fontSize: 12, lineHeight: 1.4,
   },
   draftText: { flex: "1 1 100%", minWidth: 0 }, // 안내 글은 한 줄 전체, 단추들은 그 아래 오른쪽
+  // 고치기 초안 안내(불러옴·고치다 둔 메모): 글과 단추 하나를 한 줄에(입력칸을 덜 밀어내게)
+  noticeRow: {
+    display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "3px 4px 3px 10px",
+    borderRadius: 6, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.35)",
+    color: "#e8c27a", fontSize: 12, lineHeight: 1.4,
+  },
+  noticeText: { flex: 1, minWidth: 0, wordBreak: "keep-all", overflowWrap: "anywhere" },
+  // 입력칸 바로 위 상자의 '고치는 메모'·'지워진 메모'(자판이 올라와 머리 줄이 창 위로 밀려도 무엇을 쓰는지 보이게)
+  metaMode: (gone) => ({ fontWeight: 700, color: gone ? "#f87171" : "#f59e0b" }),
   ctxBox: {
     background: "#141414", border: "1px solid #2a2a2a", borderRadius: 6,
     padding: "6px 10px 8px", marginBottom: 10, fontSize: 12, color: "#8a8a8a", lineHeight: 1.5,
@@ -111,6 +129,8 @@ const S = {
 
 // 서버가 '초안의 문제집·문항이 없다(지워짐)'며 거절한 경우
 const TARGET_GONE = /존재하지 않는 (문제집|문항)|메모를 남길 권한이 없습니다|그 문제집의 문항이 아닙니다/;
+// 고치던 메모가 그사이 지워져 서버가 거절한 경우(qm_update_note 의 QM404 — 앱에는 status 400 + 이 문장으로 온다)
+const NOTE_GONE = /존재하지 않는 메모/;
 
 function metaText(info) {
   return [
@@ -147,12 +167,16 @@ function useVisibleBox() {
   return box;
 }
 
-// 이전 메모 목록을 펴서 시작할 만큼 넉넉한 화면인가(태블릿). 휴대폰은 접어 두어 입력칸을 밀어내지 않게
+// 이전 메모 목록을 펴 둘 만큼 보이는 영역이 넉넉한가(세로 태블릿). 휴대폰·자판이 올라온 가로 태블릿은 접어 두어
+// 입력칸을 밀어내지 않게 — 높이는 자판을 뺀 보이는 높이(visualViewport)로 본다
 function roomyScreen() {
-  return typeof window !== "undefined" && window.innerWidth >= 600 && window.innerHeight >= 700;
+  if (typeof window === "undefined") return false;
+  const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+  return window.innerWidth >= 600 && h >= 700;
 }
 
 const SAVED_MARK_MS = 2500;
+const NEW_LOCK_MS = 900; // 고치기 저장 뒤 되살린 새 메모 글의 저장을 막는 동안(두 번 누름 막기)
 
 export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved }) {
   const user = localStorage.getItem("username") || "";
@@ -185,10 +209,20 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
   const [listState, setListState] = useState(listable ? "loading" : "off"); // loading | ok | error | off
   const [listError, setListError] = useState("");
   const [listTry, setListTry] = useState(0);
+  // 이 문제집 메모의 고치기 초안들(최근 것 먼저) — 안내 줄·목록 줄 표시용. 고치기를 떠나거나 다른 메모로 옮길 때 다시 읽는다
+  const [setDrafts, setSetDrafts] = useState(() => noteEditDraftsForSet(user, freshInfo.setId));
   // 고치는 중인 메모(받은 메모 그대로 — content 가 원문). null 이면 새 메모 쓰기.
-  // 지난번에 이 문제집 메모를 고치다 뒤로 가기 등으로 닫았으면 그 고치기로 돌아간다(새 메모 글은 따로 그대로)
-  const [editDraft] = useState(() => latestNoteEditDraft(user, freshInfo.setId));
+  // 지난번에 고치다 뒤로 가기 등으로 닫은 메모가 지금 화면과 같은 자리면 그 고치기로 돌아간다(새 메모 글은 따로 그대로).
+  // 다른 자리 메모면 새 메모 쓰기로 연다(다른 빈칸에 새 질문을 쓰려고 연 창을 옛 메모 고치기가 차지하지 않게)
+  const [editDraft] = useState(() => setDrafts.find((d) => sameNotePlace(d.note, freshInfo)) || null);
   const [editing, setEditing] = useState(editDraft ? editDraft.note : null);
+  // 저장할 때 서버가 '존재하지 않는 메모'라고 한 메모 id(받은 목록에 없는 것과 함께 '지워진 메모'로 본다)
+  const [goneId, setGoneId] = useState(null);
+  // 고치기 저장 직후 잠깐 새 메모 저장을 막는다(NEW_LOCK_MS)
+  const [newLock, setNewLock] = useState(false);
+  const lockTimer = useRef(null);
+  const edited = useRef(new Map()); // 이 창에서 고친 메모(id → 서버가 돌려준 메모) — 늦게 온 목록에 겹친다
+  const touched = useRef(false); // 입력칸을 건드렸나(누름·S펜을 댐·글자) — 그 뒤에 온 목록은 저절로 펴지 않는다
   const [editText, setEditText] = useState(editDraft ? editDraft.content : "");
   // 불러온 고치기 초안 안내: "" | "kept"(쓰다 둠) | "failed"(저장 실패)
   const [editNotice, setEditNotice] = useState(editDraft ? (editDraft.failed === false ? "kept" : "failed") : "");
@@ -198,8 +232,10 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
   const [savedMark, setSavedMark] = useState(false);
   const savedTimer = useRef(null);
   const focusEnd = useRef(!!editDraft); // 다음 그림 뒤 입력칸에 초점 + 글 끝으로(고치기 시작·새 메모로 돌아옴)
-  // 목록은 태블릿에서 새로 쓰기 시작할 때만 펴 둔다(불러온 글이 있으면 접어 둠 — 받은 목록이 쓰던 입력칸을 밀어내지 않게)
-  const [listOpen, setListOpen] = useState(() => roomyScreen() && !draft && !editDraft);
+  // 목록은 접어서 시작하고, 넉넉한 화면(태블릿)에서 새로 쓸 때만 목록이 왔을 때 편다(그새 입력칸을 건드렸으면 접은 채 —
+  // 받기 전에는 자리가 없어서, 쓰는 중에 펴면 입력칸이 목록 높이만큼 밀려 내려간다)
+  const [listOpen, setListOpen] = useState(false);
+  const openOnArrive = useRef(!draft && !editDraft);
 
   // 안드로이드 뒤로 가기: 창만 닫는다(쓴 글·고친 글은 아래 초안으로 남아 있음)
   useBack(true, () => onClose());
@@ -210,21 +246,25 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
     listNotes({ status: "all", setId: freshInfo.setId })
       .then((list) => {
         if (!alive) return;
-        const arr = Array.isArray(list) ? list : [];
+        // 고치기 저장보다 먼저 읽혔지만 늦게 온 목록이 고친 줄을 옛 글로 되돌리지 않게, 이 창에서 고친 메모를 겹친다
+        const arr = keepNewerNotes(list, edited.current);
         setNotes(arr);
         setListState("ok");
+        if (openOnArrive.current && !touched.current && arr.length > 0 && roomyScreen()) setListOpen(true);
+        openOnArrive.current = false;
         // 불러온 고치기 초안의 원문을 서버 것으로(그사이 메모 화면에서 고쳤을 수 있음 — '고친 내용이 있나'를 맞게)
         setEditing((cur) => (cur ? arr.find((n) => String(n.id) === String(cur.id)) || cur : cur));
       })
       .catch((e) => {
         if (!alive) return;
+        openOnArrive.current = false;
         setListError(e.message || "이전 메모를 불러오지 못했습니다.");
         setListState("error");
       });
     return () => { alive = false; };
   }, [listable, freshInfo.setId, listTry]);
 
-  useEffect(() => () => clearTimeout(savedTimer.current), []);
+  useEffect(() => () => { clearTimeout(savedTimer.current); clearTimeout(lockTimer.current); }, []);
 
   // 쓰는 대로 초안 저장(글자마다 — 작은 값이라 바로 써도 가볍다. 미뤄 두면 그사이 창이 닫힐 때 잃는다)
   useEffect(() => {
@@ -272,12 +312,22 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
   const text = editing ? editText : content; // 입력칸의 글(고치는 중이면 고친 글)
   const trimmed = text.trim();
   const over = trimmed.length > NOTE_CONTENT_MAX;
-  const cantSave = saving || !trimmed || over || (!!editing && !editChanged);
+  // 고치던 메모가 그사이 지워졌나: 저장 때 서버가 그렇다고 했거나, 받은 이 문제집 목록에 없음
+  const editGone = !!editing && (
+    String(editing.id) === goneId ||
+    (listState === "ok" && !!notes && !notes.some((n) => String(n.id) === String(editing.id)))
+  );
+  const cantSave = saving || !trimmed || over ||
+    (editing ? !editGone && !editChanged : newLock);
   const canMove = fromDraft && !sameTarget(info, freshInfo);
   const ordered = notes ? orderSheetNotes(notes, freshInfo) : [];
   const hereCount = ordered.filter((n) => sheetNoteRank(n, freshInfo) === 0).length; // 지금 빈칸의 메모 수(단추 숫자를 노랗게)
   // 단추: 메모가 있거나, 못 불러왔거나(다시 시도), 다시 불러오는 중일 때
   const showListBtn = listState === "error" || (listState === "loading" && listTry > 0) || (listState === "ok" && ordered.length > 0);
+  // 고치다 이 기기에 남겨 둔 메모(지금 고치는 것 빼고): 새 메모 쓰기에서 '이어 고치기' 한 줄, 목록 줄에 표시
+  const otherDrafts = setDrafts.filter((d) => !editing || String(d.note.id) !== String(editing.id));
+  const draftIds = new Set(otherDrafts.map((d) => String(d.note.id)));
+  const refreshDrafts = () => setSetDrafts(noteEditDraftsForSet(user, freshInfo.setId));
 
   // 고치기에서 새 메모 쓰기로(쓰던 새 메모 글 content 는 그대로 있다)
   function leaveEdit() {
@@ -286,37 +336,68 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
     setEditNotice("");
     setEditFailed(false);
     setEditKeep(false);
+    setGoneId(null);
     setCtxOpen(false);
     setError("");
     setOrphan(false);
+    refreshDrafts();
   }
 
-  // 목록의 메모를 누름 → 그 메모 고치기. 고치던 다른 메모에 고친 글이 있으면 먼저 묻는다
+  // 목록의 메모(또는 고치다 둔 메모)를 누름 → 그 메모 고치기.
+  // 고치던 다른 메모에 이번에 고친 글이 있으면 먼저 묻는다(이 기기에 남겨 둔 고친 글이면 묻지 않고 초안으로 둔다)
   function pickNote(n) {
     if (savingRef.current) return;
     if (editing && String(editing.id) === String(n.id)) {
       textRef.current?.focus(); // 이미 고치는 메모: 입력칸으로만
       return;
     }
-    if (editChanged && !confirm("고치던 메모를 저장하지 않고 넘어갈까요?")) return;
-    if (editing) clearNoteEditDraft(editing.id);
+    if (editing && !editKeep) {
+      if (editChanged && !confirm("고치던 메모를 저장하지 않고 넘어갈까요?")) return;
+      clearNoteEditDraft(editing.id);
+    }
     const kept = loadNoteEditDraft(user, n.id); // 이 메모를 고치다 남긴 글이 있으면 그것부터
     setEditing(n);
     setEditText(kept ? kept.content : n.content || "");
     setEditNotice(kept ? (kept.failed === false ? "kept" : "failed") : "");
     setEditFailed(!!kept && kept.failed !== false);
     setEditKeep(!!kept);
+    setGoneId(null);
     setCtxOpen(false);
     setError("");
     setOrphan(false);
+    refreshDrafts();
     focusEnd.current = true;
+  }
+
+  // 새 메모 쓰기의 '이어 고치기': 고치다 둔 메모 중 가장 최근 것(받은 목록에 있으면 서버 것으로 — 원문을 맞게)
+  function resumeDraft() {
+    const d = otherDrafts[0];
+    if (!d) return;
+    pickNote((notes && notes.find((n) => String(n.id) === String(d.note.id))) || d.note);
   }
 
   function backToNew() {
     if (savingRef.current) return;
-    if (editChanged && !confirm("고친 내용을 버릴까요?")) return;
-    if (editing) clearNoteEditDraft(editing.id);
+    // 이 기기에 남겨 둔 고친 글(불러옴·저장 실패)은 묻지 않고 초안으로 둔다(✕ 와 같은 규칙 — '이어 고치기'로 돌아올 수 있다)
+    if (editing && !editKeep) {
+      if (editChanged && !confirm("고친 내용을 버릴까요?")) return;
+      clearNoteEditDraft(editing.id);
+    }
     leaveEdit();
+    focusEnd.current = true;
+  }
+
+  // 불러온 고친 글 버리기: 원문으로 되돌리고 그 초안을 지운다(고치기는 그대로 — 원문에서 다시 고치거나 '새 메모로')
+  function discardEdit() {
+    if (savingRef.current || !editing) return;
+    if (!confirm("고친 내용을 버릴까요?")) return;
+    clearNoteEditDraft(editing.id);
+    setEditText(editing.content || "");
+    setEditNotice("");
+    setEditFailed(false);
+    setEditKeep(false);
+    setError("");
+    refreshDrafts();
     focusEnd.current = true;
   }
 
@@ -326,9 +407,29 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
     savedTimer.current = setTimeout(() => setSavedMark(false), SAVED_MARK_MS);
   }
 
+  function lockNew() {
+    clearTimeout(lockTimer.current);
+    setNewLock(true);
+    lockTimer.current = setTimeout(() => setNewLock(false), NEW_LOCK_MS);
+  }
+
+  // 고친 글이 저장에 실패: 그 메모의 초안으로 남기고(효과를 기다리지 않고 바로) 창은 그대로
+  function keepFailedEdit(target, e, fallback) {
+    saveNoteEditDraft({ user, note: target, content: editText, failed: true });
+    setEditFailed(true);
+    setEditKeep(true);
+    setError(
+      `${e.message || fallback}` +
+      (e.message === SESSION_EXPIRED_MESSAGE ? "" : " 고친 글은 이 기기에 남겨 두었습니다.")
+    );
+    savingRef.current = false;
+    setSaving(false);
+  }
+
   // 고친 글 저장(updateNote — 새 메모를 만들지 않음). 실패하면 글은 그 메모의 초안으로 남기고 창은 그대로
   async function saveEdit() {
     if (cantSave || savingRef.current || !editing) return;
+    if (editGone) return saveGoneAsNew();
     const target = editing;
     const body = trimmed;
     const hadFocus = document.activeElement === textRef.current;
@@ -339,26 +440,61 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
       const updated = await updateNote(target.id, { content: body });
       const next = updated && updated.id != null ? updated : { ...target, content: body, updatedAt: new Date().toISOString() };
       clearNoteEditDraft(target.id);
+      edited.current.set(String(next.id), next);
       savingRef.current = false;
       setSaving(false);
       setNotes((list) => (list ? list.map((n) => (String(n.id) === String(next.id) ? next : n)) : list));
       leaveEdit();
+      lockNew();
       showSavedMark();
       // 입력칸에서 저장(Ctrl+Enter 등)했으면 새 메모 쓰기로 이어서, 단추로 저장했으면 휴대폰 자판을 다시 올리지 않게 '이전 메모' 단추로
       if (hadFocus) focusEnd.current = true;
       else requestAnimationFrame(() => listBtnRef.current?.focus());
       onSaved(next, { setId: next.setId ?? target.setId ?? null, questionId: next.questionId ?? null, blankNo: next.blankNo ?? null }, { edited: true });
     } catch (e) {
-      // 고친 글은 잃지 않게: 그 메모의 초안으로 남기고(효과를 기다리지 않고 바로) 창은 그대로
-      saveNoteEditDraft({ user, note: target, content: editText, failed: true });
-      setEditFailed(true);
-      setEditKeep(true);
-      setError(
-        `${e.message || "고치지 못했습니다."}` +
-        (e.message === SESSION_EXPIRED_MESSAGE ? "" : " 고친 글은 이 기기에 남겨 두었습니다.")
-      );
+      if (e.status === 400 && NOTE_GONE.test(e.message || "")) {
+        // 그사이 지워진 메모: 실패를 되풀이하지 않게 '새 메모로 저장'으로 바꾼다(글은 초안으로 남김)
+        saveNoteEditDraft({ user, note: target, content: editText, failed: true });
+        setEditFailed(true);
+        setEditKeep(true);
+        setGoneId(String(target.id));
+        setNotes((list) => (list ? list.filter((n) => String(n.id) !== String(target.id)) : list)); // 목록·수에서도 뺀다
+        setError("이 메모는 그사이 지워졌습니다. 고친 글은 이 기기에 남겨 두었고, '새 메모로 저장'으로 남길 수 있습니다.");
+        savingRef.current = false;
+        setSaving(false);
+        return;
+      }
+      keepFailedEdit(target, e, "고치지 못했습니다.");
+    }
+  }
+
+  // 지워진 메모의 고친 글을 그 메모의 자리(문제집·문항·빈칸)와 맥락 글로 새 메모로 저장한다.
+  // 문항도 지워졌으면(서버가 거절) 문항 번호만 빼고 한 번 더. 저장하면 새 메모와 같이 창을 닫는다(알림 '메모했습니다')
+  async function saveGoneAsNew() {
+    const src = editing;
+    savingRef.current = true;
+    setSaving(true);
+    setError("");
+    const body = { content: trimmed };
+    const setIdOf = src.setId ?? freshInfo.setId;
+    if (setIdOf != null) body.setId = setIdOf;
+    if (src.questionId != null) body.questionId = src.questionId;
+    if (src.blankNo != null) body.blankNo = src.blankNo;
+    if (src.context) body.context = String(src.context).slice(0, NOTE_CONTEXT_MAX);
+    try {
+      let note;
+      try {
+        note = await createNote(body);
+      } catch (e) {
+        if (!(e.status === 400 && body.questionId != null && TARGET_GONE.test(e.message || ""))) throw e;
+        delete body.questionId;
+        note = await createNote(body);
+      }
+      clearNoteEditDraft(src.id);
       savingRef.current = false;
-      setSaving(false);
+      onSaved(note, { setId: note?.setId ?? body.setId ?? null, questionId: note?.questionId ?? null, blankNo: note?.blankNo ?? null });
+    } catch (e) {
+      keepFailedEdit(src, e, "저장하지 못했습니다.");
     }
   }
 
@@ -453,6 +589,7 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
   }
 
   function onKeyDown(e) {
+    if (e.target === textRef.current) touched.current = true;
     if (e.key === "Escape") { e.preventDefault(); requestClose(); }
     else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
   }
@@ -510,6 +647,7 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
             error={listError}
             info={freshInfo}
             editingId={editing ? editing.id : null}
+            draftIds={draftIds}
             disabled={saving}
             onPick={pickNote}
             onRetry={() => { setListState("loading"); setListError(""); setListTry((n) => n + 1); }}
@@ -517,8 +655,24 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
         )}
 
         {editing && editNotice && (
-          <div style={S.draftRow}>
-            <span style={S.draftText}>{editNotice === "failed" ? "고치지 못한 메모를 불러왔습니다." : "고치던 메모를 불러왔습니다."}</span>
+          <div style={S.noticeRow}>
+            <span style={S.noticeText}>{editNotice === "failed" ? "고치지 못한 메모를 불러왔습니다." : "고치던 메모를 불러왔습니다."}</span>
+            <button style={S.linkBtn} onClick={discardEdit} disabled={saving} aria-label="불러온 고친 글 버리기">버리기</button>
+          </div>
+        )}
+
+        {!editing && otherDrafts.length > 0 && (
+          <div style={S.noticeRow}>
+            <span style={S.noticeText}>
+              고치다 둔 메모 · {sheetNoteLabel(otherDrafts[0].note, freshInfo)}
+              {otherDrafts.length > 1 ? ` 외 ${otherDrafts.length - 1}개` : ""}
+            </span>
+            <button
+              style={S.linkBtn}
+              onClick={resumeDraft}
+              disabled={saving}
+              aria-label={`고치다 둔 메모(${sheetNoteLabel(otherDrafts[0].note, freshInfo)}) 이어 고치기`}
+            >이어 고치기</button>
           </div>
         )}
 
@@ -539,7 +693,8 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
           <div style={S.ctxBox}>
             <div style={S.ctxHead}>
               <div style={S.ctxMeta}>
-                {[sheetNoteLabel(editing, freshInfo), formatNoteTime(editing.createdAt), editing.resolved ? "해결" : null].filter(Boolean).join(" · ")}
+                <span style={S.metaMode(editGone)}>{editGone ? "지워진 메모" : "고치는 메모"}</span>
+                {" · "}{[sheetNoteLabel(editing, freshInfo), formatNoteTime(editing.createdAt), editing.resolved ? "해결" : null].filter(Boolean).join(" · ")}
               </div>
               <button
                 style={S.linkBtn}
@@ -550,7 +705,7 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
             </div>
             {editing.context && (
               <div
-                style={S.ctxText(ctxOpen, editNotice || error ? 2 : 4)}
+                style={S.ctxText(ctxOpen, editNotice || editGone || error ? 2 : 4)}
                 onClick={() => setCtxOpen((v) => !v)}
                 role="button"
                 aria-expanded={ctxOpen}
@@ -572,7 +727,7 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
             </div>
             {hasCtx && withCtx && info.context && (
               <div
-                style={S.ctxText(ctxOpen, fromDraft || error ? 2 : 4)}
+                style={S.ctxText(ctxOpen, fromDraft || otherDrafts.length > 0 || error ? 2 : 4)}
                 onClick={() => setCtxOpen((v) => !v)}
                 role="button"
                 aria-expanded={ctxOpen}
@@ -593,9 +748,18 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
           rows={4}
           value={text}
           onChange={(e) => {
-            if (editing) setEditText(e.target.value); else setContent(e.target.value);
+            touched.current = true;
+            if (editing) setEditText(e.target.value);
+            else {
+              setContent(e.target.value);
+              if (newLock) { clearTimeout(lockTimer.current); setNewLock(false); } // 글을 고쳤으면 일부러 쓰는 것 — 바로 저장 가능
+            }
             if (error) setError("");
           }}
+          // 입력칸을 누르거나 S펜을 대면(글자가 들어오기 전에도) 늦게 온 목록을 저절로 펴지 않는다
+          onPointerDown={() => { touched.current = true; }}
+          onPointerEnter={(e) => { if (e.pointerType === "pen") touched.current = true; }}
+          onCompositionStart={() => { touched.current = true; }}
           onFocus={(e) => { e.target.style.borderColor = "#f59e0b"; }}
           onBlur={(e) => { e.target.style.borderColor = "#2e2e2e"; }}
           placeholder={editing ? "고칠 글을 적으세요." : "읽다가 든 질문을 적어 두세요. 나중에 '질문 메모' 목록에서 모아 봅니다."}
@@ -610,7 +774,10 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
         <div style={S.foot} ref={footRef}>
           {error && <div style={S.error} role="alert">{error}</div>}
           {editing && !trimmed && !error && (
-            <div style={S.hint}>메모 내용을 입력해 주세요. (지우기는 메모 목록 화면에서)</div>
+            <div style={S.hint}>{"메모 내용을 입력해 주세요. 지우기는 '질문 메모' 목록 화면에서 합니다."}</div>
+          )}
+          {editing && editGone && trimmed && !error && (
+            <div style={S.hint}>이 메모는 그사이 지워졌습니다. 고친 글은 이 메모의 자리·맥락으로 새 메모로 저장합니다.</div>
           )}
           {!editing && orphan && (
             <div style={S.orphanRow}>
@@ -625,7 +792,7 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
           <div style={S.btns}>
             <button style={S.cancel} onClick={requestClose} disabled={saving}>취소</button>
             <button style={S.save(cantSave)} onClick={() => save()} disabled={cantSave}>
-              {saving ? "저장 중…" : "저장"}
+              {saving ? "저장 중…" : editGone ? "새 메모로 저장" : "저장"}
             </button>
           </div>
         </div>

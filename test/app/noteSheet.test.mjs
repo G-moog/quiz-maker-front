@@ -149,3 +149,56 @@ test('저장소를 못 쓰면(사생활 보호 창 등) 오류 없이 초안 없
   assert.equal(latestNoteEditDraft('kim', 11), null);
   assert.doesNotThrow(() => clearNoteEditDraft(1));
 });
+
+// ── 고친 뒤 검토에서 보탠 것 ──
+const { sameNotePlace, keepNewerNotes, noteEditDraftsForSet } = await import('../../src/utils/notes.js');
+
+test('같은 자리: 같은 문항의 같은 빈칸(빈칸이 없으면 둘 다 없음)일 때만 — 창을 열 때 고치기를 되살리는 조건', () => {
+  const at8 = { setId: 11, questionId: 101, blankNo: 8 };
+  assert.equal(sameNotePlace(note(1, 101, 8), at8), true);
+  assert.equal(sameNotePlace(note(1, '101', '8'), at8), true, 'id·번호가 글자여도');
+  assert.equal(sameNotePlace(note(1, 101, 3), at8), false, '다른 빈칸');
+  assert.equal(sameNotePlace(note(1, 101, null), at8), false, '문항 전체 메모는 빈칸 8 자리가 아님');
+  assert.equal(sameNotePlace(note(1, 102, 8), at8), false, '다른 문항의 빈칸 8');
+  const noBlank = { setId: 11, questionId: 101, blankNo: null };
+  assert.equal(sameNotePlace(note(1, 101, null), noBlank), true, '빈칸 없는 문항(객관식 등)은 문항이 같으면');
+  assert.equal(sameNotePlace(note(1, 101, 8), noBlank), false);
+  assert.equal(sameNotePlace(note(1, null, null), { setId: 11, questionId: null, blankNo: null }), false, '문항을 모르면 같은 자리로 보지 않음');
+  assert.equal(sameNotePlace(null, at8), false);
+});
+
+test('늦게 온 목록: 이 창에서 고친 메모가 같거나 더 새것이면 그것을, 다른 데서 더 나중에 고쳤으면 서버 것을', () => {
+  const old = { id: 1, content: '옛 글', updatedAt: '2026-10-22T01:00:00.000Z' };
+  const other = { id: 2, content: '그대로', updatedAt: '2026-10-22T01:00:00.000Z' };
+  const mine = { id: 1, content: '고친 글', updatedAt: '2026-10-22T01:05:00.000Z' };
+  const list = [old, other];
+  const edited = new Map([['1', mine]]);
+  assert.deepEqual(keepNewerNotes(list, edited).map((n) => n.content), ['고친 글', '그대로']);
+  assert.deepEqual(list.map((n) => n.content), ['옛 글', '그대로'], '받은 배열은 그대로');
+  const later = { ...old, content: '다른 기기에서 더 고침', updatedAt: '2026-10-22T01:09:00.000Z' };
+  assert.equal(keepNewerNotes([later], edited)[0].content, '다른 기기에서 더 고침');
+  assert.equal(keepNewerNotes([{ ...old, updatedAt: mine.updatedAt }], edited)[0].content, '고친 글', '같은 시각이면 고친 것');
+  assert.equal(keepNewerNotes([{ id: '1', content: '옛 글' }], edited)[0].content, '고친 글', 'id 가 글자·시각 없음');
+  assert.equal(keepNewerNotes(list, new Map()), list);
+  assert.deepEqual(keepNewerNotes(null, edited), []);
+});
+
+test('이 문제집의 고치기 초안 전부(최근 것 먼저), 다른 문제집·다른 사용자 것은 빼고', async () => {
+  const a = note(1, 101, 8, '2026-10-20T01:00:00.000Z', { content: 'A 원문' });
+  const b = note(2, 101, 3, '2026-10-20T02:00:00.000Z', { content: 'B 원문' });
+  const other = { ...note(3, 301, 1, '2026-10-20T03:00:00.000Z', { content: 'C 원문' }), setId: 30 };
+  saveNoteEditDraft({ user: 'kim', note: b, content: 'B 고침' });
+  await new Promise((r) => setTimeout(r, 5));
+  saveNoteEditDraft({ user: 'kim', note: other, content: 'C 고침' });
+  await new Promise((r) => setTimeout(r, 5));
+  saveNoteEditDraft({ user: 'kim', note: a, content: 'A 고침' });
+  saveNoteEditDraft({ user: 'lee', note: { ...a, id: 9 }, content: '남의 글' });
+  assert.deepEqual(noteEditDraftsForSet('kim', 11).map((d) => d.note.id), [1, 2]);
+  assert.deepEqual(noteEditDraftsForSet('kim', '30').map((d) => d.note.id), [3]);
+  assert.deepEqual(noteEditDraftsForSet('kim', null), []);
+  // 창을 빈칸 3 에서 열면 B 만 되살릴 자리
+  const at3 = { setId: 11, questionId: 101, blankNo: 3 };
+  assert.deepEqual(noteEditDraftsForSet('kim', 11).filter((d) => sameNotePlace(d.note, at3)).map((d) => d.note.id), [2]);
+  localStorage.blocked = true;
+  assert.deepEqual(noteEditDraftsForSet('kim', 11), []);
+});

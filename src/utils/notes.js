@@ -1,4 +1,5 @@
-// 질문 메모 도우미: 풀기 화면의 맥락 글, 목록 묶기·복사 글, 시각 표시, 저장하지 못한 초안 보관, 메모 창의 이전 메모(순서·고치기 초안)
+// 질문 메모 도우미: 풀기 화면의 맥락 글, 목록 묶기·복사 글, 시각 표시, 저장하지 못한 초안 보관,
+// 메모 창의 이전 메모(순서·같은 자리·늦은 목록 겹치기·고치기 초안)
 export const NOTE_CONTENT_MAX = 2000;
 export const NOTE_CONTEXT_MAX = 1000; // 서버 한도
 const CONTEXT_CHARS = 300; // 화면에서 만드는 맥락 길이(이 안팎)
@@ -244,6 +245,27 @@ export function orderSheetNotes(notes, info) {
     .map((x) => x.n);
 }
 
+// 메모가 지금 화면과 같은 자리(같은 문항의 같은 빈칸, 빈칸이 없으면 둘 다 없음)인가 —
+// 창을 열 때 고치기 초안을 저절로 되살리는 것은 이때만(다른 빈칸에서 새 질문을 쓰려고 연 창을 옛 메모 고치기가 차지하지 않게)
+export function sameNotePlace(n, info) {
+  if (!n || !sameId(n.questionId, info?.questionId)) return false;
+  const a = n.blankNo ?? null, b = info.blankNo ?? null;
+  return a === null || b === null ? a === b : Number(a) === Number(b);
+}
+
+// 받은 목록에 이 창에서 고친 메모(edited: Map(id 문자열 → 서버가 돌려준 메모))를 겹친다 — 고치기 저장보다 먼저 읽혔지만
+// 늦게 도착한 목록이 고친 줄을 옛 글로 되돌리지 않게. 고친 시각(updatedAt)이 같거나 더 새것인 쪽을 남긴다
+// (그 뒤 다른 기기에서 또 고쳤으면 서버 것). 받은 배열은 그대로 둔다
+export function keepNewerNotes(list, edited) {
+  const arr = Array.isArray(list) ? list : [];
+  if (!edited || !edited.size) return arr;
+  const time = (n) => noteDate(n.updatedAt)?.getTime() ?? 0;
+  return arr.map((n) => {
+    const mine = edited.get(String(n.id));
+    return mine && time(mine) >= time(n) ? mine : n;
+  });
+}
+
 // 목록 줄·고치기 머리에 붙는 자리 이름: '빈칸 8' · '이 문항' · '다른 문항 · 빈칸 3' · '다른 문항'
 // (다른 문항의 번호는 창이 모른다 — 문항 id 만 있음. 페이지 문제집은 문항이 하나라 늘 '빈칸 N')
 export function sheetNoteLabel(n, info) {
@@ -297,9 +319,10 @@ export function loadNoteEditDraft(user, noteId) {
   return readEditDraft(noteEditDraftKey(noteId), user);
 }
 
-// 이 문제집(setId) 메모의 고치기 초안 중 가장 최근 것 — 창을 다시 열면 그 메모 고치기로 돌아간다
-export function latestNoteEditDraft(user, setId) {
-  if (setId == null) return null;
+// 이 문제집(setId) 메모의 고치기 초안 전부, 최근 것 먼저 — 창은 같은 자리(sameNotePlace) 것만 저절로 되살리고
+// 나머지는 '고치다 둔 메모' 안내·목록 줄 표시로 알린다
+export function noteEditDraftsForSet(user, setId) {
+  if (setId == null) return [];
   const keys = [];
   try {
     for (let i = 0; i < localStorage.length; i++) {
@@ -307,14 +330,17 @@ export function latestNoteEditDraft(user, setId) {
       if (k && k.startsWith(NOTE_EDIT_DRAFT_PREFIX)) keys.push(k);
     }
   } catch {
-    return null;
+    return [];
   }
-  let best = null;
-  for (const k of keys) {
-    const d = readEditDraft(k, user);
-    if (d && sameId(d.note.setId, setId) && (!best || (d.at || 0) > (best.at || 0))) best = d;
-  }
-  return best;
+  return keys
+    .map((k) => readEditDraft(k, user))
+    .filter((d) => d && sameId(d.note.setId, setId))
+    .sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
+// 이 문제집 메모의 고치기 초안 중 가장 최근 것
+export function latestNoteEditDraft(user, setId) {
+  return noteEditDraftsForSet(user, setId)[0] || null;
 }
 
 export function saveNoteEditDraft({ user, note, content, failed = false }) {
