@@ -89,7 +89,7 @@
   border-color: rgba(244, 114, 182, 0.6) !important;
 }
 
-/* 문항 머리 줄 단추들(하드로·★ 표시·★만 가리기·목차·모두 보기): 휴대폰에서는 좌우 여백을 줄여 412px 에서 한 줄에 들어가게
+/* 문항 머리 줄 단추들(하드로·★만 가리기·목차·모두 보기): 휴대폰에서는 좌우 여백을 줄여 412px 에서 한 줄에 들어가게
    (넘치면 다음 줄로 — 가로로 넘치지 않음). 인라인 style 의 padding 을 덮으려고 !important */
 @media (max-width: 480px) {
   .qm-meta-btn {
@@ -97,9 +97,24 @@
     padding-right: 7px !important;
   }
 }
-/* 좁은 휴대폰: '★ 표시 중' 띠의 설명은 빼고 '★ 표시 중 · 수 · 끝'만 */
-@media (max-width: 400px) {
-  .qm-star-band-hint {
+
+/* 위에 붙은 머리 줄의 ★ 표시 단추: 필기 모드 단추(.qm-ink-toggle, index.css)와 같은 크기 —
+   넓은 화면은 '★ 표시', 휴대폰은 ★ 만(제목 자리를 덜 차지하게), 좁은 휴대폰은 32px */
+.qm-star-toggle {
+  min-width: 40px;
+  padding: 0 11px;
+}
+@media (max-width: 480px) {
+  .qm-star-toggle {
+    padding: 0 9px;
+  }
+  .qm-star-toggle-label {
     display: none;
+  }
+}
+@media (max-width: 400px) {
+  .qm-star-toggle {
+    min-width: 32px;
+    padding: 0 6px;
   }
 }

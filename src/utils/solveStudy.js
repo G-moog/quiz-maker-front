@@ -98,6 +98,20 @@ export function starOnlyRevealed(n, stars) {
   return flagsOf(n, stars).map((s) => !s);
 }
 
+// 사용자가 스스로 연 빈칸 번호 — 머리 줄 '연 빈칸 n/전체'·목차·결과 화면의 수, ★만 가리기를 끌 때 돌아갈 상태.
+// revealed: 화면의 [열림], starFlags: [★], filterPre: ★만 가리기 전 연 빈칸 번호(꺼져 있으면 null).
+// ★만 가리기 중에는 가리기가 대신 연 ★ 아닌 빈칸을 세지 않는다(★ 만 복습하고 끝내면 '연 빈칸 34/37' 처럼 부풀던 것):
+//  ★ 빈칸 = 켜기 전에 열었거나 켠 뒤 연 것, ★ 아닌 빈칸 = 켜기 전에 열었고 아직 열린 것
+export function openedIndices(revealed, starFlags, filterPre) {
+  if (!Array.isArray(filterPre)) return indicesOf(revealed);
+  const pre = new Set(filterPre);
+  const out = [];
+  (revealed || []).forEach((v, i) => {
+    if (starFlags && starFlags[i] ? v || pre.has(i) : v && pre.has(i)) out.push(i);
+  });
+  return out;
+}
+
 // [start, end) 범위에서 flags 가 참인 수(목차의 절마다 연 빈칸·★ 수)
 export function countIn(flags, start, end) {
   let k = 0;
@@ -214,26 +228,16 @@ export function studySnapshot({ base, questions, mode, index, results, revealed,
   return out;
 }
 
-// 기록에서 ★ 만 남긴 것({ ids, q: { id: { h, s } } }) — '처음부터'·이어 볼 것 없이 열 때(★ 는 지우지 않는다)
-export function starsOnly(snap) {
-  const out = { ids: Array.isArray(snap?.ids) ? [...snap.ids] : [] };
-  const q = {};
-  for (const [id, e] of Object.entries(snap?.q || {})) {
-    if (e && Array.isArray(e.s) && e.s.length) q[id] = { h: e.h, s: [...e.s] };
-  }
-  if (Object.keys(q).length) out.q = q;
-  return out;
-}
-
 // ── 질문 메모에서 열기(엿보기) ──
 // 메모의 빈칸을 보러 열었을 때는 이어 볼 자리(보던 문항·읽던 자리)를 바꾸지 않는다 — 다음에 대시보드에서 열면 읽던 곳 그대로.
 // 연 빈칸·★ 은 지금 것으로 남긴다. snap: 지금 상태(studySnapshot), saved: 메모로 열기 전의 기록(없으면 null)
-//  - 이어 볼 기록이 없었으면 ★ 만 남긴다(다음에 열면 처음부터)
+//  - 이어 볼 기록이 없었으면(처음 엶·끝낸 기록) 지킬 자리가 없으니 지금 상태 그대로 — 보통처럼 저장해
+//    메모에서 와서 읽은 자리·연 빈칸이 남는다(예전에는 ★ 만 남겨 그만큼 공부한 것이 사라졌다)
 //  - 같은 문항이면 연 빈칸·★ 은 지금 것, 읽던 자리(a)만 지난 것
 //  - 다른 문항이면 지난 기록 그대로 + ★ 만 지금 것
 export function keepResume(snap, saved) {
   const ok = saved && (saved.mode === "ordered" || saved.mode === "random") && saved.cur != null && Array.isArray(saved.ids);
-  if (!ok || !snap || snap.cur == null) return starsOnly(snap);
+  if (!ok || !snap || snap.cur == null) return snap;
   const cur = String(snap.cur);
   const prevQ = saved.q && typeof saved.q === "object" ? saved.q : {};
   if (String(saved.cur) === cur && snap.mode === saved.mode) {

@@ -11,8 +11,8 @@ import { plainPreview, textModel } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
 import { loadStudy, saveStudy } from "../utils/studyState";
 import {
-  GRADED_TYPES, applyTarget, blankCountOf, flagsOf, indicesOf, initialSolveState, keepResume, normalizeType, questionHash,
-  starOnlyRevealed, studySnapshot, toggleIndex,
+  GRADED_TYPES, applyTarget, blankCountOf, flagsOf, indicesOf, initialSolveState, keepResume, normalizeType, openedIndices,
+  questionHash, starOnlyRevealed, studySnapshot, toggleIndex,
 } from "../utils/solveStudy";
 import { applyAnchor, captureAnchor, pulse, readingProgress, scrollElTo, sectionProgress } from "../utils/solveScroll";
 import { hasSet, pairOf, rememberHardMode } from "../utils/hardMode";
@@ -169,7 +169,7 @@ const S = {
   // 단추가 많으면(하드로·★·목차·모두 보기) 좁은 휴대폰에서 다음 줄로 — 가로로 넘치지 않게. 단추 묶음은 늘 같은 것만 그려
   // (★ 를 처음 달 때 생기는 단추 같은 것 없이) 읽는 도중 위쪽 줄 수가 바뀌어 글이 밀리지 않게
   qMeta: { display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 10, rowGap: 8, marginBottom: 16 },
-  // 문항 머리 오른쪽 묶음: 하드로/보통으로 · ★ 표시 · ★만 가리기 · 목차 · 모두 보기/가리기
+  // 문항 머리 오른쪽 묶음: 하드로/보통으로 · ★만 가리기 · 목차 · 모두 보기/가리기(★ 표시 켜고 끄기는 위에 붙은 머리 줄)
   qMetaBtns: { marginLeft: "auto", display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", gap: 6 },
   // 머리 묶음 단추(목차와 같은 크기). 좁은 휴대폰 여백은 solve.css .qm-meta-btn
   metaBtn: {
@@ -184,7 +184,7 @@ const S = {
     color: toHard ? "#f87171" : "#c4c4c4",
     border: `1px solid ${toHard ? "rgba(239,68,68,0.5)" : "#3a3a3a"}`,
   }),
-  // ★ 표시(켜면 빈칸을 누를 때 열지 않고 ★ 를 달고 뗌)·★만 가리기: 켜진 것은 분홍 바탕
+  // ★만 가리기: 켜진 것은 분홍 바탕
   starBtn: (on, off = false) => ({
     display: "inline-flex", alignItems: "center", gap: 5,
     color: on ? "#fbcfe8" : STAR,
@@ -192,24 +192,22 @@ const S = {
     border: `1px solid ${on ? STAR : "rgba(244,114,182,0.45)"}`,
     opacity: off ? 0.4 : 1, cursor: off ? "default" : "pointer",
   }),
-  // ★ 수: 0 이어도 늘 보인다(흐리게) — 처음 ★ 를 달 때 단추가 넓어져 머리 줄이 한 줄 늘고 아래 글이 밀리지 않게. 두 자리까지 같은 폭
-  starCount: (n) => ({
-    minWidth: 21, height: 17, padding: "0 4px", borderRadius: 5,
-    background: n > 0 ? STAR : "#3a3a3a", color: n > 0 ? "#1a1a1a" : "#9a9a9a", fontSize: 11, fontWeight: 800,
-    display: "inline-flex", alignItems: "center", justifyContent: "center",
+  // 머리 줄의 ★ 표시(켜면 빈칸을 누를 때 열지 않고 ★ 를 달고 뗌): 필기 모드 단추와 같은 크기(폭·여백은 solve.css .qm-star-toggle).
+  // 켜면 분홍 바탕 — 켜 있는 동안 띠를 따로 두지 않는다(머리 묶음 높이가 바뀌면 맨 위에서 글이 통째로 밀렸다)
+  starToggle: (on) => ({
+    position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
+    height: 36, borderRadius: 8, flexShrink: 0, whiteSpace: "nowrap",
+    fontSize: 13, fontWeight: 700, cursor: "pointer", transition: "opacity 0.15s ease",
+    background: on ? "rgba(244,114,182,0.18)" : "transparent",
+    border: `1px solid ${on ? STAR : "rgba(244,114,182,0.45)"}`,
+    color: on ? "#fbcfe8" : STAR,
   }),
-  // ★ 표시 중 띠: 머리 묶음 안(글 흐름 — 필기 도구 막대처럼), 내려가 있어도 늘 보이고 바로 끌 수 있게
-  // 좌우 여백은 머리 줄과 같게(.qm-solve-nav — 넓은 화면 24px, 휴대폰 12px)
-  starBand: {
-    display: "flex", alignItems: "center", gap: 8, minHeight: 34, paddingTop: 3, paddingBottom: 3,
-    background: "#22161e", borderBottom: "1px solid rgba(244,114,182,0.35)",
-    color: "#f9a8d4", fontSize: 12.5, fontWeight: 600,
-  },
-  starBandText: { flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  starBandBtn: {
-    height: 28, padding: "0 12px", borderRadius: 6, flexShrink: 0, whiteSpace: "nowrap",
-    background: "#2a2a2a", border: "1px solid #3a3a3a", color: "#f1f1f1",
-    fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+  starGlyph: { fontSize: 16, lineHeight: 1 },
+  // ★ 수: 단추 오른쪽 위 모서리에 겹쳐 띄운다(단추 폭이 그대로 — 제목 칸·머리 줄 높이가 바뀌지 않게)
+  starToggleCount: {
+    position: "absolute", top: -7, right: -7, minWidth: 17, height: 16, padding: "0 4px", borderRadius: 5,
+    background: STAR, color: "#1a1a1a", boxShadow: "0 0 0 2px #1a1a1a",
+    fontSize: 10.5, fontWeight: 800, lineHeight: "16px", textAlign: "center", pointerEvents: "none",
   },
   // 본문이 긴 빈칸 문항(LONG_FILL_CHARS): 본문 위에서도 모두 보기/가리기 (긴 페이지 끝까지 내려가지 않아도 되게)
   revealToggleBtn: {
@@ -568,10 +566,11 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
         } else {
           restoreRef.current = init.resumed && init.anchor && cq ? { qid: cq.id, anchor: init.anchor } : null;
         }
-        // 메모에서 엿보기: 이어 볼 자리(보던 문항·읽던 자리)는 그대로 지킨다. 같은 문항을 읽던 중이었으면 '읽던 곳으로' 단추
+        // 메모에서 엿보기: 이어 볼 자리(보던 문항·읽던 자리)는 그대로 지킨다. 같은 문항을 읽던 중이었으면 '읽던 곳으로' 단추.
+        // 이어 볼 기록이 없으면(처음 엶·끝낸 문제집·문항 묶음이 바뀜) 지킬 것이 없어 보통처럼 저장 — 메모에서 와 읽은 것이 남게
         const initCur = init.resumed ? init.questions[init.index] : null;
         const backAnchor = note && initCur && cq && String(initCur.id) === String(cq.id) ? init.anchor : null;
-        peekRef.current = note ? { saved, anchor: backAnchor } : null;
+        peekRef.current = note && init.resumed ? { saved, anchor: backAnchor } : null;
         if (note) {
           setChip({ kind: "note", text: t.focusBlank != null ? `메모의 빈칸 ${t.focusBlank + 1}` : "메모의 문항", back: !!backAnchor });
         } else {
@@ -669,16 +668,25 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     () => fillRev.map((v, i) => (v ? 1 : 0) | (fillStars[i] ? 2 : 0)),
     [fillRev, fillStars],
   );
+  // 사용자가 스스로 연 빈칸[참/거짓]: ★만 가리기가 대신 연 ★ 아닌 빈칸은 뺀다(꺼져 있으면 화면 그대로).
+  // 머리 줄 '연 빈칸 n/전체'·목차의 절마다 수·결과 화면의 수, ★만 가리기를 끌 때 돌아갈 상태
+  const fillOpened = useMemo(
+    () => (filterPre ? flagsOf(fillBlankCount, openedIndices(fillRev, fillStars, filterPre)) : fillRev),
+    [fillRev, fillStars, filterPre, fillBlankCount],
+  );
+  const openedCount = useMemo(() => fillOpened.reduce((n, v) => n + (v ? 1 : 0), 0), [fillOpened]);
   const fillLong = isFill && (current?.text || "").length > LONG_FILL_CHARS;
   const showToc = fillLong && !current?.answerImageUrl && fillHeadings.filter((h) => h.kind !== "title").length >= 2;
   // ★ 도구: 빈칸이 있는 빈칸 문항. '★만 가리기'는 빈칸이 많은(긴) 문항에만 — 가려 볼 만큼일 때
   const starTools = isFill && !current?.answerImageUrl && fillBlankCount > 0;
   const starFilterTool = starTools && (fillLong || fillBlankCount >= NEXT_BLANK_MIN);
   const starRun = !!filterPre; // ★만 가리기 켬 — '↓' 가 ★ 빈칸을 차례로 돈다
+  // 문항 머리 줄 오른쪽 단추 묶음(하드로/보통으로 · ★만 가리기 · 목차 · 모두 보기/가리기)이 있나
+  const metaTools = !!((pair && onSwitchSet) || starFilterTool || (starTools && showToc) || (fillLong && starTools));
   const showNext = showing && isFill && !current.answerImageUrl && (fillBlankCount >= NEXT_BLANK_MIN || (starRun && starCount > 0));
   // 문항 하나짜리 빈칸 문제집(노션 페이지): 머리 줄은 '연 빈칸/전체', 막대는 읽은 정도
   const singleFill = questions.length === 1 && isFill && fillBlankCount > 0;
-  const revealedCount = singleFill ? fillRev.reduce((n, v) => n + (v ? 1 : 0), 0) : 0;
+  const revealedCount = singleFill ? openedCount : 0;
 
   // 이벤트 처리기가 읽는 지금 상태
   useLayoutEffect(() => {
@@ -834,6 +842,16 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
         else delete out[id];
         return out;
       });
+      // ★만 가리기 중이면 그 빈칸도 가리기 규칙대로: ★ 를 달면 가리고, 떼면 연다(가리기가 연 칸이 ★ 가 되어
+      // 스스로 연 빈칸으로 세지거나, 뗀 칸만 가려진 채 남지 않게)
+      if (s.filterPre) {
+        const had = (s.stars[id] || NO_STARS).includes(i);
+        setFillRevealed((prev) => {
+          const base = prev.length === n ? [...prev] : Array(n).fill(false);
+          base[i] = had;
+          return base;
+        });
+      }
       return;
     }
     setFillRevealed((prev) => {
@@ -915,16 +933,20 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     if (wrapped) showToast(starRun ? "맨 앞의 ★ 빈칸으로 돌아왔습니다" : "맨 앞의 가린 빈칸으로 돌아왔습니다", "info");
   }
 
-  // ★ 표시 켜고 끄기(★ 단 빈칸은 늘 보이고, 켜 있는 동안만 누르면 ★ 를 달고 뗀다)
+  // ★ 표시 켜고 끄기(★ 단 빈칸은 늘 보이고, 켜 있는 동안만 누르면 ★ 를 달고 뗀다). 단추는 위에 붙은 머리 줄에 —
+  // 긴 페이지 가운데를 읽다가도 그 자리에서 켜고 끈다. 켤 때 무엇이 바뀌는지 짧게 알린다(빈칸 테두리도 분홍)
   function toggleStarMode() {
-    setStarMode((v) => !v);
+    const next = !starMode;
+    setStarMode(next);
+    if (next) showToast("★ 표시 중 · 빈칸을 누르면 ★", "info");
   }
 
-  // ★만 가리기: 켜면 ★ 아닌 빈칸은 모두 열고 ★ 빈칸만 가린다('↓ ★'로 차례로). 끄면 켜기 전의 연 빈칸으로 되돌린다
+  // ★만 가리기: 켜면 ★ 아닌 빈칸은 모두 열고 ★ 빈칸만 가린다('↓ ★'로 차례로). 끄면 가리기가 대신 연 빈칸은 다시 가린다
+  // (켜기 전에 연 빈칸 + 켠 동안 스스로 연 ★ 빈칸만 열린 채로 — fillOpened)
   function toggleStarFilter() {
     lastJump.current = null;
     if (filterPre) {
-      setFillRevealed(flagsOf(fillBlankCount, filterPre));
+      setFillRevealed([...fillOpened]);
       setFilterPre(null);
       return;
     }
@@ -1015,11 +1037,10 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   }
 
   function handleNext() {
-    // 결과 화면의 '연 빈칸 N/전체': 떠나는 빈칸 문항의 연 빈칸 수를 남긴다
+    // 결과 화면의 '연 빈칸 N/전체': 떠나는 빈칸 문항의 스스로 연 빈칸 수를 남긴다(★만 가리기가 연 칸은 빼고)
     if (current && isFill && fillBlankCount > 0) {
       const id = String(current.id);
-      const k = fillRev.reduce((n, v) => n + (v ? 1 : 0), 0);
-      setCounts((c) => ({ ...c, [id]: k }));
+      setCounts((c) => ({ ...c, [id]: openedCount }));
     }
     if (currentIndex < questions.length - 1) {
       setCurrentIndex((i) => i + 1);
@@ -1339,19 +1360,28 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
               {questions.length > 0 ? currentIndex + 1 : 0} / {questions.length}
             </span>
           )}
+          {/* ★ 표시: 필기 모드 단추 옆(위에 붙은 머리 줄 — 긴 페이지 어디서든 그 자리에서 켜고 끔). 켜고 꺼도 크기가 그대로라
+              머리 묶음 높이가 바뀌어 글이 밀리지 않는다(★ 수는 단추 모서리에 겹쳐 띄움) */}
+          {showing && starTools && (
+            <button
+              type="button"
+              className="qm-star-toggle"
+              style={S.starToggle(starMode)}
+              onClick={toggleStarMode}
+              onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.8"; }}
+              onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+              aria-pressed={starMode}
+              aria-label={`★ 표시${starCount ? ` (★ ${starCount}개)` : ""}`}
+              title={starMode ? "★ 표시 끝내기" : "★ 표시 — 켜면 빈칸을 누를 때 열지 않고 헷갈림 ★ 를 달고 뗍니다"}
+            >
+              <span aria-hidden="true" style={S.starGlyph}>★</span>
+              <span className="qm-star-toggle-label">표시</span>
+              {starCount > 0 && <span style={S.starToggleCount} aria-hidden="true">{starCount}</span>}
+            </button>
+          )}
           {showing && <InkModeButton on={inkOn} onToggle={toggleInk} />}
         </nav>
         {inkActive && <InkToolbar store={ink} />}
-        {showing && starMode && starTools && (
-          <div style={S.starBand} className="qm-star-band qm-solve-nav" role="status">
-            <span style={S.starBandText}>
-              <strong>★ 표시 중</strong>
-              <span className="qm-star-band-hint"> · 빈칸을 누르면 ★ 달기·떼기</span>
-            </span>
-            <span style={S.starCount(starCount)} aria-label={`★ ${starCount}개`}>{starCount}</span>
-            <button style={S.starBandBtn} onClick={toggleStarMode} aria-label="★ 표시 끝내기">끝</button>
-          </div>
-        )}
         <div style={S.progressBar} role="presentation">
           {singleFill && showing
             ? <div ref={barRef} style={S.readFill} />
@@ -1401,76 +1431,66 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
             )}
 
             <div className="qm-solve-card-body" ref={bodyRef}>
-              {/* 문항 번호 + 유형 (+ 하드로/보통으로 · ★ 표시 · ★만 가리기, 본문이 긴 빈칸 문항은 목차·모두 보기/가리기 —
-                  긴 본문 끝까지 내려가지 않아도 되게) */}
-              <div style={S.qMeta}>
-                {/* 문항 하나짜리 빈칸 문제집(노션 페이지)은 'Q1 · 빈칸 채우기'가 알려 주는 것이 없어 빼고 단추 자리로 —
-                    휴대폰(412px)에서 머리 줄이 한 줄에 들어가게 */}
-                {!singleFill && <span style={S.qNum}>Q{currentIndex + 1}</span>}
-                {!singleFill && <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype] ?? "학습"}</span>}
-                {((pair && onSwitchSet) || starTools) && (
-                  <div style={S.qMetaBtns}>
-                    {pair && onSwitchSet && (
-                      <button
-                        style={{ ...S.metaBtn, ...S.pairBtn(pair.toHard) }}
-                        className="qm-meta-btn"
-                        onClick={switchPair}
-                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
-                        onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                        title={pair.toHard ? "하드 문제집(빈칸이 더 많음)의 같은 절로" : "보통 문제집의 같은 절로"}
-                      >
-                        {pair.toHard ? "하드로" : "보통으로"}
-                      </button>
-                    )}
-                    {starTools && (
-                      <button
-                        style={{ ...S.metaBtn, ...S.starBtn(starMode) }}
-                        className="qm-meta-btn"
-                        onClick={toggleStarMode}
-                        aria-pressed={starMode}
-                        aria-label={`★ 표시${starCount ? ` (★ ${starCount}개)` : ""}`}
-                        title={starMode ? "★ 표시 끝내기" : "★ 표시 — 켜면 빈칸을 누를 때 열지 않고 헷갈림 ★ 를 달고 뗍니다"}
-                      >
-                        <span>★ 표시</span>
-                        <span style={S.starCount(starCount)} aria-hidden="true">{starCount}</span>
-                      </button>
-                    )}
-                    {starFilterTool && (
-                      <button
-                        style={{ ...S.metaBtn, ...S.starBtn(starRun, !starRun && !starCount) }}
-                        className="qm-meta-btn"
-                        onClick={toggleStarFilter}
-                        disabled={!starRun && !starCount}
-                        aria-pressed={starRun}
-                        title={starRun ? "★만 가리기 끄기(켜기 전 연 빈칸으로)" : starCount ? "★ 아닌 빈칸은 모두 열고 ★ 빈칸만 가리기" : "★ 표시한 빈칸이 없습니다"}
-                      >
-                        ★만 가리기
-                      </button>
-                    )}
-                    {starTools && showToc && (
-                      <SolveToc
-                        headings={fillHeadings}
-                        blankState={fillRev}
-                        starState={fillStars}
-                        blankCount={fillBlankCount}
-                        getCurrent={currentHeading}
-                        onJump={jumpToHeading}
-                      />
-                    )}
-                    {fillLong && starTools && (
-                      <button
-                        style={S.revealToggleBtn}
-                        className="qm-meta-btn"
-                        onClick={() => setAllRevealed(!fillRev.every(Boolean))}
-                        onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
-                        onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                      >
-                        {fillRev.every(Boolean) ? "모두 가리기" : "모두 보기"}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              {/* 문항 번호 + 유형 (+ 하드로/보통으로 · ★만 가리기, 본문이 긴 빈칸 문항은 목차·모두 보기/가리기 —
+                  긴 본문 끝까지 내려가지 않아도 되게). ★ 표시 켜고 끄기는 위에 붙은 머리 줄에(읽던 자리에서 바로) */}
+              {(!singleFill || metaTools) && (
+                <div style={S.qMeta}>
+                  {/* 문항 하나짜리 빈칸 문제집(노션 페이지)은 'Q1 · 빈칸 채우기'가 알려 주는 것이 없어 빼고 단추 자리로 —
+                      휴대폰(412px)에서 머리 줄이 한 줄에 들어가게. 단추도 없으면(짧은 페이지) 줄째 뺀다 */}
+                  {!singleFill && <span style={S.qNum}>Q{currentIndex + 1}</span>}
+                  {!singleFill && <span style={S.typeBadge(qtype)}>{TYPE_LABEL[qtype] ?? "학습"}</span>}
+                  {metaTools && (
+                    <div style={S.qMetaBtns}>
+                      {pair && onSwitchSet && (
+                        <button
+                          style={{ ...S.metaBtn, ...S.pairBtn(pair.toHard) }}
+                          className="qm-meta-btn"
+                          onClick={switchPair}
+                          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                          title={pair.toHard ? "하드 문제집(빈칸이 더 많음)의 같은 절로" : "보통 문제집의 같은 절로"}
+                        >
+                          {pair.toHard ? "하드로" : "보통으로"}
+                        </button>
+                      )}
+                      {starFilterTool && (
+                        <button
+                          style={{ ...S.metaBtn, ...S.starBtn(starRun, !starRun && !starCount) }}
+                          className="qm-meta-btn"
+                          onClick={toggleStarFilter}
+                          disabled={!starRun && !starCount}
+                          aria-pressed={starRun}
+                          aria-label={`★만 가리기${starCount ? ` (★ ${starCount}개)` : ""}`}
+                          title={starRun ? "★만 가리기 끄기(가리기가 연 빈칸은 다시 가림)" : starCount ? "★ 아닌 빈칸은 모두 열고 ★ 빈칸만 가리기" : "★ 표시한 빈칸이 없습니다(머리 줄 ★ 로 표시)"}
+                        >
+                          ★만 가리기
+                        </button>
+                      )}
+                      {starTools && showToc && (
+                        <SolveToc
+                          headings={fillHeadings}
+                          blankState={fillOpened}
+                          starState={fillStars}
+                          blankCount={fillBlankCount}
+                          getCurrent={currentHeading}
+                          onJump={jumpToHeading}
+                        />
+                      )}
+                      {fillLong && starTools && (
+                        <button
+                          style={S.revealToggleBtn}
+                          className="qm-meta-btn"
+                          onClick={() => setAllRevealed(!fillRev.every(Boolean))}
+                          onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
+                          onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        >
+                          {fillRev.every(Boolean) ? "모두 가리기" : "모두 보기"}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* 문제 텍스트 (빈칸 채우기는 아래 토글 UI에서 렌더링) */}
               {!isFill && (

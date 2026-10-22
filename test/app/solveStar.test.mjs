@@ -3,8 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cleanIndices, countIn, flagsOf, indicesOf, initialSolveState, keepResume, questionHash, savedStars, starOnlyRevealed,
-  starsOnly, studySnapshot, toggleIndex,
+  cleanIndices, countIn, flagsOf, indicesOf, initialSolveState, keepResume, openedIndices, questionHash, savedStars,
+  starOnlyRevealed, studySnapshot, toggleIndex,
 } from '../../src/utils/solveStudy.js';
 
 const PAGE = [
@@ -129,13 +129,26 @@ test('본문이 바뀐 문항의 ★ 는 버리고, 다른 문항의 ★ 는 남
   assert.deepEqual(savedStars(bad, MULTI), { 81: [2] });
 });
 
-test('starsOnly: 기록에서 ★ 만', () => {
-  const snap = studySnapshot({
-    base: MULTI, questions: MULTI, mode: 'ordered', index: 0, results: {}, revealed: [true, true, false], anchor: { f: 0.3 },
-    stars: { 83: [1] }, counts: {},
-  });
-  assert.deepEqual(starsOnly(snap), { ids: ['81', '82', '83'], q: { 83: { h: questionHash(MULTI[2]), s: [1] } } });
-  assert.deepEqual(starsOnly({ ids: ['1'] }), { ids: ['1'] });
+test('스스로 연 빈칸(openedIndices): ★만 가리기가 대신 연 칸은 세지 않는다', () => {
+  // 꺼져 있으면 화면 그대로
+  assert.deepEqual(openedIndices([true, false, true], [false, true, false], null), [0, 2]);
+  // 빈칸 6개, ★ 1·4, 켜기 전 연 칸 0·1 → 켜면 화면은 [열림, 가림, 열림, 열림, 가림, 열림]
+  const stars = flagsOf(6, [1, 4]);
+  const pre = [0, 1];
+  const on = starOnlyRevealed(6, [1, 4]);
+  // 켠 직후: 켜기 전에 연 0(★ 아님)·1(★ — 지금은 가려졌어도)만
+  assert.deepEqual(openedIndices(on, stars, pre), [0, 1]);
+  // 켠 동안 ★ 4 를 열고, 가리기가 연 ★ 아닌 2·3·5 는 그대로 → 0·1·4
+  const opened4 = [...on]; opened4[4] = true;
+  assert.deepEqual(openedIndices(opened4, stars, pre), [0, 1, 4]);
+  // 켜기 전에 연 ★ 아닌 0 을 켠 동안 닫으면 빠진다
+  const closed0 = [...opened4]; closed0[0] = false;
+  assert.deepEqual(openedIndices(closed0, stars, pre), [1, 4]);
+  // 리뷰 재현: 37칸·★ 2·9·20·켜기 전 0 하나만 열고 ★만 가리기 → '연 빈칸 1/37'(예전 34/37)
+  const st37 = flagsOf(37, [2, 9, 20]);
+  assert.equal(openedIndices(starOnlyRevealed(37, [2, 9, 20]), st37, [0]).length, 1);
+  // 길이·값이 이상해도 멈추지 않음
+  assert.deepEqual(openedIndices(null, null, [0]), []);
 });
 
 test('메모 엿보기(keepResume): 같은 문항이면 연 빈칸·★ 은 지금 것, 읽던 자리는 지난 것', () => {
@@ -156,7 +169,7 @@ test('메모 엿보기(keepResume): 같은 문항이면 연 빈칸·★ 은 지�
   assert.deepEqual(st.anchor, { k: 'b', i: 5, d: 40, f: 0.9 });
 });
 
-test('메모 엿보기: 다른 문항을 봤으면 지난 기록 그대로 + ★ 만 지금 것, 기록이 없었으면 ★ 만', () => {
+test('메모 엿보기: 다른 문항을 봤으면 지난 기록 그대로 + ★ 만 지금 것, 기록이 없었으면 지금 상태 그대로', () => {
   const before = stored(studySnapshot({
     base: MULTI, questions: MULTI, mode: 'ordered', index: 0, results: {}, revealed: [true, false, false],
     anchor: { f: 0.5 }, stars: { 81: [2] },
@@ -178,9 +191,26 @@ test('메모 엿보기: 다른 문항을 봤으면 지난 기록 그대로 + ★
   // ★ 를 뗐으면 지난 기록의 ★ 도 사라진다
   const unstar = keepResume({ ...now, q: { 83: { h: questionHash(MULTI[2]), r: [0] } } }, before);
   assert.equal(unstar.q['81'].s, undefined);
-  // 이어 볼 기록이 없었으면(처음 엶·끝낸 기록) ★ 만 — 다음에 열면 처음부터
-  assert.deepEqual(keepResume(now, null), { ids: ['81', '82', '83'], q: {
-    81: { h: questionHash(MULTI[0]), s: [2] }, 83: { h: questionHash(MULTI[2]), s: [0] },
-  } });
-  assert.deepEqual(keepResume(now, { ids: ['81', '82', '83'] }).cur, undefined);
+  // 이어 볼 기록이 없었으면(처음 엶·끝낸 기록) 지킬 자리가 없다 — 지금 상태를 그대로 저장해 메모에서 와 공부한 것이 남는다
+  assert.equal(keepResume(now, null), now);
+  const finished = stored({ ids: ['81', '82', '83'], q: { 81: { h: questionHash(MULTI[0]), s: [2] } } });
+  const afterDone = keepResume(now, finished);
+  assert.equal(afterDone, now);
+  const st2 = initialSolveState(stored(afterDone), MULTI);
+  assert.equal(st2.resumed, true);
+  assert.equal(st2.index, 2);
+  assert.deepEqual(st2.revealed, [true, true]);
+  assert.deepEqual(st2.stars, { 81: [2], 83: [0] });
+});
+
+test('메모 엿보기: 기록이 없던 페이지 문제집 — 메모의 빈칸에서 연 빈칸·읽던 자리가 다음 열 때 이어진다', () => {
+  const now = studySnapshot({
+    base: [Q], questions: [Q], mode: 'ordered', index: 0, results: {},
+    revealed: [false, false, true, true, false, false], anchor: { k: 'b', i: 3, d: 60, f: 0.7 },
+  });
+  const kept = keepResume(now, stored({ ids: ['101'] }));
+  const st = initialSolveState(stored(kept), [Q]);
+  assert.equal(st.resumed, true);
+  assert.deepEqual(st.revealed, [false, false, true, true, false, false]);
+  assert.deepEqual(st.anchor, { k: 'b', i: 3, d: 60, f: 0.7 });
 });
