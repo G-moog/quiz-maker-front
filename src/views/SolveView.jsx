@@ -9,7 +9,7 @@ import SolveToc from "../components/SolveToc";
 import { PencilIcon } from "../components/NoteIcons";
 import { plainPreview, textModel } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
-import { loadStudy, saveStudy } from "../utils/studyState";
+import { clearStudy, loadStudy, saveStudy } from "../utils/studyState";
 import { freshStudyBeforeOpen } from "../api/study";
 import {
   GRADED_TYPES, applyTarget, blankCountOf, flagsOf, indicesOf, initialSolveState, keepResume, normalizeType, openedIndices,
@@ -1104,9 +1104,9 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   }
 
   // 이어 보기 띠의 '처음부터': 이 문제집 기록(연 빈칸·자리·지나온 문항)을 지우고 맨 위·전부 가림부터.
-  // ★(헷갈림 표시)는 따로 모은 것이라 남긴다
+  // ★(헷갈림 표시)는 따로 모은 것이라 남긴다. clearStudy 는 늘 새 ct 로 바로 올린다 — 다른 기기도 처음부터(★ 는 그대로)
   function restartFromTop() {
-    saveStudy(username, setId, studySnapshot({ base: baseQuestions, questions: baseQuestions, mode: null, index: 0, stars }));
+    clearStudy(username, setId, studySnapshot({ base: baseQuestions, questions: baseQuestions, mode: null, index: 0, stars }));
     handleRetry();
   }
 

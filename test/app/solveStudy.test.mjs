@@ -148,3 +148,16 @@ test('progressPart: 읽던 자리(a)만 뺀다 — 스크롤만 한 저장은 �
   assert.deepEqual(progressPart({ ids: ['1'] }), { ids: ['1'] });
   assert.equal(progressPart(null), null);
 });
+
+test('hasStudyProgress: ★ 도 진도 — 연 빈칸 없이 ★ 만, 끝낸 기록·고르기 화면의 ★ 도(열기만 한 다른 기기가 지우지 않게)', () => {
+  const starOnly = studySnapshot({ base: [Q_PAGE], questions: [Q_PAGE], mode: 'ordered', index: 0, results: {}, revealed: Array(6).fill(false), anchor: null, stars: { 101: [2] } });
+  assert.equal(hasStudyProgress(starOnly), true);
+  assert.equal(initialSolveState(starOnly, [Q_PAGE]).resumed, false, '★ 만으로는 이어 보기 안내를 띄우지 않음(그대로)');
+  const doneStars = studySnapshot({ base: MULTI, questions: MULTI, mode: 'ordered', index: 2, done: true, stars: { 81: [0] } });
+  assert.deepEqual(Object.keys(doneStars).sort(), ['ids', 'q']);
+  assert.equal(hasStudyProgress(doneStars), true);
+  assert.equal(hasStudyProgress({ ids: ['101'], q: { 101: { h: 'x', s: [] } } }), false, '빈 ★ 목록은 진도 아님');
+  // ★ 를 달거나 떼면 진도가 바뀐 것(곧바로 올림)
+  const noStar = studySnapshot({ base: [Q_PAGE], questions: [Q_PAGE], mode: 'ordered', index: 0, results: {}, revealed: Array(6).fill(false), anchor: null });
+  assert.notDeepEqual(progressPart(starOnly), progressPart(noStar));
+});

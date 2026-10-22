@@ -579,7 +579,7 @@ const range = (n, from = 0) => Array.from({ length: n }, (_, i) => from + i);
 const revealedOf = (rec) => rec?.q?.[101]?.r ?? null;
 
 // 풀기 화면(SolveView.jsx) 흉내 — 같은 순서: 문항 받기와 공부 기록 받기를 함께 기다림(받기는 최대 waitMs) →
-// loadStudy → initialSolveState → 열 때 저장(open) → 0.5초 뒤 지금 상태 저장. persist() 는 그 화면의 저장(스크롤·빈칸 열기 뒤)
+// loadStudy → initialSolveState → 열 때 저장(open, ★ 는 남김) → 0.5초 뒤 지금 상태 저장. persist() 는 그 화면의 저장(스크롤·빈칸 열기·★ 뒤)
 async function openSolve(clock, { questionsMs = 300, waitMs = 1500, setId = 11 } = {}) {
   let ready = false;
   const questions = new Promise((r) => clock.setTimer(r, questionsMs));
@@ -588,11 +588,11 @@ async function openSolve(clock, { questionsMs = 300, waitMs = 1500, setId = 11 }
   assert.ok(ready, '풀기 화면이 열리지 않았습니다');
   const saved = loadStudy('magicwonds', setId);
   const init = initialSolveState(saved, QS);
-  saveStudy('magicwonds', setId, init.resumed ? saved : { ids: ['101'] }, { open: true });
-  const view = { revealed: [...init.revealed], anchor: init.anchor };
+  saveStudy('magicwonds', setId, init.resumed ? saved : studySnapshot({ base: QS, questions: QS, mode: null, index: 0, stars: init.stars }), { open: true });
+  const view = { revealed: [...init.revealed], anchor: init.anchor, stars: { ...init.stars } };
   const persist = () => saveStudy('magicwonds', setId, studySnapshot({
     base: QS, questions: init.questions, mode: init.mode, index: init.index, results: init.results,
-    revealed: view.revealed, anchor: view.anchor,
+    revealed: view.revealed, anchor: view.anchor, stars: view.stars, counts: init.counts, filterPre: init.filterPre,
   }));
   await clock.advance(500);
   persist();
@@ -831,4 +831,94 @@ test('freshStudyBeforeOpen: 기본은 마지막 받기 시작 1초까지만 믿�
     assert.equal(opened, true, '쉬는 중인데 기다렸습니다');
     assert.equal(srv.calls.length, n, '쉬는 중인데 요청했습니다');
   });
+});
+
+// ── ★(헷갈림 표시)와 나누기(imp2/solve + imp2/sync 통합) ──
+// ★ 는 연 빈칸이 없어도·끝낸 뒤에도 남는 사용자 표시라 진도와 같게 다룬다(solveStudy.js hasStudyProgress)
+const starsOf = (rec) => rec?.q?.[101]?.s ?? null;
+
+test('두 기기: ★ 만 단 기록(연 빈칸 없음)도 진도 — 사본 없이 연 휴대폰이 열기만 해서 태블릿의 ★ 를 지우지 않는다', async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const tab = device(clock, srv);
+  const phone = device(clock, srv);
+  await tab.on(async () => {
+    const s = await openSolve(clock);
+    s.view.stars = { 101: [3, 7] }; // ★ 만 달고 빈칸은 열지 않음
+    s.persist();
+    await clock.advance(3000);
+  });
+  assert.deepEqual(starsOf(srv.rows.get(11).data), [3, 7]);
+  const tabCt = srv.rows.get(11).clientAt;
+  assert.notEqual(tabCt, WEAK_CT, '★ 를 단 저장이 진도 없는 저장(WEAK_CT)으로 올라갔습니다');
+  await clock.advance(60000);
+  srv.listDelay = 3000; // 받기가 늦어 사본 없이 열림
+  await phone.on(async () => {
+    const s = await openSolve(clock);
+    assert.deepEqual(s.init.stars, {}, '시험 전제: 받기가 늦어 사본 없이 열림');
+    s.view.anchor = { f: 0.05 }; // 조금 내려 봄
+    s.persist();
+    await clock.advance(20000);
+    srv.listDelay = 0;
+    const again = await openSolve(clock);
+    assert.deepEqual(again.init.stars, { 101: [3, 7] }, '다시 열어도 태블릿의 ★ 가 없습니다');
+  });
+  const row = srv.rows.get(11);
+  assert.deepEqual(starsOf(row.data), [3, 7], '열기만 한 휴대폰이 서버의 태블릿 ★ 를 지웠습니다');
+  assert.equal(row.clientAt, tabCt);
+});
+
+test('★: 끝낸 기록({ ids } + ★)·마지막 ★ 떼기도 새 내용으로 다른 기기에 간다', async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const tab = device(clock, srv);
+  const phone = device(clock, srv);
+  await tab.on(async () => {
+    const s = await openSolve(clock);
+    s.view.revealed[0] = true;
+    s.view.stars = { 101: [2] };
+    s.persist();
+    await clock.advance(3000);
+    // 결과 화면까지(끝냄): 연 빈칸·자리는 지우고 ★ 만
+    saveStudy('magicwonds', 11, studySnapshot({ base: QS, questions: QS, mode: 'ordered', index: 0, done: true, stars: s.view.stars }));
+    await clock.advance(3000);
+  });
+  assert.deepEqual([revealedOf(srv.rows.get(11).data), starsOf(srv.rows.get(11).data)], [null, [2]]);
+  await phone.on(async () => {
+    const s = await openSolve(clock);
+    assert.equal(s.init.resumed, false);
+    assert.deepEqual(s.init.stars, { 101: [2] });
+    s.view.stars = {}; // 마지막 ★ 를 뗌
+    s.persist();
+    await clock.advance(3000);
+  });
+  assert.equal(starsOf(srv.rows.get(11).data), null, '마지막 ★ 를 뗀 것이 서버에 가지 않았습니다');
+  await tab.on(async () => {
+    await pullStudy('magicwonds', { force: true });
+    const s = await openSolve(clock);
+    assert.deepEqual(s.init.stars, {});
+  });
+});
+
+test("처음부터(clearStudy)에 남길 내용(★)을 주면 그것만 남기고, 늘 새 ct 로 바로 올린다", async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const tab = device(clock, srv);
+  await tab.on(async () => {
+    const s = await openSolve(clock);
+    [0, 1].forEach((i) => { s.view.revealed[i] = true; });
+    s.view.stars = { 101: [5] };
+    s.persist();
+    await clock.advance(3000);
+    const before = loadStudy('magicwonds', 11);
+    const n = puts(srv).length;
+    clearStudy('magicwonds', 11, studySnapshot({ base: QS, questions: QS, mode: null, index: 0, stars: s.view.stars }));
+    await settle();
+    const after = loadStudy('magicwonds', 11);
+    assert.deepEqual([revealedOf(after), starsOf(after), after.mode], [null, [5], undefined]);
+    assert.ok(after.ct > before.ct);
+    assert.deepEqual([after.at, after.days], [before.at, before.days]);
+    assert.equal(puts(srv).length, n + 1, '처음부터는 바로 올려야 합니다');
+  });
+  assert.deepEqual([revealedOf(srv.rows.get(11).data), starsOf(srv.rows.get(11).data)], [null, [5]]);
 });

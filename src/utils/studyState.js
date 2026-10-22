@@ -6,7 +6,7 @@
 //   진도가 있는지·진도가 바뀌었는지만 solveStudy.js 에 묻는다(hasStudyProgress·progressPart).
 //   at   마지막으로 본 때(ISO) — 저장할 때마다 지금. 대시보드 '마지막 공부'·'최근 공부 순'
 //   ct   내용이 바뀐 때(ISO) — 기기 사이 '나중에 고친 쪽이 이김'의 기준(서버 client_at). 내용이 그대로인 저장은 ct 를 두고 at 만 올린다.
-//        진도(지나온 문항·채점·연 빈칸 — solveStudy.js hasStudyProgress)가 없는 내용은 ct 를 올리지 않는다(처음이면 WEAK_CT):
+//        진도(지나온 문항·채점·연 빈칸·★ — solveStudy.js hasStudyProgress)가 없는 내용은 ct 를 올리지 않는다(처음이면 WEAK_CT):
 //        다른 기기 기록을 아직 받지 못한 채 문제집을 열기만 한(또는 조금 내려 본) 기기가 그 기기의 진도를 덮지 않게
 //   days 공부한 날(서울 날짜 YYYY-MM-DD, 최근 120일) — 저장할 때 오늘을 더하고, 기기 사이에서는 합친다(지우지 않음)
 //   이 기기에만: dirty(서버에 올릴 것이 있음), bh(이 기기 풀기 화면이 마지막으로 저장한(보여 준) 내용의 지문)
@@ -226,13 +226,15 @@ function nextCt(prev, nowMs) {
   return new Date(p !== null && p >= nowMs ? p + 1 : nowMs).toISOString();
 }
 
-// '처음부터': 내용을 비운다(다른 기기도 처음부터). 마지막으로 본 때·공부한 날은 남긴다. 바로 올린다
-export function clearStudy(username, setId) {
+// '처음부터': 내용을 비운다(다른 기기도 처음부터). keep: 그래도 남길 내용 — 풀기 화면의 ★(solveStudy.js studySnapshot 의
+// 고르기 화면 꼴 { ids, q: { h, s } }). 진도가 남아도 늘 새 ct(사용자가 비운 것). 마지막으로 본 때·공부한 날은 남긴다. 바로 올린다
+export function clearStudy(username, setId, keep = null) {
   const k = keyOf(username, setId);
   const prev = readKey(k);
   if (!prev) return;
   const nowMs = env.now();
-  const value = { v: VERSION, at: prev.at ?? new Date(nowMs).toISOString(), ct: nextCt(prev, nowMs), days: daysOf(prev), dirty: 1, bh: hashOf({}) };
+  const blob = blobOf(keep);
+  const value = { ...blob, v: VERSION, at: prev.at ?? new Date(nowMs).toISOString(), ct: nextCt(prev, nowMs), days: daysOf(prev), dirty: 1, bh: hashOf(blob) };
   if (writeKey(username, k, value)) pushOne(username, setId, { urgent: true, keepalive: env.hidden() });
 }
 
