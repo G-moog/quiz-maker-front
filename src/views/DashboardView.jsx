@@ -11,6 +11,7 @@ import {
   readDashCache, relativeDay, saveSortMode, sortCards, writeDashCache,
 } from "../utils/dashboard";
 import { backupFileName, backupSummary, buildBackup, downloadJson } from "../utils/backup";
+import { exportInkJson, importInkJson } from "../ink/inkBackup";
 import { PencilIcon } from "../components/NoteIcons";
 import { SHOW_EXCEL } from "../config";
 import "./DashboardView.css";
@@ -23,10 +24,22 @@ function currentUser() {
   try { return localStorage.getItem("username") || ""; } catch { return ""; }
 }
 
-// 백업 확장 자리: 다른 자료(예: 필기 ink)를 백업 파일에 넣으려면 여기서 { ink: … } 처럼 돌려준다.
-// 돌려준 칸은 파일 맨 위에 더해진다(utils/backup.js 의 extras — 기본 칸 이름과 겹치면 오류)
-function backupExtras() {
-  return undefined;
+// 백업 확장 자리: 돌려준 칸은 파일 맨 위에 더해진다(utils/backup.js 의 extras — 기본 칸 이름과 겹치면 오류).
+// 필기(이 기기 IndexedDB 에만 있음)를 ink 칸으로 함께 담는다. 필기를 못 읽어도(사생활 보호 창 등) 문제집 백업은 그대로 받는다
+async function backupExtras(username) {
+  try {
+    const ink = await exportInkJson(username);
+    return ink.items.length ? { ink } : undefined;
+  } catch (e) {
+    console.warn("필기를 백업에 넣지 못했습니다", e);
+    return undefined;
+  }
+}
+
+// 필기 가져오기 파일: 필기만 내보낸 파일(app: quiz-maker-ink)이나, 필기가 든 전체 백업(app: quiz-maker 의 ink 칸)
+function inkPartOf(obj) {
+  if (obj && obj.app === "quiz-maker" && obj.ink) return obj.ink;
+  return obj;
 }
 
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType). 휴대폰에서 누른 뒤
@@ -369,6 +382,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
   // 백업 진행 안내('문제집 12/49'). 빈 글이면 안 보임
   const [backupMsg, setBackupMsg] = useState("");
   const backupBusy = useRef(false);
+  const inkFileRef = useRef(null); // '필기 가져오기' 파일 고르기(숨김)
 
   // 찾기·정렬(최근 공부 순은 기기에 기억)·마지막 공부 때(이 기기 공부 기록 — 대시보드를 열 때마다 다시 읽음)
   const [query, setQuery] = useState("");
@@ -495,11 +509,12 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
         onProgress: (p) => setBackupMsg(
           p.phase === "sets" ? `백업 준비 중… 문제집 ${p.done}/${p.total}` : "백업 준비 중… 질문 메모"
         ),
-        extras: backupExtras(),
+        extras: await backupExtras(currentUser()),
       });
       downloadJson(data, backupFileName(new Date()));
       const n = backupSummary(data);
-      showToast(`백업 파일을 내려받았습니다(문제집 ${n.sets} · 문항 ${n.questions} · 메모 ${n.notes})`, "success", 5000);
+      const inkNote = data.ink ? ` · 필기 ${data.ink.items.length}` : "";
+      showToast(`백업 파일을 내려받았습니다(문제집 ${n.sets} · 문항 ${n.questions} · 메모 ${n.notes}${inkNote})`, "success", 5000);
     } catch (e) {
       console.error(e);
       // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
@@ -507,6 +522,32 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
     } finally {
       backupBusy.current = false;
       setBackupMsg("");
+    }
+  }
+
+  // 필기 가져오기: 다른 기기·옛 주소에서 받은 백업 파일의 필기를 이 기기에 넣는다(이 기기의 더 새 필기는 덮지 않음)
+  function pickInkFile() {
+    setMenuOpen(false);
+    inkFileRef.current?.click();
+  }
+
+  async function handleInkFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 같은 파일을 다시 골라도 change 가 오게
+    if (!file) return;
+    try {
+      const obj = JSON.parse(await file.text());
+      const r = await importInkJson(inkPartOf(obj), currentUser());
+      showToast(
+        r.imported > 0
+          ? `필기 ${r.imported}개를 가져왔습니다${r.skipped ? `(이 기기 것이 더 새것이라 ${r.skipped}개는 그대로)` : ""}`
+          : `가져올 새 필기가 없습니다${r.skipped ? `(${r.skipped}개는 이 기기 것이 더 새것)` : ""}`,
+        "success", 5000
+      );
+    } catch (err) {
+      console.error(err);
+      const msg = err instanceof SyntaxError ? "JSON 파일이 아닙니다." : (err.message || "");
+      showToast(`필기를 가져오지 못했습니다. ${msg}`.trim(), "error", 8000);
     }
   }
 
@@ -757,14 +798,34 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                   style={S.userMenuItem}
                   onClick={runBackup}
                   disabled={!!backupMsg}
-                  title="문제집·문항·질문 메모를 모두 이 기기에 파일로 받기"
+                  title="문제집·문항·질문 메모와 이 기기의 필기를 모두 파일로 받기"
                   onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.background = "#242424"; }}
                   onPointerLeave={(e) => { e.currentTarget.style.background = "none"; }}
                 >
                   백업 내려받기 (JSON)
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  style={S.userMenuItem}
+                  onClick={pickInkFile}
+                  title="백업 파일에 든 필기를 이 기기에 넣기(이 기기의 더 새 필기는 그대로)"
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.background = "#242424"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                >
+                  필기 가져오기
+                </button>
               </div>
             )}
+            <input
+              ref={inkFileRef}
+              type="file"
+              accept="application/json,.json"
+              style={{ display: "none" }}
+              onChange={handleInkFile}
+              aria-hidden="true"
+              tabIndex={-1}
+            />
           </span>
           <button
             style={S.logoutBtn}
