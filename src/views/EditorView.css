@@ -1,0 +1,19 @@
+/* 편집기(EditorView.jsx) 덧붙임 — 인라인 style 로 못 하는 규칙(:focus-visible·:has)만 둔다. 배치는 index.css 의 .qm-ed-* */
+
+/* 키보드 초점: Tab 으로 옮겼을 때만(:focus-visible) 금색 테두리 — 손가락·펜·마우스로 누를 때는 안 보인다.
+   outline 이라 배치는 그대로. 글 칸(textarea·input)은 지금처럼 초점 때 테두리가 금색이 되므로 여기 넣지 않는다 */
+.qm-ed-page button:focus-visible,
+.qm-ed-page input[type="radio"]:focus-visible {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+/* 문항 목록 줄·✕ 는 스크롤 영역(.qm-ed-sidebar) 가장자리에 닿아 바깥 테두리가 잘리므로 안쪽으로 그린다 */
+.qm-ed-page .qm-ed-q:focus-visible,
+.qm-ed-page .qm-ed-q-del:focus-visible {
+  outline-offset: -2px;
+}
+/* 그림 올리기: 초점은 보이지 않게 숨긴 file 칸이 받으므로 테두리는 감싼 칸(label)에 그린다 */
+.qm-ed-upload:has(input:focus-visible) {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
