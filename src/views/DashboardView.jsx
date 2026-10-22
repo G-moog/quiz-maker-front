@@ -1,10 +1,33 @@
-import { useState, useEffect, useRef } from "react";
-import { getSets, createSet, updateSet, deleteSet } from "../api/quiz";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { getSets, createSet, updateSet, deleteSet, getQuestions } from "../api/quiz";
 import { listNotes } from "../api/notes";
 import { downloadSet, downloadAll, downloadTemplate, uploadToSet, uploadAsNew } from "../api/excel";
 import { groupHardSets, hardTitleOf, loadHardModeIds, saveHardModeIds } from "../utils/hardMode";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
+import { lastStudiedMap } from "../utils/studyState";
+import { STAY, useBack } from "../utils/backStack";
+import {
+  SORT_DEFAULT, SORT_RECENT, cardNoteCount, countNotesBySet, filterCards, lastStudiedOf, loadSortMode,
+  readDashCache, relativeDay, saveSortMode, sortCards, writeDashCache,
+} from "../utils/dashboard";
+import { backupFileName, backupSummary, buildBackup, downloadJson } from "../utils/backup";
+import { PencilIcon } from "../components/NoteIcons";
 import { SHOW_EXCEL } from "../config";
+import "./DashboardView.css";
+
+// 문제집이 이보다 많으면 찾기·정렬 줄을 보인다
+const TOOLS_MIN_CARDS = 8;
+
+// 화면 밖(효과·비동기)에서 쓰는 이 기기 사용자 이름(App 이 qm_me 로 받아 둠)
+function currentUser() {
+  try { return localStorage.getItem("username") || ""; } catch { return ""; }
+}
+
+// 백업 확장 자리: 다른 자료(예: 필기 ink)를 백업 파일에 넣으려면 여기서 { ink: … } 처럼 돌려준다.
+// 돌려준 칸은 파일 맨 위에 더해진다(utils/backup.js 의 extras — 기본 칸 이름과 겹치면 오류)
+function backupExtras() {
+  return undefined;
+}
 
 // 마우스 올림 효과는 마우스에서만 켠다(onPointerEnter + pointerType). 휴대폰에서 누른 뒤
 // 흐리거나 떠오른 모양이 그대로 남지 않게.
@@ -55,8 +78,11 @@ const S = {
     padding: "6px 14px", minHeight: 36, borderRadius: 6, cursor: "pointer", fontSize: 13,
     transition: "opacity 0.15s ease", whiteSpace: "nowrap", flexShrink: 0,
   },
-  // 이름·배지를 누르면 작은 계정 메뉴('비밀번호 바꾸기'). 배치는 그대로 .qm-nav-who 가 정한다
+  // 이름·배지·⋯ 를 누르면 작은 메뉴('비밀번호 바꾸기'·'백업 내려받기'). 배치는 그대로 .qm-nav-who 가 정한다
   whoWrap: { position: "relative", display: "flex", minWidth: 0 },
+  // 배지와 ⋯ 를 한 줄로 — 휴대폰(이름 위·배지 아래 두 줄)에서도 높이·폭이 늘지 않게 배지 옆에 둔다
+  whoSub: { display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 },
+  moreMark: { fontSize: 15, lineHeight: 1, color: "#8a8a8a", fontWeight: 700 },
   whoBtn: {
     background: "none", border: "none", padding: "4px 0", margin: 0, minHeight: 36, minWidth: 0,
     font: "inherit", color: "inherit", cursor: "pointer", textAlign: "inherit",
@@ -131,6 +157,13 @@ const S = {
     fontSize: 11, padding: "1px 6px", borderRadius: 4,
   }),
   count: { flexShrink: 0 },
+  // 마지막 공부('3일 전')·미해결 메모 수: 둘째 줄 안에서 줄지 않고, 모자라면 과목 배지가 먼저 '…' 로 준다
+  studied: { flexShrink: 0 },
+  noteBadge: (hard) => ({
+    flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 2,
+    padding: "0 4px", height: 16, borderRadius: 4, fontSize: 11, fontWeight: 700,
+    background: hard ? "rgba(245,158,11,0.18)" : "rgba(245,158,11,0.12)", color: "#f5b544",
+  }),
   cardBtns: { display: "flex", flexShrink: 0 },
   editBtn: {
     height: 30, background: "#242424", color: "#a0a0a0",
@@ -159,6 +192,20 @@ const S = {
     background: "none", border: "none", borderRadius: 6, color: ICON_GRAY, fontSize: 14,
     cursor: "pointer", lineHeight: 1, transition: "color 0.15s ease",
   },
+  // 찾기·정렬 줄(문제집이 많을 때만): 낮게 한 줄
+  tools: { display: "flex", alignItems: "center", gap: 6, margin: "-4px 0 10px" },
+  search: {
+    flex: "1 1 auto", minWidth: 0, height: 32, padding: "0 10px",
+    background: "#1a1a1a", border: "1px solid #2e2e2e", borderRadius: 7,
+    color: "#f1f1f1", fontSize: 14, outline: "none", transition: "border-color 0.15s ease",
+  },
+  sortGroup: { display: "inline-flex", flexShrink: 0, border: "1px solid #2e2e2e", borderRadius: 7, overflow: "hidden" },
+  sortBtn: (on) => ({
+    height: 30, padding: "0 10px", border: "none", whiteSpace: "nowrap", cursor: "pointer",
+    fontSize: 12, fontWeight: 700,
+    background: on ? "rgba(245,158,11,0.14)" : "#1a1a1a", color: on ? "#f59e0b" : "#8a8a8a",
+  }),
+  noMatch: { color: "#8a8a8a", fontSize: 13, padding: "16px 2px" },
   emptyWrap: {
     display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
     marginTop: 80, gap: 12, padding: "0 16px",
@@ -243,14 +290,14 @@ const S = {
     marginBottom: -1, borderRadius: "6px 6px 0 0", transition: "color 0.15s ease, background 0.15s ease",
   }),
 
-  // 토스트
+  // 토스트(info: 백업 진행처럼 잠깐 이어지는 안내). 짙은 바탕 — 아래 카드 글자가 비쳐 섞이지 않게
   toast: (type) => ({
-    position: "fixed", bottom: 24, right: 24, zIndex: 300,
+    position: "fixed", bottom: 24, right: 24, zIndex: 300, maxWidth: "calc(100% - 32px)",
     padding: "12px 20px", borderRadius: 8,
-    border: `1px solid ${type === "success" ? "#34d399" : "#f87171"}`,
-    background: type === "success" ? "rgba(52,211,153,0.15)" : "rgba(248,113,113,0.15)",
-    color: type === "success" ? "#34d399" : "#f87171",
-    fontSize: 14, fontWeight: 600,
+    border: `1px solid ${type === "success" ? "#34d399" : type === "info" ? "#f59e0b" : "#f87171"}`,
+    background: type === "success" ? "#11261d" : type === "info" ? "#2a2110" : "#2a1515",
+    color: type === "success" ? "#34d399" : type === "info" ? "#f5b544" : "#f87171",
+    fontSize: 14, fontWeight: 600, overflowWrap: "anywhere",
     boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
     transition: "opacity 0.3s ease",
   }),
@@ -265,7 +312,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
   // 엑셀 단추는 설정(SHOW_EXCEL)으로 켤 때만 — 결정 4 미정이라 기본은 숨김(src/config.js)
   const canExcel = SHOW_EXCEL && (role === "ADMIN" || role === "MANAGER");
 
-  // 이름·배지를 누르면 여는 계정 메뉴. 바깥을 누르거나 Esc 면 닫는다
+  // 이름·배지·⋯ 를 누르면 여는 메뉴. 바깥을 누르거나 Esc·뒤로 가기면 닫는다
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   useEffect(() => {
@@ -280,7 +327,11 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
     };
   }, [menuOpen]);
 
-  const [sets, setSets] = useState([]);
+  const username = currentUser();
+
+  // 풀기·편집·메모에서 돌아오면 지난 목록(이 탭 메모리)으로 바로 그리고 뒤에서 새로 받는다 — '불러오는 중'·맨 위로 튀기 없이
+  const [cached] = useState(() => readDashCache(username));
+  const [sets, setSets] = useState(() => cached?.sets ?? []);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
@@ -313,8 +364,17 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
   // 토스트
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
 
-  const username = localStorage.getItem("username") || "";
+  // 백업 진행 안내('문제집 12/49'). 빈 글이면 안 보임
+  const [backupMsg, setBackupMsg] = useState("");
+  const backupBusy = useRef(false);
+
+  // 찾기·정렬(최근 공부 순은 기기에 기억)·마지막 공부 때(이 기기 공부 기록 — 대시보드를 열 때마다 다시 읽음)
+  const [query, setQuery] = useState("");
+  const [sortMode, setSortMode] = useState(() => loadSortMode(username));
+  const [studied] = useState(() => lastStudiedMap(username));
+  const [now] = useState(() => new Date());
 
   // 하드모드를 켠 원래 문제집 id(문자열). 기기에 기억한다(utils/hardMode.js)
   const [hardOn, setHardOn] = useState(() => new Set(loadHardModeIds(username)));
@@ -347,27 +407,53 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
   }
 
   // 목록 상태: loading(처음 불러오는 중) · ok · error. 실패를 빈 목록으로 보이지 않게 한다.
-  const [loadState, setLoadState] = useState("loading");
+  // 기억해 둔 목록이 있으면 처음부터 ok(뒤에서 새로 받는 동안 그대로 보임)
+  const [loadState, setLoadState] = useState(cached?.sets ? "ok" : "loading");
   const [loadError, setLoadError] = useState("");
+  // 목록 요청 순번: 만들기·지우기 직후 겹친 요청 중 늦게 온 옛 응답이 새 목록을 덮지 않게
+  const fetchSeq = useRef(0);
 
   useEffect(() => { fetchSets(); }, []);
 
-  // '질문 메모' 단추의 미해결 수. 덤이라 못 불러오면(백엔드 배포 전 등) 숫자만 안 보인다
-  const [openNoteCount, setOpenNoteCount] = useState(null);
+  // 미해결 질문 메모: '질문 메모' 단추의 수와 카드마다의 수. 덤이라 못 불러오면(백엔드 배포 전 등) 숫자만 안 보인다
+  const [openNotes, setOpenNotes] = useState(() => cached?.openNotes ?? null);
   useEffect(() => {
     let alive = true;
     listNotes({ status: "open" })
-      .then((list) => { if (alive && Array.isArray(list)) setOpenNoteCount(list.length); })
+      .then((list) => {
+        if (!alive || !Array.isArray(list)) return;
+        setOpenNotes(list);
+        writeDashCache(currentUser(), { openNotes: list });
+      })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
+  const openNoteCount = openNotes ? openNotes.length : null;
+  const noteCounts = openNotes ? countNotesBySet(openNotes) : null;
+
+  // 스크롤 자리: 움직일 때마다 기억하고, 기억한 목록으로 다시 열 때 그 자리로(그리기 전에 — 맨 위가 잠깐 보이지 않게).
+  // 듣기를 layout 효과로 두는 까닭: 화면을 떠날 때 다른 화면이 짧아져 생기는 스크롤(0 으로)을 기억하지 않게 먼저 뗀다
+  useLayoutEffect(() => {
+    if (cached?.sets && cached.scrollY > 0) window.scrollTo(0, cached.scrollY);
+  }, [cached]);
+  useLayoutEffect(() => {
+    const user = currentUser();
+    function onScroll() { writeDashCache(user, { scrollY: window.scrollY }); }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   async function fetchSets() {
+    const my = ++fetchSeq.current;
     try {
-      setSets(await getSets());
+      const list = await getSets();
+      if (my !== fetchSeq.current) return;
+      setSets(list);
+      writeDashCache(currentUser(), { sets: list });
       setLoadState("ok");
       setLoadError("");
     } catch (e) {
+      if (my !== fetchSeq.current) return;
       console.error(e);
       setLoadState("error");
       setLoadError(e.message || "");
@@ -379,10 +465,49 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
     fetchSets();
   }
 
-  function showToast(message, type = "success") {
+  function showToast(message, type = "success", ms = 3000) {
     clearTimeout(toastTimer.current);
     setToast({ message, type });
-    toastTimer.current = setTimeout(() => setToast(null), 3000);
+    toastTimer.current = setTimeout(() => setToast(null), ms);
+  }
+
+  // 로그아웃은 묻고 한다(이름 옆이라 잘못 누르기 쉽고, 태블릿에서 긴 비밀번호를 다시 쳐야 함)
+  function confirmLogout() {
+    if (confirm("로그아웃할까요?")) onLogout();
+  }
+
+  function changeSort(mode) {
+    setSortMode(mode);
+    saveSortMode(currentUser(), mode);
+  }
+
+  // 전체 백업(JSON): 문제집·문항·메모를 모두 받아 파일 하나로 내려받는다(서버에는 쓰지 않음)
+  async function runBackup() {
+    setMenuOpen(false);
+    if (backupBusy.current) return;
+    backupBusy.current = true;
+    setBackupMsg("백업 준비 중…");
+    try {
+      const data = await buildBackup({
+        api: { getSets, getQuestions, listNotes },
+        username: currentUser(),
+        concurrency: 4,
+        onProgress: (p) => setBackupMsg(
+          p.phase === "sets" ? `백업 준비 중… 문제집 ${p.done}/${p.total}` : "백업 준비 중… 질문 메모"
+        ),
+        extras: backupExtras(),
+      });
+      downloadJson(data, backupFileName(new Date()));
+      const n = backupSummary(data);
+      showToast(`백업 파일을 내려받았습니다(문제집 ${n.sets} · 문항 ${n.questions} · 메모 ${n.notes})`, "success", 5000);
+    } catch (e) {
+      console.error(e);
+      // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
+      if (e.message !== SESSION_EXPIRED_MESSAGE) showToast(`백업하지 못했습니다. ${e.message || ""}`.trim(), "error", 8000);
+    } finally {
+      backupBusy.current = false;
+      setBackupMsg("");
+    }
   }
 
   // 세트 생성
@@ -515,6 +640,18 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
 
   // 카드 목록: 짝인 하드 문제집은 원래 문제집 카드에 묶는다(utils/hardMode.js)
   const cards = groupHardSets(sets);
+  // 문제집이 많을 때만 찾기·정렬 줄. 줄이 없으면 찾기·정렬도 쓰지 않는다(늘 기본 순서 그대로)
+  const showTools = cards.length > TOOLS_MIN_CARDS;
+  const shownCards = showTools ? sortCards(filterCards(cards, query), sortMode, studied) : cards;
+
+  // 뒤로 가기(안드로이드)로 창·메뉴를 닫는다. 수정 창은 저장 중이면 닫지 않는다(칸을 다시 쌓음)
+  useBack(menuOpen, () => setMenuOpen(false));
+  useBack(showCreateModal, () => setShowCreateModal(false));
+  useBack(showEditModal, () => {
+    if (editSaving) return STAY;
+    closeEditModal();
+  });
+  useBack(showUploadModal, () => closeUploadModal());
 
   // 엑셀 업로드
   function openUploadModal() {
@@ -593,10 +730,14 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
               onClick={() => setMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
-              title="계정 메뉴"
+              aria-label={`${username} 메뉴(비밀번호 바꾸기·백업)`}
+              title="메뉴"
             >
               <span style={S.username} title={username}>{username}</span>
-              <span style={S.roleBadge(role)}>{ROLE_LABEL[role] ?? "일반사용자"}</span>
+              <span style={S.whoSub}>
+                <span style={S.roleBadge(role)}>{ROLE_LABEL[role] ?? "일반사용자"}</span>
+                <span style={S.moreMark} aria-hidden="true">⋯</span>
+              </span>
             </button>
             {menuOpen && (
               <div role="menu" style={S.userMenu}>
@@ -610,12 +751,24 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                 >
                   비밀번호 바꾸기
                 </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  style={S.userMenuItem}
+                  onClick={runBackup}
+                  disabled={!!backupMsg}
+                  title="문제집·문항·질문 메모를 모두 이 기기에 파일로 받기"
+                  onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.background = "#242424"; }}
+                  onPointerLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                >
+                  백업 내려받기 (JSON)
+                </button>
               </div>
             )}
           </span>
           <button
             style={S.logoutBtn}
-            onClick={onLogout}
+            onClick={confirmLogout}
             onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.7"; }}
             onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           >
@@ -667,6 +820,26 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
           </div>
         )}
 
+        {showTools && (
+          <div style={S.tools} className="qm-dash-tools">
+            <input
+              type="search"
+              style={S.search}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={focusGold}
+              onBlur={blurGray}
+              placeholder="제목·과목 찾기"
+              aria-label="문제집 찾기(제목·과목)"
+              enterKeyHint="search"
+            />
+            <div style={S.sortGroup} role="group" aria-label="정렬">
+              <button type="button" style={S.sortBtn(sortMode === SORT_DEFAULT)} aria-pressed={sortMode === SORT_DEFAULT} onClick={() => changeSort(SORT_DEFAULT)} title="만든 순(새것부터)">기본</button>
+              <button type="button" style={S.sortBtn(sortMode === SORT_RECENT)} aria-pressed={sortMode === SORT_RECENT} onClick={() => changeSort(SORT_RECENT)} title="이 기기에서 최근에 공부한 순">최근 공부</button>
+            </div>
+          </div>
+        )}
+
         {sets.length === 0 ? (
           loadState === "ok" ? (
             <div style={S.emptyWrap}>
@@ -678,12 +851,18 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
               <p style={S.emptyText}>문제집을 불러오는 중…</p>
             </div>
           ) : null
+        ) : shownCards.length === 0 ? (
+          <div style={S.noMatch}>‘{query.trim()}’ 에 맞는 문제집이 없습니다.</div>
         ) : (
           <div style={S.grid} className="qm-dash-grid">
-            {cards.map(({ set: s, hard }) => {
+            {shownCards.map((card) => {
+              const { set: s, hard } = card;
               // 하드모드가 켜지면 풀기·편집·⬇ 엑셀·문항 수가 짝인 하드 문제집을 따른다
               const hardActive = !!hard && hardOn.has(String(s.id));
               const target = hardActive ? hard : s;
+              const lastAt = lastStudiedOf(card, studied);
+              const studiedText = lastAt ? relativeDay(lastAt, now) : "";
+              const noteCount = cardNoteCount(card, noteCounts);
               return (
                 <div
                   key={s.id}
@@ -701,6 +880,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                         onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f59e0b"; }}
                         onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
                         title="제목/과목 수정"
+                        aria-label={`「${s.title}」 제목·과목 수정`}
                       >✏</button>
                       <button
                         style={S.iconBtn}
@@ -708,6 +888,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                         onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
                         onPointerLeave={(e) => { e.currentTarget.style.color = ICON_GRAY; }}
                         title="삭제"
+                        aria-label={`「${s.title}」 삭제`}
                       >✕</button>
                     </div>
                     {s.title}
@@ -724,6 +905,22 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                         <span className="qm-count-long">문항 {target.questionCount}개</span>
                         <span className="qm-count-short">{target.questionCount}문항</span>
                       </span>
+                      {/* 마지막 공부(이 기기 기록, 하드 짝은 늦은 쪽)·미해결 메모 수 — 같은 줄 안에서만(카드 높이 그대로) */}
+                      {studiedText && (
+                        <span style={S.studied} className="qm-card-studied" title={`마지막 공부: ${new Date(lastAt).toLocaleString()}`}>
+                          <span className="qm-card-studied-dot">· </span>{studiedText}
+                        </span>
+                      )}
+                      {noteCount > 0 && (
+                        <span
+                          style={S.noteBadge(hardActive)}
+                          className="qm-card-notes"
+                          title={`미해결 질문 메모 ${noteCount}개`}
+                          aria-label={`미해결 질문 메모 ${noteCount}개`}
+                        >
+                          <PencilIcon size={10} />{noteCount > 99 ? "99+" : noteCount}
+                        </span>
+                      )}
                     </div>
                     <div style={S.cardBtns} className="qm-card-btns">
                       {hard && (
@@ -774,23 +971,27 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
       {/* ── 세트 생성 모달 ── */}
       {showCreateModal && (
         <div style={S.overlay} onClick={() => setShowCreateModal(false)}>
-          <div style={S.modal} onClick={(e) => e.stopPropagation()}>
+          <div style={S.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="qm-create-title">
             <button
               style={S.modalClose}
               onClick={() => setShowCreateModal(false)}
               onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
               onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
+              aria-label="닫기"
+              title="닫기"
             >✕</button>
-            <div style={S.modalTitle}>새 문제집 만들기</div>
-            <label style={S.label}>제목 *</label>
+            <div style={S.modalTitle} id="qm-create-title">새 문제집 만들기</div>
+            <label style={S.label} htmlFor="qm-create-name">제목 *</label>
             <input
+              id="qm-create-name"
               style={S.input} value={title}
               onChange={(e) => setTitle(e.target.value)}
               onFocus={focusGold} onBlur={blurGray}
               placeholder="예: 2025 수능 국어" autoFocus
             />
-            <label style={S.label}>과목</label>
+            <label style={S.label} htmlFor="qm-create-subject">과목</label>
             <input
+              id="qm-create-subject"
               style={S.input} value={subject}
               onChange={(e) => setSubject(e.target.value)}
               onFocus={focusGold} onBlur={blurGray}
@@ -815,17 +1016,20 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
       {/* ── 세트 수정 모달 ── */}
       {showEditModal && (
         <div style={S.overlay} onClick={closeEditModal}>
-          <div style={S.modal} onClick={(e) => e.stopPropagation()}>
+          <div style={S.modal} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="qm-edit-title">
             <button
               style={S.modalClose}
               onClick={closeEditModal}
               disabled={editSaving}
               onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
               onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
+              aria-label="닫기"
+              title="닫기"
             >✕</button>
-            <div style={S.modalTitle}>문제집 수정</div>
-            <label style={S.label}>제목 *</label>
+            <div style={S.modalTitle} id="qm-edit-title">문제집 수정</div>
+            <label style={S.label} htmlFor="qm-edit-name">제목 *</label>
             <input
+              id="qm-edit-name"
               style={S.input}
               value={editTitle}
               onChange={(e) => { setEditTitle(e.target.value); setEditError(""); }}
@@ -833,8 +1037,9 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
               placeholder="문제집 제목"
               autoFocus
             />
-            <label style={S.label}>과목</label>
+            <label style={S.label} htmlFor="qm-edit-subject">과목</label>
             <input
+              id="qm-edit-subject"
               style={S.input}
               value={editSubject}
               onChange={(e) => setEditSubject(e.target.value)}
@@ -866,14 +1071,16 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
       {/* ── 엑셀 업로드 모달 ── */}
       {showUploadModal && (
         <div style={S.overlay} onClick={closeUploadModal}>
-          <div style={S.uploadModal} onClick={(e) => e.stopPropagation()}>
+          <div style={S.uploadModal} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="qm-upload-title">
             <button
               style={S.modalClose}
               onClick={closeUploadModal}
               onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f1f1f1"; }}
               onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
+              aria-label="닫기"
+              title="닫기"
             >✕</button>
-            <div style={S.modalTitle}>엑셀로 문제 업로드</div>
+            <div style={S.modalTitle} id="qm-upload-title">엑셀로 문제 업로드</div>
 
             <div style={S.tabs}>
               <button
@@ -888,8 +1095,9 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
 
             {uploadTab === "existing" ? (
               <>
-                <label style={S.label}>문제집 선택 *</label>
+                <label style={S.label} htmlFor="qm-upload-set">문제집 선택 *</label>
                 <select
+                  id="qm-upload-set"
                   style={S.select}
                   value={selectedSetId}
                   onChange={(e) => setSelectedSetId(e.target.value)}
@@ -907,15 +1115,17 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
               </>
             ) : (
               <>
-                <label style={S.label}>문제집 이름 *</label>
+                <label style={S.label} htmlFor="qm-upload-name">문제집 이름 *</label>
                 <input
+                  id="qm-upload-name"
                   style={S.input} value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
                   onFocus={focusGold} onBlur={blurGray}
                   placeholder="예: 2025 수능 영어"
                 />
-                <label style={S.label}>과목 (선택)</label>
+                <label style={S.label} htmlFor="qm-upload-subject">과목 (선택)</label>
                 <input
+                  id="qm-upload-subject"
                   style={S.input} value={newSubject}
                   onChange={(e) => setNewSubject(e.target.value)}
                   onFocus={focusGold} onBlur={blurGray}
@@ -924,7 +1134,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
               </>
             )}
 
-            <label style={S.label}>파일 선택 *</label>
+            <label style={S.label} htmlFor="qm-upload-file">파일 선택 *</label>
             <label
               style={{
                 ...S.fileInputWrap,
@@ -937,6 +1147,7 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
                 {uploadFile ? uploadFile.name : ".xlsx 파일을 선택하세요"}
               </span>
               <input
+                id="qm-upload-file"
                 type="file"
                 accept=".xlsx"
                 style={{ display: "none" }}
@@ -971,9 +1182,11 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
         </div>
       )}
 
-      {/* ── 토스트 ── */}
-      {toast && (
-        <div style={S.toast(toast.type)}>{toast.message}</div>
+      {/* ── 토스트(백업 진행 중이면 그 안내가 먼저) ── */}
+      {backupMsg ? (
+        <div style={S.toast("info")} role="status" data-backup-progress="">{backupMsg}</div>
+      ) : toast && (
+        <div style={S.toast(toast.type)} role={toast.type === "error" ? "alert" : "status"}>{toast.message}</div>
       )}
     </div>
   );

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listNotes, updateNote, deleteNote } from "../api/notes";
 import { getSets } from "../api/quiz";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
+import { STAY, useBack } from "../utils/backStack";
 import {
   NOTE_CONTENT_MAX, buildCopyText, copyToClipboard, formatNoteTime, groupLabel, groupNotes,
 } from "../utils/notes";
@@ -259,6 +260,14 @@ export default function NotesView({ onBack }) {
     setEditing(null);
   }
 
+  // 뒤로 가기(안드로이드)는 열린 고치기 칸·복사 창부터 닫는다. 고친 글이 있으면 묻고, 남기로 하면 칸을 다시 쌓는다
+  useBack(!!editing, () => {
+    if (editing?.saving) return STAY;
+    if (editChanged() && !confirm("고친 내용을 버릴까요?")) return STAY;
+    setEditing(null);
+  });
+  useBack(!!copyFallback, () => setCopyFallback(null));
+
   function goBack() {
     if (editChanged() && !confirm("고치던 메모를 저장하지 않고 나갈까요?")) return;
     onBack();
@@ -496,7 +505,7 @@ export default function NotesView({ onBack }) {
 
       {copyFallback && (
         <div style={S.overlay} onClick={() => setCopyFallback(null)}>
-          <div style={S.sheet} onClick={(e) => e.stopPropagation()}>
+          <div style={S.sheet} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="미해결 메모 복사">
             <div style={S.sheetTitle}>미해결 메모</div>
             <div style={S.sheetHint}>이 브라우저는 바로 복사하지 못했습니다. 글을 길게 눌러 모두 선택한 뒤 복사해 주세요.</div>
             <textarea style={S.copyArea} value={copyFallback} readOnly onFocus={(e) => e.target.select()} autoFocus />
