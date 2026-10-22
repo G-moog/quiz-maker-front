@@ -592,16 +592,9 @@ export default function SolveView({ set, onBack }) {
   // 화면을 떠날 때(목록으로·뒤로 가기): layout 정리 단계라 본문이 아직 붙어 있어 읽던 자리를 잴 수 있다
   useLayoutEffect(() => () => persist(), [persist]);
 
-  // 이 화면에서는 스크롤을 직접 다룬다: 창(목차·메모)을 닫으며 history 를 한 칸 되돌릴 때(backStack release)
-  // 크롬이 그 칸을 쌓을 때의 스크롤 자리로 되돌려 목차로 간 자리를 덮었다(Edge 헤드리스에서 확인).
-  // 이 값은 history 칸마다 따로 붙는다 — 지금 칸(풀기 화면)과 여기서 쌓는 칸에만 걸리고, 목록 화면 칸은 그대로
-  useEffect(() => {
-    const h = window.history;
-    if (!h || !("scrollRestoration" in h)) return undefined;
-    const prev = h.scrollRestoration;
-    h.scrollRestoration = "manual";
-    return () => { h.scrollRestoration = prev; };
-  }, []);
+  // 창(목차·메모)을 닫으며 history 를 한 칸 되돌릴 때(backStack release) 크롬이 스크롤을 그 칸을 쌓을 때의 자리로
+  // 되돌려 목차로 간 자리를 덮던 것은 backStack 이 앱 전체를 history.scrollRestoration = "manual" 로 두어 막는다.
+  // (예전처럼 이 화면만 바꿨다 되돌리면 효과 순서 때문에 목록 화면 칸에 manual 이 남거나 auto 로 돌아가 떠나는 길마다 달랐다)
 
   // 스크롤: 0.5초 멈추면 저장, 읽은 정도 막대(문항 하나짜리 빈칸 문제집)는 그림마다 직접 갱신(렌더 없이)
   useEffect(() => {

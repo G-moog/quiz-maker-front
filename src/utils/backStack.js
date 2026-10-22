@@ -70,6 +70,13 @@ export function pushBack(onBack) {
   if (!listening) {
     window.addEventListener("popstate", onPop);
     listening = true;
+    // 스크롤 자리는 앱이 화면마다 스스로 되살린다(대시보드 목록 기억·풀기 이어 보기·편집기 목록 자리).
+    // 브라우저 자동 복원(auto)을 두면 release() 의 history.go(-n) 때 크롬이 그 칸을 쌓을 때의 스크롤로 되돌려
+    // 창을 연 채 움직인 자리(메뉴를 열고 내린 목록·목차로 간 자리 등)를 덮는다.
+    // 이 값은 history 칸마다 붙고 새 칸은 지금 칸의 값을 이어받으므로, 첫 칸을 쌓기 전에 한 번 바꾸면 앱의 칸이 모두 manual
+    try {
+      if ("scrollRestoration" in window.history) window.history.scrollRestoration = "manual";
+    } catch { /* 못 바꾸면 그대로 */ }
   }
   const entry = { id: ++seq, onBack, pushed: false };
   stack.push(entry);

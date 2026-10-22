@@ -10,13 +10,16 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 // 시험마다 새 window 와 새 모듈(쌓인 칸·popstate 듣기가 모듈 안에 있음)
 async function setup() {
   const listeners = new Set();
-  const entries = [{ state: null }];
+  // sr: 칸마다의 scrollRestoration(브라우저처럼 새 칸은 지금 칸의 값을 이어받음)
+  const entries = [{ state: null, sr: 'auto' }];
   let index = 0;
   const log = [];
   const history = {
+    get scrollRestoration() { return entries[index].sr; },
+    set scrollRestoration(v) { entries[index].sr = v; },
     pushState(state) {
       entries.splice(index + 1);
-      entries.push({ state });
+      entries.push({ state, sr: entries[index].sr });
       index++;
       log.push('push');
     },
@@ -40,6 +43,7 @@ async function setup() {
     log,
     get index() { return index; },
     get length() { return entries.length; },
+    srs: () => entries.map((e) => e.sr),
     userBack: () => history.go(-1),
   };
 }
@@ -57,6 +61,27 @@ test('pushBack: 칸마다 history 에 한 칸씩 쌓는다', async () => {
   h.pushBack(counter());
   assert.equal(h.index, 2);
   assert.deepEqual(h.log, ['push', 'push']);
+});
+
+// 통합 검토: 풀기 화면만 manual 로 바꿨다 되돌리던 때는 효과 순서 탓에 바닥(대시보드) 칸이 떠나는 길마다 auto/manual 로 달라,
+// 대시보드 메뉴를 연 채 내린 뒤 닫으면(release → go(-1)) 크롬이 메뉴를 연 때의 스크롤로 되돌렸다
+test('첫 칸을 쌓기 전에 scrollRestoration 을 manual 로 — 바닥 칸과 쌓는 칸 모두(release 로 돌아가도)', async () => {
+  const h = await setup();
+  assert.deepEqual(h.srs(), ['auto']);
+  const release = h.pushBack(counter());
+  h.pushBack(counter());
+  assert.deepEqual(h.srs(), ['manual', 'manual', 'manual']);
+  release();
+  await tick();
+  assert.equal(h.index, 0);
+  assert.equal(globalThis.window.history.scrollRestoration, 'manual');
+});
+
+test('scrollRestoration 을 바꾸지 못해도(던짐) 그대로 쌓는다', async () => {
+  const h = await setup();
+  Object.defineProperty(globalThis.window.history, 'scrollRestoration', { get() { return 'auto'; }, set() { throw new Error('no'); }, configurable: true });
+  h.pushBack(counter());
+  assert.equal(h.index, 1);
 });
 
 test('사용자 뒤로 가기: 가장 위의 닫는 함수만, 한 번씩', async () => {
