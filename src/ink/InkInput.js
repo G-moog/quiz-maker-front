@@ -38,7 +38,8 @@ export class InkInput {
     this.store = store;
     this.hooks = hooks;
     // penActiveAt: 이 영역에서 펜으로 긋는 중이면 그 펜의 마지막 입력 시각(손바닥 막기 — geometry.palmBlocked)
-    this.palm = { penDown: false, lastPenDown: -Infinity, lastPenHover: -Infinity, lastPenUp: -Infinity, penActiveAt: null };
+    // lastPenAir: 펜이 공중에 떠 있다는 마지막 신호(buttons 0 인 펜 움직임)
+    this.palm = { penDown: false, lastPenDown: -Infinity, lastPenHover: -Infinity, lastPenUp: -Infinity, penActiveAt: null, lastPenAir: -Infinity };
     this.palmTouches = new Set(); // 손바닥으로 본 손가락(touch identifier) — 뗄 때까지 브라우저 스크롤을 막는다
     this.penTouches = new Set(); // 펜이 함께 보낸 touch(identifier) — 손바닥으로 보지 않는다
     this.lastPenAt = null; // 마지막 펜 pointerdown 자리·때 { x, y, t }
@@ -153,6 +154,11 @@ export class InkInput {
     if (e.pointerType !== "pen") return;
     // 펜 호버(에어뷰: 닿지 않고 떠 있음)도, 긋는 중도 '펜이 화면 가까이 있음'
     this.palm.lastPenHover = timeOf(e);
+    // 닿지 않고 떠 있다(buttons 0) = 떼기를 놓쳤어도 펜은 닿아 있지 않다(손바닥 판정만 — 긋던 선은 건드리지 않음)
+    if (e.buttons === 0) {
+      this.palm.lastPenAir = this.palm.lastPenHover;
+      this.palm.penDown = false;
+    }
     if (this.touches.size) this.ignoreTouches(this.palm.lastPenHover);
   }
 

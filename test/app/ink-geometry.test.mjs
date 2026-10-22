@@ -73,6 +73,11 @@ test('손바닥 무시: 긋는 중인 펜은 가만히 대고 있어도(2초 넘
   assert.equal(palmBlocked(held, PEN_STUCK_MS + 1), true, '이제: 영역에서 긋는 중이면 계속');
   assert.equal(palmBlocked(held, PEN_HELD_MAX_MS - 1, true), true, '머리 줄(safe)도');
   assert.equal(palmBlocked(held, PEN_HELD_MAX_MS + 1), false, '안전 한도');
+  // 떼기를 놓쳤지만 펜이 공중에 뜬 신호(호버)가 왔다: 닿아 있음은 끝, 호버 규칙(PALM_MS)만
+  const lifted = { ...held, penDown: false, lastPenHover: 3000, lastPenAir: 3000 };
+  assert.equal(palmBlocked(lifted, 3000 + PALM_MS - 1), true);
+  assert.equal(palmBlocked(lifted, 3000 + PALM_MS + 1), false);
+  assert.equal(palmBlocked({ ...held, lastPenAir: -1 }, 5000), true, '긋기 전의 호버는 상관없음');
   const idle = { penDown: false, lastPenDown: 0, lastPenHover: 1000, lastPenUp: 1000, penActiveAt: null };
   assert.equal(palmBlocked(idle, 1000 + PALM_MS - 1), true);
   assert.equal(palmBlocked(idle, 1000 + PALM_MS + 1), false);

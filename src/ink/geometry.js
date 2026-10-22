@@ -71,10 +71,12 @@ export function tapBlockedByScroll({ gliding = false, now, scrollEndAt = -Infini
 // 손바닥 무시: 펜이 닿아 있거나, 펜 호버·펜 뗀 뒤 PALM_MS 안이면 손 입력을 받지 않는다.
 // 펜이 닿아 있다는 표시는 마지막 펜 입력(누름·움직임, lastPenHover 는 닿은 채 움직임도 포함) 뒤 PEN_STUCK_MS 까지만 믿는다.
 // (lastPenDown 을 모르는 예전 모양이면 표시를 그대로 믿는다)
-// penActiveAt: 필기 영역에서 펜으로 긋는 중이면 그 펜의 마지막 입력 시각 — 가만히 대고 있어도 PEN_HELD_MAX_MS 까지 막는다
+// penActiveAt: 필기 영역에서 펜으로 긋는 중이면 그 펜의 마지막 입력 시각 — 가만히 대고 있어도 PEN_HELD_MAX_MS 까지 막는다.
+//   그 뒤에 펜이 공중에 떠 있다는 신호(lastPenAir: buttons 0 인 펜 움직임 = 호버)가 왔으면 닿아 있지 않은 것(떼기를 놓침) —
+//   이때는 호버 규칙(PALM_MS)만 남는다. 손바닥 판정에만 쓰고 긋던 선은 건드리지 않는다
 // safe(머리 줄·도구 막대): 펜이 닿아 있거나 뗀 직후(PALM_SAFE_MS)만 — 펜을 든 손으로도 단추를 누를 수 있게
-export function palmBlocked({ penDown, lastPenDown, lastPenHover = -Infinity, lastPenUp = -Infinity, penActiveAt = null }, now, safe = false) {
-  const held = penActiveAt != null && now - penActiveAt < PEN_HELD_MAX_MS;
+export function palmBlocked({ penDown, lastPenDown, lastPenHover = -Infinity, lastPenUp = -Infinity, penActiveAt = null, lastPenAir = -Infinity }, now, safe = false) {
+  const held = penActiveAt != null && !(lastPenAir > penActiveAt) && now - penActiveAt < PEN_HELD_MAX_MS;
   const down = held || (!!penDown && (lastPenDown === undefined || now - Math.max(lastPenDown, lastPenHover) < PEN_STUCK_MS));
   if (safe) return down || now - lastPenUp < PALM_SAFE_MS;
   return down || now - lastPenHover < PALM_MS || now - lastPenUp < PALM_MS;

@@ -47,8 +47,9 @@ export function InkModeButton({ on, onToggle }) {
 }
 
 // toggle: 고르는 단추(펜 색·형광펜·지우개·숨기기)는 고르지 않은 때도 aria-pressed="false" —
-// 화면 읽기 프로그램이 켜고 끄는 단추로 읽어 지금 어느 도구인지 견줄 수 있게. 되돌리기·다시 하기·전체 지우기는 토글이 아님
-function ToolButton({ active = false, toggle = false, disabled = false, label, onClick, children }) {
+// 화면 읽기 프로그램이 켜고 끄는 단추로 읽어 지금 어느 도구인지 견줄 수 있게. 되돌리기·다시 하기·전체 지우기는 토글이 아님.
+// label 은 바꾸지 않는 이름(aria-label — 시험·다른 화면이 이 이름으로 찾음), hint 는 마우스를 올렸을 때 덧붙이는 말(title)
+function ToolButton({ active = false, toggle = false, disabled = false, label, hint, onClick, children }) {
   return (
     <button
       type="button"
@@ -58,7 +59,7 @@ function ToolButton({ active = false, toggle = false, disabled = false, label, o
       disabled={disabled}
       aria-pressed={toggle ? active : undefined}
       aria-label={label}
-      title={label}
+      title={hint ? `${label} (${hint})` : label}
     >
       {children}
     </button>
@@ -105,10 +106,10 @@ export function InkToolbar({ store }) {
         <EraserIcon />
       </ToolButton>
       <span className="qm-ink-sep" aria-hidden="true" />
-      <ToolButton disabled={!canUndo(s)} label="되돌리기 (Ctrl+Z)" onClick={() => store.undo()}>
+      <ToolButton disabled={!canUndo(s)} label="되돌리기" hint="Ctrl+Z" onClick={() => store.undo()}>
         <UndoIcon />
       </ToolButton>
-      <ToolButton disabled={!canRedo(s)} label="다시 하기 (Ctrl+Y)" onClick={() => store.redo()}>
+      <ToolButton disabled={!canRedo(s)} label="다시 하기" hint="Ctrl+Y" onClick={() => store.redo()}>
         <RedoIcon />
       </ToolButton>
       <ToolButton
