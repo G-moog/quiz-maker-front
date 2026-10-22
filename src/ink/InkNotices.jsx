@@ -4,7 +4,8 @@ import { heightDrift, isStale, otherWidths } from "./inkStore";
 // 필기 안내(본문 바뀜·다른 폭의 필기·높이 차이·불러오기/저장 실패). 화면의 위쪽 묶음(머리 줄·도구 막대, sticky)
 // 바로 아래에 겹쳐 띄운다(position: absolute) — 글 흐름 안에 두면 안내가 생기거나 사라질 때(첫 선을 그으면 대개 사라짐)
 // 문항 글이 펜 아래에서 위아래로 튀므로. 글을 가리면 '닫기'로 닫는다(불러오기·저장 실패는 이 화면에서 다시 안 뜸).
-// 본문 바뀜·다른 폭·높이 차이는 이 문항에 저장된 필기가 있을 때만(필기 모드를 꺼도 — 필기가 말없이 사라져 보이지 않게),
+// 본문 바뀜·다른 폭·높이 차이는 이 문항에 저장된 필기가 있을 때만(필기 모드를 꺼도 — 필기가 말없이 사라져 보이지 않게).
+// 본문이 바뀐 뒤 새로 쓰면 예전 필기는 지우지 않고 따로 보관하고(inkDb — "<열쇠>#old:…"), 보관했다는 안내를 한 번 띄운다.
 // 불러오기·저장 실패는 필기 모드에서만(쓰는 중일 때)
 
 const S = {
@@ -36,7 +37,9 @@ const S = {
 function noticesOf(snap, enabled) {
   const out = [];
   if (snap.loaded && isStale(snap)) {
-    out.push({ id: `stale@${snap.key}`, kind: "stale", warn: true, text: "문항 내용이 바뀌어 예전 필기를 숨겼습니다. 새로 쓰면 예전 필기는 지워집니다(되돌리기로 살릴 수 있음)." });
+    out.push({ id: `stale@${snap.key}`, kind: "stale", warn: true, text: "문항 내용이 바뀌어 예전 필기를 숨겼습니다. 새로 쓰면 예전 필기는 이 기기에 따로 보관됩니다." });
+  } else if (snap.archivedKey && snap.archivedKey === snap.key) {
+    out.push({ id: `archived@${snap.key}`, text: "바뀌기 전 문항의 예전 필기는 이 기기에 따로 보관했습니다(필기 백업에 함께 들어갑니다)." });
   }
   const others = otherWidths(snap);
   if (others.length) {

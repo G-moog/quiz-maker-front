@@ -44,6 +44,16 @@ export function UndoIcon({ size = 20 }) {
   );
 }
 
+// 다시 하기: 되돌리기를 좌우로 뒤집은 모양
+export function RedoIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} {...base}>
+      <path d="M15 14l5-5-5-5" />
+      <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+    </svg>
+  );
+}
+
 export function EyeIcon({ size = 20, off = false }) {
   return (
     <svg width={size} height={size} {...base}>

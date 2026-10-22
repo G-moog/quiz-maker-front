@@ -1,5 +1,6 @@
 // 필기(S펜) 계산 — DOM·React 없이 값만 다루는 순수 함수와 상수.
 // 단위: 좌표 px(필기 영역 왼쪽 위 기준), 시간 ms, 속도 px/ms. 점 하나 = [x, y, 누르는 힘(0~1)]
+// (실제 태블릿으로 아직 재 보지 못한 문턱값은 모두 여기 이름 붙은 상수로 둔다 — ?pentest 로 재고 고친다)
 
 // ── 도구 ──
 // 펜 색은 어두운 화면(#1a1a1a)에서 잘 보이는 밝은 빨강·파랑·초록
@@ -16,20 +17,35 @@ export const ERASER_RADIUS = 12;
 
 // ── 입력 판정 ──
 export const TAP_SLOP = 6; // '콕': 움직임 이 px 미만
+export const PEN_BLANK_TAP_SLOP = 12; // 빈칸 위에서 시작한 펜 콕은 이만큼 미끄러져도 콕(S펜 촉이 닿는 순간 미끄러짐). 빈칸 밖은 TAP_SLOP 그대로(점 찍기)
 export const TAP_MS = 300; // ……이고 누른 시간이 이 ms 미만(펜). 마우스는 시간 상관없이 안 움직였으면 클릭
 export const DOUBLE_TAP_MS = 400; // 두 번째 콕이 첫 콕을 뗀 뒤 이 ms 안에 눌리면 두 번 콕
 export const PALM_MS = 500; // 펜 호버·펜 뗀 뒤 이 ms 동안 손(touch) 입력 무시
 export const PALM_SAFE_MS = 150; // 머리 줄·도구 막대(손바닥이 닿기 어려운 곳)는 펜을 뗀 뒤 이만큼만 무시하고 호버는 보지 않음
-export const PEN_STUCK_MS = 2000; // '펜이 닿아 있음'은 마지막 펜 입력 뒤 이만큼만 믿는다(떼기를 놓쳐도 손이 계속 막히지 않게)
+export const PEN_STUCK_MS = 2000; // '펜이 닿아 있음'(창 전체)은 마지막 펜 입력 뒤 이만큼만 믿는다(떼기를 놓쳐도 손이 계속 막히지 않게)
+export const PEN_HELD_MAX_MS = 10000; // 필기 영역에서 긋는 중인 펜은 가만히 대고 있어도 이만큼은 손바닥을 막는다(떼기를 놓친 때의 안전 한도)
 export const TOUCH_SLOP = 10; // 손가락 한 번 터치로 볼 움직임 한도(넘으면 끈 것 — 빈칸을 열지 않음)
+// 접촉 크기(PointerEvent.width/height, Touch.radiusX·Y × 2, CSS px)가 이보다 크면 손바닥으로 보고 무시한다.
+// 손가락은 보통 10~25, 손바닥은 40 이상(추정 — 크기를 알려 주지 않는 기기는 1 이라 걸리지 않음)
+export const PALM_CONTACT_PX = 35;
+// 두 손가락 스크롤·관성이 끝난(멈춘) 뒤 이 ms 안에 닿은 손가락은 '멈추는 터치' — 빈칸을 열지 않는다
+export const SCROLL_TAP_GUARD_MS = 300;
+// 페이지가 아직 움직이는 중(마지막 scroll 이벤트가 이 ms 안)에 닿은 손가락도 '멈추는 터치'
+export const SCROLL_MOVING_MS = 120;
 
 export function distance(ax, ay, bx, by) {
   return Math.hypot(bx - ax, by - ay);
 }
 
-// 펜·마우스로 누른 것이 '콕'인가 (moved: 처음 누른 곳에서 가장 멀리 간 거리)
-export function isTap(moved, ms, pointerType) {
-  return moved < TAP_SLOP && (pointerType === "mouse" || ms < TAP_MS);
+// 콕으로 볼 움직임 한도: 빈칸 위에서 시작한 펜만 넓게(두 번 콕), 나머지는 TAP_SLOP
+export function tapSlop(pointerType, onBlank) {
+  return pointerType === "pen" && onBlank ? PEN_BLANK_TAP_SLOP : TAP_SLOP;
+}
+
+// 펜·마우스로 누른 것이 '콕'인가 (moved: 처음 누른 곳에서 가장 멀리 간 거리, slop: tapSlop)
+// 펜은 시간 한도(TAP_MS)를 늘 본다 — 짧고 느린 선이 콕으로 바뀌지 않게
+export function isTap(moved, ms, pointerType, slop = TAP_SLOP) {
+  return moved < slop && (pointerType === "mouse" || ms < TAP_MS);
 }
 
 // 두 번 콕: 같은 빈칸을 콕(prev) → DOUBLE_TAP_MS 안에 다시 콕(tap). 콕 = { blank, downAt, upAt }
@@ -39,12 +55,29 @@ export function isDoubleTap(prev, tap) {
   return gap >= 0 && gap <= DOUBLE_TAP_MS;
 }
 
+// 접촉이 손바닥만큼 큰가(크기를 모르면 0·1 — 아님)
+export function isLargeContact(w, h) {
+  const a = Number.isFinite(w) ? w : 0;
+  const b = Number.isFinite(h) ? h : 0;
+  return Math.max(a, b) > PALM_CONTACT_PX;
+}
+
+// 손가락이 닿은 때(now)가 스크롤을 멈추는 터치인가: 관성이 돌던 중(gliding), 두 손가락 스크롤·관성이 끝난 지
+// SCROLL_TAP_GUARD_MS 안(scrollEndAt), 페이지가 아직 움직이는 중(scrollAt: 마지막 scroll 이벤트)
+export function tapBlockedByScroll({ gliding = false, now, scrollEndAt = -Infinity, scrollAt = -Infinity }) {
+  return gliding || now - scrollEndAt < SCROLL_TAP_GUARD_MS || now - scrollAt < SCROLL_MOVING_MS;
+}
+
 // 손바닥 무시: 펜이 닿아 있거나, 펜 호버·펜 뗀 뒤 PALM_MS 안이면 손 입력을 받지 않는다.
 // 펜이 닿아 있다는 표시는 마지막 펜 입력(누름·움직임, lastPenHover 는 닿은 채 움직임도 포함) 뒤 PEN_STUCK_MS 까지만 믿는다.
 // (lastPenDown 을 모르는 예전 모양이면 표시를 그대로 믿는다)
+// penActiveAt: 필기 영역에서 펜으로 긋는 중이면 그 펜의 마지막 입력 시각 — 가만히 대고 있어도 PEN_HELD_MAX_MS 까지 막는다.
+//   그 뒤에 펜이 공중에 떠 있다는 신호(lastPenAir: buttons 0 인 펜 움직임 = 호버)가 왔으면 닿아 있지 않은 것(떼기를 놓침) —
+//   이때는 호버 규칙(PALM_MS)만 남는다. 손바닥 판정에만 쓰고 긋던 선은 건드리지 않는다
 // safe(머리 줄·도구 막대): 펜이 닿아 있거나 뗀 직후(PALM_SAFE_MS)만 — 펜을 든 손으로도 단추를 누를 수 있게
-export function palmBlocked({ penDown, lastPenDown, lastPenHover = -Infinity, lastPenUp = -Infinity }, now, safe = false) {
-  const down = !!penDown && (lastPenDown === undefined || now - Math.max(lastPenDown, lastPenHover) < PEN_STUCK_MS);
+export function palmBlocked({ penDown, lastPenDown, lastPenHover = -Infinity, lastPenUp = -Infinity, penActiveAt = null, lastPenAir = -Infinity }, now, safe = false) {
+  const held = penActiveAt != null && !(lastPenAir > penActiveAt) && now - penActiveAt < PEN_HELD_MAX_MS;
+  const down = held || (!!penDown && (lastPenDown === undefined || now - Math.max(lastPenDown, lastPenHover) < PEN_STUCK_MS));
   if (safe) return down || now - lastPenUp < PALM_SAFE_MS;
   return down || now - lastPenHover < PALM_MS || now - lastPenUp < PALM_MS;
 }
@@ -89,13 +122,14 @@ export function inertiaStep(v, dt, tau = INERTIA_TAU) {
 
 // ── 선 모양 ──
 const r1 = (v) => Math.round(v * 10) / 10;
+const r2 = (v) => Math.round(v * 100) / 100;
 const xy = (p) => `${r1(p[0])},${r1(p[1])}`;
 
 // 점 더하기: 앞 점과 0.75px 보다 가까우면 버린다(좌표는 소수 1자리). 더했으면 true
 export function addPoint(pts, x, y, p) {
   const last = pts[pts.length - 1];
   if (last && distance(last[0], last[1], x, y) < 0.75) return false;
-  pts.push([r1(x), r1(y), Math.round(pressureOf(p) * 100) / 100]);
+  pts.push([r1(x), r1(y), r2(pressureOf(p))]);
   return true;
 }
 
@@ -221,6 +255,42 @@ export function strokeTouches(stroke, a, b, r = ERASER_RADIUS) {
   return false;
 }
 
+// ── 화면 폭 ──
+// 저장된 폭이 지금 폭과 이만큼(px) 안으로 다르면 같은 폭의 필기로 본다(분할 화면·확대를 조금 바꾼 정도)
+export const WIDTH_TOLERANCE_PX = 3;
+// 저장할 때와 영역 높이가 이 px 보다 다르면 '필기 위치가 어긋날 수 있음' 안내. 빈칸 폭이 고정이라 같은 폭이면
+// 높이도 거의 같아야 한다 — 한 줄(약 31px)만 밀려도 알 수 있게 작게
+export const DRIFT_PX = 8;
+
+// 지금 폭(width)에서 쓸 저장 폭: 같은 폭이 있으면 그 폭, 없으면 WIDTH_TOLERANCE_PX 안의 가장 가까운 폭, 그것도 없으면 지금 폭.
+// layouts: { "<폭>": { strokes, updatedAt } }. 거리가 같으면 최근에 쓴 쪽
+export function matchWidth(layouts, width) {
+  if (!layouts || !width) return width;
+  if (layouts[width]?.strokes?.length) return width;
+  let best = width;
+  let bestD = Infinity;
+  let bestAt = -Infinity;
+  for (const [k, l] of Object.entries(layouts)) {
+    const w = Number(k);
+    if (!l?.strokes?.length || !Number.isFinite(w)) continue;
+    const d = Math.abs(w - width);
+    if (d > WIDTH_TOLERANCE_PX) continue;
+    const at = l.updatedAt || 0;
+    if (d < bestD || (d === bestD && at > bestAt)) {
+      best = w;
+      bestD = d;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
+// 저장한 높이(saved)와 지금 높이(now)가 어긋났나
+export function driftExceeds(saved, now) {
+  if (!saved || !now) return false;
+  return Math.abs(now - saved) > DRIFT_PX;
+}
+
 // ── 저장 형식 ──
 // 본문 지문: 문항 글(빈칸 문항은 정답까지)이 바뀌었는지 가리는 짧은 값(cyrb53 + 글 길이)
 export function textHash(str) {
@@ -236,12 +306,36 @@ export function textHash(str) {
   return `${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}-${str.length}`;
 }
 
-// 선 하나를 저장할 모양으로: 좌표 소수 1자리, 힘 소수 2자리, 화면용 id 는 뺀다
+// 선 하나의 저장 모양(판 2): 점을 한 덩어리 정수 배열 q = [x×10, y×10, 힘×100, …](Int32Array)로.
+// IndexedDB 에 넣을 때 복제가 메모리 복사 한 번이라 점이 많아도 빠르고 작다. 선은 한 번 그은 뒤 바뀌지 않으므로
+// 선마다 한 번만 만들어 두고(packCache) 다음 저장부터는 그대로 쓴다 — 저장할 때마다 전체를 다시 만들지 않게.
+// (판 1 의 pts: [[x, y, p], …] 도 읽는다 — unpackRecord)
+const packCache = new WeakMap();
+
+export function packPoints(pts) {
+  const q = new Int32Array(pts.length * 3);
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    q[i * 3] = Math.round(p[0] * 10);
+    q[i * 3 + 1] = Math.round(p[1] * 10);
+    q[i * 3 + 2] = Math.round((Number.isFinite(p[2]) ? p[2] : 0.5) * 100);
+  }
+  return q;
+}
+
+export function unpackPoints(q) {
+  const pts = [];
+  for (let i = 0; i + 2 < q.length; i += 3) pts.push([q[i] / 10, q[i + 1] / 10, q[i + 2] / 100]);
+  return pts;
+}
+
 export function packStroke(s) {
-  return {
-    tool: s.tool, color: s.color, w: s.w,
-    pts: s.pts.map((p) => [r1(p[0]), r1(p[1]), Math.round(p[2] * 100) / 100]),
-  };
+  let out = packCache.get(s);
+  if (!out) {
+    out = { tool: s.tool, color: s.color, w: s.w, q: packPoints(s.pts) };
+    packCache.set(s, out);
+  }
+  return out;
 }
 
 // 문항 하나의 필기 → 저장 값 { textHash, layouts: { "<폭>": { height, strokes, updatedAt } } }. 선이 없으면 null(지움)
@@ -256,6 +350,22 @@ export function packRecord(rec) {
 }
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+const isPts = (pts) => Array.isArray(pts) && pts.length > 0 && pts.every((p) => Array.isArray(p) && isNum(p[0]) && isNum(p[1]));
+const isQ = (q) => (q instanceof Int32Array || (Array.isArray(q) && q.every(isNum))) && q.length >= 3 && q.length % 3 === 0;
+
+// 저장된 선 하나 → 화면용(점 배열). 모양이 틀리면 null
+function strokeOf(s, newId) {
+  if (!s || (s.tool !== "pen" && s.tool !== "hl") || typeof s.color !== "string" || !isNum(s.w)) return null;
+  if (s.q != null) {
+    if (!isQ(s.q)) return null;
+    const st = { tool: s.tool, color: s.color, w: s.w, pts: unpackPoints(s.q), id: newId() };
+    // 읽은 Int32Array 를 그대로 저장 모양으로 기억(다음 저장 때 다시 만들지 않게)
+    if (s.q instanceof Int32Array) packCache.set(st, { tool: s.tool, color: s.color, w: s.w, q: s.q });
+    return st;
+  }
+  if (!isPts(s.pts)) return null;
+  return { tool: s.tool, color: s.color, w: s.w, pts: s.pts.map((p) => [p[0], p[1], isNum(p[2]) ? p[2] : 0.5]), id: newId() };
+}
 
 // 저장 값 → 화면용(선마다 newId() 로 id). 모양이 틀린 선은 버린다
 export function unpackRecord(raw, newId) {
@@ -263,11 +373,27 @@ export function unpackRecord(raw, newId) {
   const layouts = {};
   for (const [w, l] of Object.entries(raw.layouts)) {
     if (!l || !Array.isArray(l.strokes)) continue;
-    const strokes = l.strokes
-      .filter((s) => s && (s.tool === "pen" || s.tool === "hl") && typeof s.color === "string" && isNum(s.w)
-        && Array.isArray(s.pts) && s.pts.length && s.pts.every((p) => Array.isArray(p) && isNum(p[0]) && isNum(p[1])))
-      .map((s) => ({ tool: s.tool, color: s.color, w: s.w, pts: s.pts.map((p) => [p[0], p[1], isNum(p[2]) ? p[2] : 0.5]), id: newId() }));
+    const strokes = [];
+    for (const s of l.strokes) {
+      const st = strokeOf(s, newId);
+      if (st) strokes.push(st);
+    }
     if (strokes.length) layouts[w] = { height: isNum(l.height) ? l.height : 0, strokes, updatedAt: isNum(l.updatedAt) ? l.updatedAt : 0 };
   }
   return { textHash: raw.textHash, layouts };
+}
+
+// 화면용 필기 → JSON 으로 옮길 수 있는 모양(판 1: pts 중첩 배열). 백업 파일용
+export function portableRecord(rec) {
+  if (!rec) return null;
+  const layouts = {};
+  for (const [w, l] of Object.entries(rec.layouts || {})) {
+    if (!l?.strokes?.length) continue;
+    layouts[w] = {
+      height: Math.round(l.height || 0),
+      updatedAt: l.updatedAt || 0,
+      strokes: l.strokes.map((s) => ({ tool: s.tool, color: s.color, w: s.w, pts: s.pts.map((p) => [r1(p[0]), r1(p[1]), r2(p[2])]) })),
+    };
+  }
+  return Object.keys(layouts).length ? { textHash: rec.textHash, layouts } : null;
 }

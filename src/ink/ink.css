@@ -1,0 +1,12 @@
+/* 필기 도구 막대(src/ink 전용 — 나머지 모양은 index.css 의 .qm-ink-*).
+   다시 하기 단추가 더해져 단추가 9개: 좁은 휴대폰에서도 한 줄에 들어가게 폭만 조금 줄인다(높이는 그대로) */
+@media (max-width: 400px) {
+  .qm-ink-bar .qm-ink-btn {
+    width: 34px;
+  }
+}
+@media (max-width: 340px) {
+  .qm-ink-bar .qm-ink-btn {
+    width: 31px;
+  }
+}

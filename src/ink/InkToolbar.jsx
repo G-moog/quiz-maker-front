@@ -1,11 +1,14 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { PEN_COLORS, HL_COLOR } from "./geometry";
-import { visibleStrokes } from "./inkStore";
-import { EraserIcon, EyeIcon, HighlighterIcon, PenIcon, UndoIcon } from "./InkIcons";
+import { canRedo, canUndo, visibleStrokes } from "./inkStore";
+import { shortcutOf } from "./inkMode";
+import { EraserIcon, EyeIcon, HighlighterIcon, PenIcon, RedoIcon, UndoIcon } from "./InkIcons";
 import { TrashIcon } from "../components/NoteIcons";
+import "./ink.css";
 
 // 필기 모드 단추(풀기 화면 머리 줄)와 필기 도구 막대(필기 모드 켬일 때 머리 줄 바로 아래, 함께 떠 있음).
-// 크기·간격은 index.css 의 .qm-ink-*(화면 폭마다 다름), 색은 여기.
+// 크기·간격은 index.css 의 .qm-ink-*(화면 폭마다 다름)와 ink.css, 색은 여기.
+// 도구 막대가 떠 있는 동안(= 필기 모드) 자판 Ctrl+Z 되돌리기, Ctrl+Y·Ctrl+Shift+Z 다시 하기(입력칸에 쓰는 중이면 그 칸의 되돌리기)
 
 const S = {
   toggle: (on) => ({
@@ -44,8 +47,9 @@ export function InkModeButton({ on, onToggle }) {
 }
 
 // toggle: 고르는 단추(펜 색·형광펜·지우개·숨기기)는 고르지 않은 때도 aria-pressed="false" —
-// 화면 읽기 프로그램이 켜고 끄는 단추로 읽어 지금 어느 도구인지 견줄 수 있게. 되돌리기·전체 지우기는 토글이 아님
-function ToolButton({ active = false, toggle = false, disabled = false, label, onClick, children }) {
+// 화면 읽기 프로그램이 켜고 끄는 단추로 읽어 지금 어느 도구인지 견줄 수 있게. 되돌리기·다시 하기·전체 지우기는 토글이 아님.
+// label 은 바꾸지 않는 이름(aria-label — 시험·다른 화면이 이 이름으로 찾음), hint 는 마우스를 올렸을 때 덧붙이는 말(title)
+function ToolButton({ active = false, toggle = false, disabled = false, label, hint, onClick, children }) {
   return (
     <button
       type="button"
@@ -55,16 +59,33 @@ function ToolButton({ active = false, toggle = false, disabled = false, label, o
       disabled={disabled}
       aria-pressed={toggle ? active : undefined}
       aria-label={label}
-      title={label}
+      title={hint ? `${label} (${hint})` : label}
     >
       {children}
     </button>
   );
 }
 
+const EDITABLE = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
+
 export function InkToolbar({ store }) {
   const s = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const count = visibleStrokes(s).length;
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const act = shortcutOf(e);
+      if (!act || e.defaultPrevented) return;
+      // 입력칸(질문 메모·답 입력 등)에 쓰는 중이면 그 칸의 되돌리기를 그대로 둔다
+      if (e.target instanceof Element && e.target.closest(EDITABLE)) return;
+      e.preventDefault();
+      if (act === "undo") store.undo();
+      else store.redo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [store]);
+
   return (
     <div className="qm-ink-bar" role="toolbar" aria-label="필기 도구">
       {PEN_COLORS.map((c) => (
@@ -85,8 +106,11 @@ export function InkToolbar({ store }) {
         <EraserIcon />
       </ToolButton>
       <span className="qm-ink-sep" aria-hidden="true" />
-      <ToolButton disabled={!s.history.length} label="되돌리기" onClick={() => store.undo()}>
+      <ToolButton disabled={!canUndo(s)} label="되돌리기" hint="Ctrl+Z" onClick={() => store.undo()}>
         <UndoIcon />
+      </ToolButton>
+      <ToolButton disabled={!canRedo(s)} label="다시 하기" hint="Ctrl+Y" onClick={() => store.redo()}>
+        <RedoIcon />
       </ToolButton>
       <ToolButton
         disabled={!count}
