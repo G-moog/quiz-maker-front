@@ -1,5 +1,5 @@
 import {
-  ERASER_RADIUS, HL_COLOR, HL_OPACITY, HL_WIDTH, INERTIA_MAX, INERTIA_START, INERTIA_STOP, PEN_WIDTH, TAP_MS,
+  DRAW_SCALE, ERASER_RADIUS, HL_COLOR, HL_OPACITY, HL_WIDTH, INERTIA_MAX, INERTIA_START, INERTIA_STOP, PEN_WIDTH, TAP_MS,
   TAP_SLOP, TOUCH_SLOP, addPoint, centerlinePath, distance, inertiaStep, isDoubleTap, isLargeContact, isTap, midpoint,
   outlinePath, palmBlocked, pushSample, releaseVelocity, strokeTouches, tapBlockedByScroll, tapSlop,
 } from "./geometry.js";
@@ -631,7 +631,7 @@ export class InkInput {
       path.setAttribute("d", centerlinePath(s.pts));
       path.setAttribute("fill", "none");
       path.setAttribute("stroke", s.color);
-      path.setAttribute("stroke-width", String(s.w));
+      path.setAttribute("stroke-width", String(s.w * DRAW_SCALE));
       path.setAttribute("stroke-linecap", "round");
       path.setAttribute("stroke-linejoin", "round");
       path.setAttribute("stroke-opacity", String(HL_OPACITY));

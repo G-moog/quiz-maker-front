@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { HL_OPACITY, centerlinePath, outlinePath } from "./geometry";
+import { DRAW_SCALE, DRAW_TRANSFORM, HL_OPACITY, centerlinePath, chunkStrokes, outlinePath } from "./geometry";
 import { visibleStrokes } from "./inkStore";
 import { InkInput } from "./InkInput";
 
@@ -23,12 +23,12 @@ const svgStyle = (kind, hidden) => ({
   visibility: hidden ? "hidden" : "visible",
 });
 
-// 저장된 선 하나 — 선은 한 번 그은 뒤 바뀌지 않으므로 memo 로 다시 계산하지 않는다
+// 저장된 선 하나 — 선은 한 번 그은 뒤 바뀌지 않으므로 memo 로 다시 계산하지 않는다(좌표 단위 0.1px — geometry DRAW_SCALE)
 const StrokePath = memo(function StrokePath({ s }) {
   if (s.tool === "hl") {
     return (
       <path
-        d={centerlinePath(s.pts)} fill="none" stroke={s.color} strokeWidth={s.w}
+        d={centerlinePath(s.pts)} fill="none" stroke={s.color} strokeWidth={s.w * DRAW_SCALE}
         strokeLinecap="round" strokeLinejoin="round" strokeOpacity={HL_OPACITY}
       />
     );
@@ -36,13 +36,33 @@ const StrokePath = memo(function StrokePath({ s }) {
   return <path d={outlinePath(s.pts, s.w)} fill={s.color} />;
 });
 
-// 층 하나(형광펜 또는 펜). 마지막 <path> 는 그리는 중인 선(InkInput 이 직접 d 를 바꾼다 — React 를 거치지 않게)
-const InkLayer = memo(function InkLayer({ kind, strokes, hidden, liveRef }) {
+// 선 묶음(geometry.chunkStrokes): 선 하나를 더하거나 지우면 그 선이 든 묶음만 다시 맞춰 보고 나머지 묶음은 건너뛴다 —
+// 선이 2,000개인 문항에서 선 하나 더할 때마다 2,000개를 하나씩 맞춰 보지 않게. 그리는 차례(DOM 차례)는 선 배열 차례 그대로
+const sameList = (a, b) => a.length === b.length && a.every((s, i) => s === b[i]);
+const StrokeChunk = memo(function StrokeChunk({ list }) {
+  return list.map((s) => <StrokePath key={s.id} s={s} />);
+}, (a, b) => sameList(a.list, b.list));
+
+// 층 하나(형광펜 또는 펜): 저장된 선들
+const InkLayer = memo(function InkLayer({ kind, strokes, hidden }) {
   const mine = strokes.filter((s) => (s.tool === "hl") === (kind === "hl"));
   return (
     <svg aria-hidden="true" focusable="false" data-ink-layer={kind} style={svgStyle(kind, hidden)}>
-      {mine.map((s) => <StrokePath key={s.id} s={s} />)}
-      <path ref={liveRef} data-ink-live="" />
+      <g transform={DRAW_TRANSFORM}>
+        {chunkStrokes(mine).map((c) => <StrokeChunk key={c.key} list={c.list} />)}
+      </g>
+    </svg>
+  );
+});
+
+// 그리는 중인 선 하나만 담는 층(바로 앞 층과 같은 자리·같은 겹 순서). InkInput 이 그림마다 d 를 직접 바꾼다 — React 를 거치지 않게.
+// 저장된 선들과 다른 <svg> 라서 그림마다 바뀌는 선 하나 때문에 선이 수천 개인 층 전체를 다시 배치하지 않는다
+const LiveLayer = memo(function LiveLayer({ kind, hidden, liveRef }) {
+  return (
+    <svg aria-hidden="true" focusable="false" data-ink-live-layer={kind} style={svgStyle(kind, hidden)}>
+      <g transform={DRAW_TRANSFORM}>
+        <path ref={liveRef} data-ink-live="" />
+      </g>
     </svg>
   );
 });
@@ -88,9 +108,11 @@ export default function InkSurface({ store, enabled, layerOn, onBlankTap, onEven
   return (
     <div ref={setEl} className={className} style={areaStyle} data-ink-area={layerOn ? (enabled ? "on" : "view") : undefined}>
       {enabled && <div className="qm-ink-bleed" aria-hidden="true" />}
-      {layerOn && <InkLayer kind="hl" strokes={strokes} hidden={snap.hidden} liveRef={setHlLive} />}
+      {layerOn && <InkLayer kind="hl" strokes={strokes} hidden={snap.hidden} />}
+      {enabled && <LiveLayer kind="hl" hidden={snap.hidden} liveRef={setHlLive} />}
       {children}
-      {layerOn && <InkLayer kind="pen" strokes={strokes} hidden={snap.hidden} liveRef={setPenLive} />}
+      {layerOn && <InkLayer kind="pen" strokes={strokes} hidden={snap.hidden} />}
+      {enabled && <LiveLayer kind="pen" hidden={snap.hidden} liveRef={setPenLive} />}
     </div>
   );
 }
