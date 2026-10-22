@@ -274,13 +274,165 @@ export function keepResume(snap, saved) {
 export function hasStudyProgress(saved) {
   if (!saved || typeof saved !== "object") return false;
   if (!Array.isArray(saved.ids)) return Object.keys(saved).length > 0;
-  const entries = saved.q && typeof saved.q === "object" ? Object.values(saved.q) : [];
-  if (entries.some((e) => e && Array.isArray(e.s) && e.s.some((i) => Number.isInteger(i) && i >= 0))) return true;
-  if (saved.mode !== "ordered" && saved.mode !== "random") return false;
+  return Object.keys(starMap(saved)).length > 0 || hasPlaceProgress(saved);
+}
+
+const isMode = (m) => m === "ordered" || m === "random";
+const isIdx = (i) => Number.isInteger(i) && i >= 0;
+const qEntries = (saved) => (saved && saved.q && typeof saved.q === "object" ? saved.q : {});
+
+// 칸 순서와 상관없는 JSON(서버 jsonb 는 칸 순서를 바꿔 돌려준다)
+function canon(v) {
+  if (Array.isArray(v)) return `[${v.map(canon).join(",")}]`;
+  if (v && typeof v === "object") {
+    return `{${Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+const same = (a, b) => canon(a ?? null) === canon(b ?? null);
+
+// ★ 말고 자리에 딸린 진도(지나온 문항·채점·연 빈칸)가 있나 — ids 꼴인 값만
+function hasPlaceProgress(saved) {
+  if (!isMode(saved.mode)) return false;
   const order = saved.mode === "random" && sameIdSet(saved.order, saved.ids) ? saved.order : saved.ids;
   if (saved.cur != null && order.length && String(saved.cur) !== String(order[0])) return true;
   if (saved.res && typeof saved.res === "object" && Object.keys(saved.res).length) return true;
-  return entries.some((e) => e && Array.isArray(e.r) && e.r.some((i) => Number.isInteger(i) && i >= 0));
+  return Object.values(qEntries(saved)).some((e) => e && Array.isArray(e.r) && e.r.some(isIdx));
+}
+
+// { [문항 id]: [★ 빈칸 번호(작은 것부터)] } — ★ 가 있는 문항만
+function starMap(saved) {
+  const out = {};
+  for (const [id, e] of Object.entries(qEntries(saved))) {
+    const s = e && Array.isArray(e.s) ? [...new Set(e.s.filter(isIdx))].sort((a, b) => a - b) : [];
+    if (s.length) out[id] = s;
+  }
+  return out;
+}
+
+// ★ 를 뺀, 자리에 딸린 진도(없으면 null): 푸는 방식·순서·보던 문항·채점·문항마다 연 빈칸 등. 읽던 자리(a)는 뺀다
+function placePart(saved) {
+  if (!hasPlaceProgress(saved)) return null;
+  const q = {};
+  for (const [id, e] of Object.entries(qEntries(saved))) {
+    if (!e || typeof e !== "object") continue;
+    const rest = {};
+    for (const [k, v] of Object.entries(e)) if (k !== "s" && k !== "a" && v !== undefined) rest[k] = v;
+    if (Object.keys(rest).some((k) => k !== "h")) q[id] = rest; // ★ 만 있던 문항(h 만 남음)은 뺀다
+  }
+  return {
+    mode: saved.mode, ids: saved.ids.map(String), order: saved.mode === "random" ? saved.order : undefined,
+    cur: String(saved.cur), res: saved.res && Object.keys(saved.res).length ? saved.res : undefined, q,
+  };
+}
+
+// 두 저장 사이에 사용자가 진도를 바꿨는지 견줄 값(utils/studyState.js saveStudy 가 칸 순서 없이 견준다).
+// ★ 와 자리에 딸린 진도만 — 읽던 자리(a)와 진도 없는 꼴의 차이(고르기 화면 { ids } ↔ 문항 하나짜리를 연 '순번대로' 첫 문항)는
+// 보지 않는다: 그런 저장은 다른 기기의 새 진도를 덮을 만한 일이 아니다. 풀기 화면 꼴이 아닌 값은 값 그대로
+export function progressOf(saved) {
+  if (!saved || typeof saved !== "object") return null;
+  if (!Array.isArray(saved.ids)) return Object.keys(saved).length ? saved : null;
+  return { s: starMap(saved), p: placePart(saved) };
+}
+
+// [번호] 세 벌 합치기: theirs 에 이 화면에서 더한 것(mine − base)을 더하고 뺀 것(base − mine)을 뺀다
+function rebaseList(base, mine, theirs) {
+  const b = new Set((base || []).filter(isIdx));
+  const m = new Set((mine || []).filter(isIdx));
+  const out = new Set((theirs || []).filter(isIdx));
+  for (const i of m) if (!b.has(i)) out.add(i);
+  for (const i of b) if (!m.has(i)) out.delete(i);
+  return [...out].sort((x, y) => x - y);
+}
+
+// 자리: 푸는 방식·문항 묶음·(랜덤이면) 순서·보던 문항. 고르기 화면·끝낸 기록({ ids })은 null
+const placeKey = (saved) => (saved && isMode(saved.mode)
+  ? canon([saved.mode, (saved.ids || []).map(String), saved.mode === "random" ? (saved.order || []).map(String) : null, String(saved.cur)])
+  : null);
+
+// 다른 기기에서 받은 새 기록(theirs) 위에 이 화면에서 한 일(base → mine)을 다시 얹는다 — 공부 기록 나누기(utils/studyState.js
+// saveStudy)가 이 화면이 아직 보여 주지 못한 기록을 받아 두었을 때. 통째로 바꾸면(나중에 고친 쪽이 이김) 풀기 화면을 켜 둔 채
+// 다른 기기에서 공부하고 돌아와 빈칸 하나만 눌러도 그사이 다른 기기에서 연 빈칸·★ 이 모두 지워졌다.
+// base: 이 화면이 마지막으로 굳힌 내용, mine: 지금 화면, theirs: 받아 둔 기록(모두 내용만)
+//  - ★: 문항마다 theirs 에 이 화면에서 단 것을 더하고 뗀 것을 뺀다
+//  - 자리(푸는 방식·순서·보던 문항)가 같으면 연 빈칸도 같은 식으로, 채점·★만 가리기·지나온 문항 수·읽던 자리는 이 화면에서
+//    바꿨으면 이 화면 것(아니면 theirs)
+//  - 자리가 다르면: 이 화면에서 ★ 말고 다른 진도를 바꿨으면(문항 이동·빈칸 열기·채점·끝냄) 이 화면 자리 — 사용자가 지금 여기서
+//    공부하고 있으니. ★ 만 바꿨으면 theirs 자리
+// 풀기 화면 꼴이 아닌 값은 mine 그대로(예전처럼 나중에 고친 쪽)
+export function rebaseStudy(base, mine, theirs) {
+  if (!mine || !Array.isArray(mine.ids) || !theirs || !Array.isArray(theirs.ids)) return mine;
+  const b = base && Array.isArray(base.ids) ? base : { ids: [] };
+  const bq = qEntries(b);
+  const mq = qEntries(mine);
+  const tq = qEntries(theirs);
+  const samePlace = placeKey(mine) !== null && placeKey(mine) === placeKey(theirs);
+  const baseHere = samePlace && placeKey(b) === placeKey(mine);
+  let out;
+  if (samePlace) {
+    out = { ...theirs };
+    const res = { ...(theirs.res && typeof theirs.res === "object" ? theirs.res : {}) };
+    const mres = mine.res && typeof mine.res === "object" ? mine.res : {};
+    const bres = baseHere && b.res && typeof b.res === "object" ? b.res : {};
+    for (const [id, v] of Object.entries(mres)) if (!same(v, bres[id])) res[id] = v;
+    for (const id of Object.keys(bres)) if (!(id in mres)) delete res[id];
+    if (Object.keys(res).length) out.res = res;
+    else delete out.res;
+    const q = {};
+    for (const id of new Set([...Object.keys(tq), ...Object.keys(mq)])) {
+      const te = tq[id];
+      const me = mq[id];
+      if (!me) { q[id] = te; continue; }
+      if (!te || te.h !== me.h) { q[id] = me; continue; } // 한쪽에만 있거나 본문이 다른 문항: 이 화면 것
+      const be = baseHere && bq[id] && bq[id].h === me.h ? bq[id] : {};
+      const e = { ...te };
+      for (const k of ["r", "a", "f", "n"]) {
+        let v;
+        if (k === "r") v = me.r === undefined && te.r === undefined ? undefined : rebaseList(be.r, me.r, te.r);
+        else v = same(me[k], be[k]) ? te[k] : me[k];
+        if (v === undefined) delete e[k];
+        else e[k] = v;
+      }
+      q[id] = e;
+    }
+    out.q = q;
+  } else {
+    const userMoved = !same(progressOf(mine).p, progressOf(b).p);
+    out = { ...(userMoved ? mine : theirs) };
+    out.q = { ...qEntries(out) };
+  }
+  // ★: 문항마다 세 벌 합치기(본문 지문 h 가 같은 것끼리 — theirs 가 다른 본문의 ★ 면 이 화면 것)
+  for (const id of new Set([...Object.keys(tq), ...Object.keys(mq), ...Object.keys(bq)])) {
+    const me = mq[id];
+    const te = tq[id];
+    const be = bq[id];
+    const h = me?.h ?? te?.h ?? be?.h;
+    const ms = me && Array.isArray(me.s) ? me.s : [];
+    const s = te && te.h !== h ? cleanIndices(ms, Infinity)
+      : rebaseList(be && be.h === h ? be.s : [], ms, te ? te.s : []);
+    const e = out.q[id] ? { ...out.q[id] } : { h };
+    if (s.length) e.s = s;
+    else delete e.s;
+    if (Object.keys(e).some((k) => k !== "h")) out.q[id] = e;
+    else delete out.q[id];
+  }
+  if (!isMode(out.mode) && !Object.keys(out.q).length) delete out.q;
+  return out;
+}
+
+// 화면이 열려 있는 동안 받은 기록(rec)을 지금 화면(view: base·questions·mode·index)에 얹을 상태.
+// 자리(푸는 방식·순서·보던 문항)가 같으면 연 빈칸·채점·지나온 문항 수·★만 가리기·★ 를 기록대로(same: true),
+// 다르면(다른 기기가 다른 문항으로 갔거나 끝냄) ★ 만 — 화면이 갑자기 다른 문항으로 넘어가거나 연 빈칸이 닫히지 않게.
+// 읽던 자리는 옮기지 않는다(보고 있는 화면이 움직이지 않게)
+export function refreshView(rec, view) {
+  const init = initialSolveState(rec, view.base);
+  const here = !!view.questions[view.index] && !!rec && isMode(rec.mode) && init.mode === view.mode
+    && init.index === view.index && init.questions.length === view.questions.length
+    && init.questions.every((x, i) => String(x.id) === String(view.questions[i].id));
+  if (!here) return { same: false, stars: init.stars };
+  return {
+    same: true, stars: init.stars, results: init.results, revealed: init.revealed, counts: init.counts, filterPre: init.filterPre,
+  };
 }
 
 // 읽던 자리(a)를 뺀 값 — 두 저장 사이에 진도(문항·채점·연 빈칸·★)가 바뀌었는지 견줄 때(바뀌었으면 다른 기기로 곧바로 올린다)

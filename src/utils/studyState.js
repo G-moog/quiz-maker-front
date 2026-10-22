@@ -3,23 +3,28 @@
 // 열쇠 "qm:study:<아이디>:<문제집 id>" (하드 문제집은 id 가 달라 기록도 따로).
 // 값: { v: 1, at, ct, days, ...내용 }
 //   내용(보던 문항, 문항별 연 빈칸·읽던 자리 등)은 SolveView(utils/solveStudy.js)가 정한다. 여기서는 통째로 견주고,
-//   진도가 있는지·진도가 바뀌었는지만 solveStudy.js 에 묻는다(hasStudyProgress·progressPart).
+//   진도가 있는지·사용자가 진도를 바꿨는지·두 기록을 어떻게 합칠지는 solveStudy.js 에 묻는다
+//   (hasStudyProgress·progressOf·progressPart·rebaseStudy).
 //   at   마지막으로 본 때(ISO) — 저장할 때마다 지금. 대시보드 '마지막 공부'·'최근 공부 순'
-//   ct   내용이 바뀐 때(ISO) — 기기 사이 '나중에 고친 쪽이 이김'의 기준(서버 client_at). 내용이 그대로인 저장은 ct 를 두고 at 만 올린다.
-//        진도(지나온 문항·채점·연 빈칸·★ — solveStudy.js hasStudyProgress)가 없는 내용은 ct 를 올리지 않는다(처음이면 WEAK_CT):
-//        다른 기기 기록을 아직 받지 못한 채 문제집을 열기만 한(또는 조금 내려 본) 기기가 그 기기의 진도를 덮지 않게
+//   ct   진도가 바뀐 때(ISO) — 기기 사이 '나중에 고친 쪽이 이김'의 기준(서버 client_at). 새 ct 는 사용자가 풀기 화면에서 진도
+//        (지나온 문항·채점·연 빈칸·★)를 바꾼 저장에만 준다. 읽던 자리만 바뀐 저장·열 때 저장·진도 없는 기록은 ct 를 그대로
+//        (처음이면 WEAK_CT): 다른 기기 기록을 아직 받지 못한 채 문제집을 열기만 한(조금 내려 본) 기기가 그 기기의 진도를 덮지 않게
 //   days 공부한 날(서울 날짜 YYYY-MM-DD, 최근 120일) — 저장할 때 오늘을 더하고, 기기 사이에서는 합친다(지우지 않음)
-//   이 기기에만: dirty(서버에 올릴 것이 있음), bh(이 기기 풀기 화면이 마지막으로 저장한(보여 준) 내용의 지문)
+//   이 기기에만: dirty(서버에 올릴 것이 있음), bh(이 기기 풀기 화면이 마지막으로 저장한(보여 준) 내용의 지문),
+//                bb(그 화면이 굳힌 바탕 — 사용자가 진도를 바꿨는지 견주는 기준. 내용과 같으면 두지 않는다),
+//                hd(받는 동안 ct 를 두고 저장한 진도가 있음 — 받기가 끝나면 새 ct 로 굳힌다).
+//                저장된 내용이 bh 와 다르면 화면이 보여 주지 못한 다른 기기 기록을 받은 것 — 그 화면의 다음 저장은 통째로 덮지 않고
+//                그 위에 화면에서 한 일만 얹는다(rebaseStudy)
 // 바깥 API(loadStudy·saveStudy·clearStudy·lastStudiedMap)는 동기 그대로 — 서버와 주고받기는 뒤에서(아래 '나누기').
 import { textHash } from "../ink/geometry.js";
-import { hasStudyProgress, progressPart } from "./solveStudy.js";
+import { hasStudyProgress, progressOf, progressPart, rebaseStudy } from "./solveStudy.js";
 
 const PREFIX = "qm:study:";
 const VERSION = 1;
 const MAX_SETS = 300; // 이보다 많으면 오래 안 본 것부터 지운다
 const MAX_DAYS = 120;
 const MAX_BYTES = 60000; // 서버 qm_put_study 한도와 같게 — 넘는 기록은 이 기기에만 둔다
-const META = new Set(["v", "at", "ct", "days", "dirty", "bh"]);
+const META = new Set(["v", "at", "ct", "days", "dirty", "bh", "bb", "hd"]);
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
 // 진도 없이 처음 생긴 기록의 ct — 어느 기기의 진도(늦은 ct)에도 진다(서버 qm_put_study 도 그대로 받는다)
@@ -144,7 +149,7 @@ export function remoteRecord(row) {
 //    이 기기에서 방금 옮긴 읽던 자리를 서버의 옛 자리로 되돌리지 않게). 내용이 같으면 서버 ct 를 따른다(서버가 줄인 시각을 받아들여 되올리기가 돌지 않게)
 //  - days 합집합, at 늦은 쪽
 //  - dirty: 서버에 없는 것이 남았으면(이 기기 내용이 새것, 서버에 없는 날, 더 늦은 at) 다시 올린다
-//  - bh(이 기기 풀기 화면이 아는 내용)는 그대로 둔다
+//  - bh(이 기기 풀기 화면이 아는 내용)는 그대로, bb(그 화면의 바탕)도 그대로 — 서버 내용으로 바뀌면 바뀌기 전 내용이 바탕
 export function mergeRecords(local, remote) {
   if (!remote) return local ?? null;
   const rBlob = blobOf(remote);
@@ -159,11 +164,31 @@ export function mergeRecords(local, remote) {
   const days = normDays([...daysOf(local), ...rDays]);
   const at = laterIso(local.at, rAt);
   const dirty = localWins || days.join() !== rDays.join() || at !== rAt;
+  const content = localWins ? lBlob : rBlob;
   const out = {
-    ...(localWins ? lBlob : rBlob), v: VERSION, at,
+    ...content, v: VERSION, at,
     ct: localWins ? ctOf(local) : remote.ct ?? ctOf(local), days, dirty: dirty ? 1 : 0,
   };
-  if (local.bh) out.bh = local.bh;
+  if (local.bh) {
+    out.bh = local.bh;
+    const base = baseOf(local, lBlob);
+    if (hashOf(base) !== hashOf(content)) out.bb = base;
+  }
+  // 받는 동안 저장한 진도(hd)는 이 기기 내용이 남을 때만 — 서버 내용으로 바뀌면 그 화면의 다음 저장이 다시 얹는다
+  if (local.hd && (localWins || same)) out.hd = 1;
+  return out;
+}
+
+// 풀기 화면이 굳힌 바탕(bb, 없으면 내용 그대로)
+function baseOf(rec, blob) {
+  return rec.bb && typeof rec.bb === "object" && !Array.isArray(rec.bb) ? rec.bb : blob;
+}
+
+// 기록 값: 내용 + 이 기기 칸. 바탕(bb)은 내용과 다를 때만, hd 는 받는 동안 ct 를 두고 저장한 진도가 있을 때만 둔다
+function makeRecord(content, { at, ct, days, bh, bb, hd = false }) {
+  const out = { ...content, v: VERSION, at, ct, days, dirty: 1, bh };
+  if (bb && hashOf(bb) !== hashOf(content)) out.bb = bb;
+  if (hd) out.hd = 1;
   return out;
 }
 
@@ -176,47 +201,83 @@ export function loadStudy(username, setId) {
 }
 
 // 풀기 화면의 지금 상태(data)를 저장한다. at 은 지금, 오늘을 days 에 더하고, 서버에 올릴 것으로 표시한다.
-// 기기 사이에서 '나중에 고친 쪽이 이김'이므로, 새 ct 는 사용자가 이 화면에서 진도를 바꿨을 때만 준다:
-//  - 내용이 그대로(이어 보기를 그대로 다시 저장, 또는 이 화면이 마지막으로 저장한 옛 내용 — 그사이 다른 기기의 새 내용을
-//    받았을 수 있음)거나 open(풀기 화면을 열 때의 저장 — 화면이 보여 주기로 한 것을 bh 로 남길 뿐 사용자가 한 일이 없음)이면
-//    내용·ct 는 두고 at·days 만 바꾼다: 옛 화면을 떠나며 하는 저장이 다른 기기의 새 기록을 덮지 않게
-//  - 진도 없는 내용(문제집을 열기만 함·조금 내려 봄·고르기 화면): 이 화면이 보던 진도를 사용자가 비운 것(끝냄·빈칸을 다 닫음)만
-//    새 내용이다. 이 화면이 모르는 진도(다른 기기에서 늦게 받음)가 있으면 그대로 두고, 진도 없는 기록끼리는 내용만 바꾸고
-//    ct 는 앞 것(처음이면 WEAK_CT) — 받기가 늦어(느린 연결·1.5초 넘김) 사본 없이 연 기기가 다른 기기의 진도를 지우지 않게
+// 기기 사이에서 '나중에 고친 쪽이 이김'이므로, 새 ct 는 사용자가 이 화면에서 진도를 바꿨을 때만 준다 — 바꿨는지는 이 화면이
+// 굳힌 바탕(bb)과 견준다(progressOf: ★ 와 지나온 문항·채점·연 빈칸. 읽던 자리·진도 없는 꼴의 차이는 보지 않음).
+//  - open(풀기 화면을 열 때·받은 기록을 화면에 얹은 뒤): 화면이 이 상태(data)에서 시작한다 — 바탕을 data 로. 새 ct 는 주지 않는다.
+//    내용은 화면이 지금 기록(seen: 그때 읽은 loadStudy 값)을 보고 data 를 정했으면 data(메모·보통 ↔ 하드로 연 자리도 남게),
+//    아니면 그대로
+//  - 진도를 바꾸지 않은 저장(스크롤·자동으로 '순번대로'가 됨·떠날 때 같은 상태): 내용만 바꾸고 ct 는 그대로. 단 이 화면이
+//    보여 주지 못한 기록(다른 기기 것을 그사이 받음)이 있으면 그 기록을 그대로 둔다
+//  - 진도를 바꾼 저장: 새 ct. 이 화면이 보여 주지 못한 기록이 있으면 그 위에 이 화면에서 한 일만 얹는다(solveStudy.js rebaseStudy) —
+//    화면을 켜 둔 채 다른 기기에서 공부하고 돌아와 빈칸 하나만 눌러도 그사이 연 빈칸·★ 이 지워지지 않게
+//  - 받는 중(pullStudy — 열 때·화면이 다시 보일 때·한동안 손대지 않다가 다시 손댈 때)에는 진도를 바꿔도 ct 를 그대로 두고
+//    바탕도 굳히지 않는다(hd 표시): 아직 받지 못한 다른 기기의 새 기록을 이기지 않게. 받기가 끝나면 새 ct 로 굳힌다
+//    (commitHeld·화면의 다음 저장). 그사이 다른 기기 기록이 오면 그 위에 다시 얹는다
 // 진도가 바뀐 저장(빈칸 열기·채점·문항 이동)은 다른 기기로 곧바로(PUSH_FAST_MS), 읽던 자리만 바뀐 저장은 모아서 올린다.
 // 저장하지 못해도(사생활 보호 창·용량) 조용히 넘어간다
-export function saveStudy(username, setId, data, { open = false } = {}) {
+export function saveStudy(username, setId, data, { open = false, seen } = {}) {
   if (setId == null) return;
   const k = keyOf(username, setId);
   const prev = readKey(k);
   const blob = blobOf(data);
-  const h = hashOf(blob);
   const nowMs = env.now();
-  const iso = new Date(nowMs).toISOString();
-  const days = normDays([...daysOf(prev), studyDay(nowMs)]);
-  const prevBlob = prev ? blobOf(prev) : null;
-  const prevHash = prev ? hashOf(prevBlob) : null;
-  const keep = () => ({ ...prev, at: iso, ct: ctOf(prev) ?? iso, days, dirty: 1, bh: h });
-  const fresh = (ct) => ({ ...blob, v: VERSION, at: iso, ct, days, dirty: 1, bh: h });
+  const meta = { at: new Date(nowMs).toISOString(), days: normDays([...daysOf(prev), studyDay(nowMs)]), bh: hashOf(blob) };
+  const hold = !!st.pull && !open;
   let value;
   let fast = false;
-  if (prev && (open || h === prev.bh || h === prevHash)) {
-    value = keep();
-  } else if (!hasStudyProgress(blob)) {
-    const prevProgress = !!prev && hasStudyProgress(prevBlob);
-    if (prevProgress && prev.bh === prevHash) {
-      value = fresh(nextCt(prev, nowMs)); // 이 화면이 보여 준 진도를 사용자가 비움
-      fast = true;
-    } else if (prevProgress) {
-      value = keep(); // 이 화면이 모르는 진도 — 덮지 않음
-    } else {
-      value = fresh(prev ? ctOf(prev) ?? WEAK_CT : WEAK_CT);
-    }
+  if (!prev) {
+    // 처음: 이 화면에서 만든 진도면 지금(받는 중이면 굳히지 않고 WEAK_CT), 열 때·진도 없음이면 WEAK_CT(어느 기기의 진도에도 짐)
+    const progress = !open && hasStudyProgress(blob);
+    const held = progress && hold;
+    value = makeRecord(blob, {
+      ...meta, ct: progress && !hold ? nextCt(null, nowMs) : WEAK_CT, bb: held ? {} : blob, hd: held,
+    });
   } else {
-    value = fresh(nextCt(prev, nowMs));
-    fast = stable(progressPart(blob)) !== stable(progressPart(prevBlob));
+    const prevBlob = blobOf(prev);
+    const prevHash = hashOf(prevBlob);
+    const prevCt = ctOf(prev) ?? WEAK_CT;
+    const base = baseOf(prev, prevBlob);
+    const stale = prev.bh !== undefined && prev.bh !== prevHash; // 이 화면이 보여 주지 못한 기록을 그사이 받음
+    // 진도를 바꾼 저장의 ct·바탕: 받는 중이면 ct 를 두고 굳히지 않음(hd), 아니면 새 ct 로 굳힘
+    const changedTo = (content, needCommit) => (hold
+      ? makeRecord(content, { ...meta, ct: prevCt, bb: needCommit ? base : blob, hd: needCommit })
+      : makeRecord(content, { ...meta, ct: needCommit ? nextCt(prev, nowMs) : prevCt, bb: blob }));
+    if (open) {
+      const fromHere = !!seen && hashOf(blobOf(seen)) === prevHash;
+      value = makeRecord(fromHere ? blob : prevBlob, { ...meta, ct: prevCt, bb: blob, hd: !!prev.hd });
+    } else if (stable(progressOf(blob)) === stable(progressOf(base))) {
+      value = makeRecord(stale ? prevBlob : blob, { ...meta, ct: prevCt, bb: stale ? base : blob, hd: !!prev.hd });
+    } else if (stale) {
+      const merged = rebaseStudy(base, blob, prevBlob);
+      const same = hashOf(merged) === prevHash;
+      value = changedTo(merged, !same || !!prev.hd);
+      fast = !same;
+    } else {
+      value = changedTo(blob, true);
+      fast = stable(progressPart(blob)) !== stable(progressPart(prevBlob));
+    }
   }
   if (writeKey(username, k, value)) schedulePush(username, setId, fast);
+}
+
+// 풀기 화면이 이 기록을 마지막으로 저장한 뒤 다른 기기 기록을 받아 화면이 보여 주는 것과 달라졌나
+// (SolveView 가 받기 뒤 그 기록을 화면에 얹을지 볼 때)
+export function studyStale(username, setId) {
+  const rec = loadStudy(username, setId);
+  return !!rec && rec.bh !== undefined && rec.bh !== hashOf(blobOf(rec));
+}
+
+// 받는 동안 ct 를 두고 저장한 진도(hd)를 새 ct 로 굳힌다 — 받기가 끝나면(실패해도). hd 가 남은 내용은 받은 기록 위에 얹은
+// 것이거나(그사이 받은 것이 없음) 받은 기록과 합친 것이다(서버 내용으로 바뀌면 hd 는 mergeRecords 가 지움)
+function commitHeld(username) {
+  const nowMs = env.now();
+  eachRecord(username, (id, rec) => {
+    if (!rec.hd) return;
+    const value = { ...rec, ct: nextCt(rec, nowMs), dirty: 1 };
+    delete value.hd;
+    if (rec.bh === hashOf(blobOf(rec))) delete value.bb; // 화면이 보여 주는 내용 그대로면 그것이 바탕
+    if (writeKey(username, keyOf(username, id), value, false)) schedulePush(username, id, true);
+  });
 }
 
 // 새 내용의 ct: 지금, 단 이 기록의 앞 ct 보다는 늘 늦게(같은 밀리초에 두 번 고쳐도 — 올리는 중이던 옛 내용의 메아리가
@@ -234,6 +295,7 @@ export function clearStudy(username, setId, keep = null) {
   if (!prev) return;
   const nowMs = env.now();
   const blob = blobOf(keep);
+  // 바탕(bb)은 두지 않는다 — 비운 내용이 그대로 이 화면의 바탕
   const value = { ...blob, v: VERSION, at: prev.at ?? new Date(nowMs).toISOString(), ct: nextCt(prev, nowMs), days: daysOf(prev), dirty: 1, bh: hashOf(blob) };
   if (writeKey(username, k, value)) pushOne(username, setId, { urgent: true, keepalive: env.hidden() });
 }
@@ -504,12 +566,27 @@ export function pullStudy(username, { force = false } = {}) {
       return { changed, error: true };
     } finally {
       st.pull = null;
+      commitHeld(username); // 받는 동안 ct 를 두고 저장한 진도를 이제 굳힌다
     }
     flushStudy(username);
     return { changed };
   })();
   st.pull = p;
   return p;
+}
+
+// 풀기 화면이 다시 보일 때·한동안 손대지 않다가 다시 손댈 때(다른 기기에서 공부했을 수 있음): 받는 중이면 그것을, 아니면
+// 간격과 상관없이 새로 받는다(커서 뒤만 — 작은 요청). 받는 동안 그 화면의 저장은 새 ct 를 주지 않는다(saveStudy).
+// 받지 않으면(로그인 전·함수 없음) null
+export function refreshStudy(username) {
+  if (st.pull) return st.pull;
+  if (!api || st.stopped || !env.signedIn(username)) return null;
+  return pullStudy(username, { force: true });
+}
+
+// 지금 받는 중인 것(없으면 null) — 풀기 화면이 열 때 기다린 받기가 1.5초를 넘겨 늦게 끝나면 받은 것을 화면에 얹으려고
+export function pendingStudyPull() {
+  return st.pull;
 }
 
 // 문제집을 열 때(풀기 화면이 문항을 받는 동안 함께): 받는 중이면 그것을, 마지막 받기를 시작한 지 maxAgeMs 가 지났으면

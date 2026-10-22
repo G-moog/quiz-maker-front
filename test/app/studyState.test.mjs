@@ -17,8 +17,9 @@ globalThis.localStorage = new MemoryStorage();
 const {
   loadStudy, saveStudy, clearStudy, lastStudiedMap, studyDaysMap, studyDay, normDays, mergeRecords, remoteRecord,
   exportStudy, configureStudySync, pullStudy, flushStudy, syncStudy, freshStudyBeforeOpen, WEAK_CT,
+  refreshStudy, pendingStudyPull, studyStale,
 } = await import('../../src/utils/studyState.js');
-const { initialSolveState, studySnapshot } = await import('../../src/utils/solveStudy.js');
+const { initialSolveState, studySnapshot, applyTarget, keepResume, refreshView } = await import('../../src/utils/solveStudy.js');
 
 const settle = () => new Promise((r) => setImmediate(r));
 const T0 = Date.parse('2026-10-22T01:00:00.000Z'); // 서울 10/22 10시
@@ -921,4 +922,300 @@ test("처음부터(clearStudy)에 남길 내용(★)을 주면 그것만 남기�
     assert.equal(puts(srv).length, n + 1, '처음부터는 바로 올려야 합니다');
   });
   assert.deepEqual([revealedOf(srv.rows.get(11).data), starsOf(srv.rows.get(11).data)], [null, [5]]);
+});
+
+// ── 화면이 보여 주지 못한 기록·받는 동안의 저장(최종 검토 뒤 고침) ──
+// ★ 만 있는 옛 사본으로 열거나, 풀기 화면을 켜 둔 채 다른 기기에서 공부하고 돌아오거나, 메모로 다른 문항을 연 기기가
+// 아무것도 안 하거나 빈칸 하나만 눌러도 다른 기기의 새 진도(연 빈칸·★)를 지우던 것
+const U = 'magicwonds';
+const Q2 = { id: 102, type: 'fill', text: '■ 둘째\n문장 ___ 과 ___ .', answers: ['가', '나'] };
+const QS2 = [PAGE_Q, Q2];
+const flags40 = (on) => Array.from({ length: 40 }, (_, i) => on.includes(i));
+
+// 풀기 화면(SolveView.jsx) 흉내 — 지금 순서: 문항 받기와 공부 기록 받기를 함께 기다림(최대 1.5초) → loadStudy →
+// initialSolveState(→ applyTarget) → 열 때 저장(open: 화면이 시작하는 상태, seen: 그때 읽은 기록) → 받기가 아직이면 끝난 뒤
+// afterRefresh → 0.5초 뒤 저장. tap·star·scroll 은 그 화면에서 한 일(곧바로 저장), refresh() 는 화면이 다시 보일 때·한동안
+// 손대지 않다가 다시 손댈 때(받기 → afterRefresh). afterRefresh 는 SolveView 와 같게: 엿보기 이어 가기 → 저장 → 받은 기록을
+// 화면에(refreshView) → 바탕으로(open)
+async function openScreen(clock, { qs = QS, setId = 11, target = null, questionsMs = 300 } = {}) {
+  let ready = false;
+  const questions = new Promise((r) => clock.setTimer(r, questionsMs));
+  Promise.all([questions, freshStudyBeforeOpen(U, { waitMs: 1500 })]).then(() => { ready = true; });
+  for (let i = 0; i < 200 && !ready; i++) await clock.advance(50);
+  assert.ok(ready, '풀기 화면이 열리지 않았습니다');
+  const saved = loadStudy(U, setId);
+  const init = initialSolveState(saved, qs);
+  const t = target ? applyTarget(init, qs, target) : null;
+  const st = t && t.found ? t : init;
+  const v = {
+    base: qs, questions: st.questions, mode: st.mode, index: st.index, results: st.results, revealed: [...st.revealed],
+    stars: { ...st.stars }, counts: st.counts, filterPre: st.filterPre, done: false,
+    anchor: t && t.found ? (t.focusBlank != null ? { k: 'b', i: t.focusBlank, d: 80 } : t.anchor) : init.resumed ? init.anchor : null,
+  };
+  const peekLive = !!target && !!(t && t.found) && (target.kind === 'note' || (target.kind === 'switch' && !!target.peek));
+  let peek = peekLive && init.resumed ? { saved } : null;
+  const snap = () => {
+    const s = studySnapshot({ ...v });
+    return peek ? keepResume(s, peek.saved) : s;
+  };
+  const qid = () => String(v.questions[v.index].id);
+  const s = {
+    v, init, t,
+    get peek() { return peek; },
+    shown: () => v.revealed.flatMap((x, i) => (x ? [i] : [])),
+    persist() {
+      // 엿보기인데 그사이 받은 기록이 있으면 그 기록의 이어 볼 자리를 지킨다(열 때 기록이 없었으면 이제부터 엿보기)
+      if (peekLive && studyStale(U, setId)) {
+        const got = loadStudy(U, setId);
+        if (initialSolveState(got, qs).resumed || peek) peek = { saved: got };
+      }
+      saveStudy(U, setId, snap());
+    },
+    tap(i) { v.revealed[i] = !v.revealed[i]; s.persist(); },
+    star(i) {
+      const cur = new Set(v.stars[qid()] || []);
+      if (cur.has(i)) cur.delete(i); else cur.add(i);
+      v.stars = { ...v.stars, [qid()]: [...cur].sort((a, b) => a - b) };
+      if (!v.stars[qid()].length) delete v.stars[qid()];
+      s.persist();
+    },
+    scroll(anchor) { v.anchor = anchor; s.persist(); },
+    afterRefresh() {
+      if (!studyStale(U, setId)) return;
+      s.persist();
+      const rec = loadStudy(U, setId);
+      const r = refreshView(rec, v);
+      v.stars = r.stars;
+      if (r.same) Object.assign(v, { results: r.results, revealed: [...r.revealed], counts: r.counts, filterPre: r.filterPre });
+      saveStudy(U, setId, snap(), { open: true, seen: r.same ? rec : undefined });
+    },
+    refresh() {
+      const p = refreshStudy(U);
+      return p ? p.then(() => s.afterRefresh()) : Promise.resolve();
+    },
+  };
+  saveStudy(U, setId, snap(), { open: true, seen: saved });
+  const pending = pendingStudyPull();
+  if (pending) pending.then(() => s.afterRefresh());
+  await clock.advance(500);
+  s.persist();
+  return s;
+}
+
+test('두 기기: ★ 가 있는 옛 사본(끝낸 기록)으로 연 휴대폰은 받기가 늦어도 열기만·조금 내려 보기만으로 태블릿 진도를 지우지 않고, 받은 뒤 화면에 보인다', async () => {
+  for (const scroll of [false, true]) {
+    const clock = fakeClock();
+    const srv = fakeServer(clock);
+    const tab = device(clock, srv);
+    const phone = device(clock, srv);
+    await tab.on(async () => {
+      const s = await openScreen(clock);
+      s.tap(0);
+      s.star(3);
+      await clock.advance(3000);
+      // 끝냄(결과 화면): { ids } + ★
+      saveStudy(U, 11, studySnapshot({ base: QS, questions: QS, mode: 'ordered', index: 0, done: true, stars: s.v.stars }));
+      await clock.advance(3000);
+    });
+    await phone.on(() => pullStudy(U, { force: true })); // 휴대폰 대시보드가 끝낸 기록을 받아 둠
+    await clock.advance(60000);
+    await tab.on(async () => {
+      await pullStudy(U, { force: true });
+      const s = await openScreen(clock);
+      range(10).forEach((i) => { s.v.revealed[i] = true; });
+      s.scroll({ k: 'b', i: 9, d: 120, f: 0.3 });
+      await clock.advance(3000);
+    });
+    const tabCt = srv.rows.get(11).clientAt;
+    await clock.advance(60000);
+    srv.listDelay = 3000; // 온실의 약한 LTE
+    await phone.on(async () => {
+      const s = await openScreen(clock);
+      assert.deepEqual([s.init.resumed, s.init.stars], [false, { 101: [3] }], '시험 전제: ★ 만 있는 옛 사본으로 열림');
+      if (scroll) s.scroll({ f: 0.05 });
+      await clock.advance(20000);
+      srv.listDelay = 0;
+      assert.deepEqual(s.shown(), range(10), '늦게 받은 태블릿의 연 빈칸이 화면에 보이지 않습니다');
+      assert.deepEqual(s.v.stars, { 101: [3] });
+    });
+    const row = srv.rows.get(11);
+    assert.deepEqual([revealedOf(row.data), starsOf(row.data)], [range(10), [3]], `휴대폰이 태블릿 진도를 지웠습니다(scroll ${scroll})`);
+    assert.equal(row.clientAt, tabCt);
+  }
+});
+
+test('두 기기: 풀기 화면을 켜 둔 채(가려짐) 휴대폰에서 공부하고 돌아온 태블릿 — 다시 보일 때 받아 화면에 얹고, 빈칸을 눌러도 휴대폰의 연 빈칸·★ 이 남는다', async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const tab = device(clock, srv);
+  const phone = device(clock, srv);
+  let s;
+  await tab.on(async () => {
+    s = await openScreen(clock);
+    [0, 1, 2].forEach((i) => s.tap(i));
+    await clock.advance(3000);
+    tab.hidden = true; // 화면이 꺼짐(풀기 화면 그대로)
+    s.persist();
+    await clock.advance(0);
+  });
+  await clock.advance(60000);
+  await phone.on(async () => {
+    const p = await openScreen(clock);
+    assert.deepEqual(p.shown(), [0, 1, 2]);
+    p.tap(10); p.tap(11); p.star(12); p.star(13);
+    await clock.advance(3000);
+  });
+  assert.deepEqual([revealedOf(srv.rows.get(11).data), starsOf(srv.rows.get(11).data)], [[0, 1, 2, 10, 11], [12, 13]]);
+  await clock.advance(60000);
+  await tab.on(async () => {
+    tab.hidden = false; // 화면이 다시 켜짐 → 받기
+    await s.refresh();
+    assert.deepEqual([s.shown(), s.v.stars], [[0, 1, 2, 10, 11], { 101: [12, 13] }], '받은 연 빈칸·★ 이 태블릿 화면에 없습니다');
+    s.tap(20);
+    s.scroll({ f: 0.7 });
+    await clock.advance(3000);
+  });
+  const row = srv.rows.get(11);
+  assert.deepEqual([revealedOf(row.data), starsOf(row.data), row.data.q[101].a], [[0, 1, 2, 10, 11, 20], [12, 13], { f: 0.7 }]);
+  await phone.on(async () => {
+    await pullStudy(U, { force: true });
+    const p = await openScreen(clock);
+    assert.deepEqual([p.shown(), p.v.stars], [[0, 1, 2, 10, 11, 20], { 101: [12, 13] }]);
+  });
+});
+
+test('두 기기: 켜 둔 태블릿에서 받기가 끝나기 전에 누른 빈칸(느린 연결)도 — 그동안은 새 ct 없이, 받은 뒤 휴대폰 기록 위에 얹는다', async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const tab = device(clock, srv);
+  const phone = device(clock, srv);
+  let s;
+  await tab.on(async () => {
+    s = await openScreen(clock);
+    [0, 1, 2].forEach((i) => s.tap(i));
+    await clock.advance(3000);
+  });
+  const oldCt = srv.rows.get(11).clientAt;
+  await clock.advance(60000);
+  await phone.on(async () => {
+    const p = await openScreen(clock);
+    p.tap(10); p.star(12);
+    await clock.advance(3000);
+  });
+  await clock.advance(30000);
+  srv.listDelay = 3000;
+  await tab.on(async () => {
+    // 한동안 손대지 않던 태블릿에 다시 손댐 → 받기 시작(SolveView), 그 손으로 빈칸 20 을 바로 엶
+    const done = s.refresh();
+    s.tap(20);
+    assert.equal(loadStudy(U, 11).ct, oldCt, '받는 동안의 저장이 새 ct 를 받았습니다');
+    await clock.advance(1000);
+    assert.ok(puts(srv).filter((c) => c.data.q?.[101]?.r?.includes(20)).every((c) => c.clientAt <= oldCt), '받기 전에 휴대폰 기록을 이길 ct 로 올렸습니다');
+    await clock.advance(3000);
+    await done;
+    srv.listDelay = 0;
+    assert.deepEqual([s.shown(), s.v.stars], [[0, 1, 2, 10, 20], { 101: [12] }]);
+    await clock.advance(3000);
+  });
+  const row = srv.rows.get(11);
+  assert.deepEqual([revealedOf(row.data), starsOf(row.data)], [[0, 1, 2, 10, 20], [12]]);
+  assert.ok(row.clientAt > oldCt);
+});
+
+test('두 기기: 받지 않은 채 켜 둔 태블릿이 스크롤만 해도(가려짐·손댐 없이) 휴대폰의 연 빈칸·★ 은 그대로', async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const tab = device(clock, srv);
+  const phone = device(clock, srv);
+  let s;
+  await tab.on(async () => {
+    s = await openScreen(clock);
+    s.tap(0);
+    await clock.advance(3000);
+  });
+  await clock.advance(60000);
+  await phone.on(async () => {
+    const p = await openScreen(clock);
+    p.tap(20); p.tap(21); p.star(22); p.star(23);
+    await clock.advance(3000);
+  });
+  await tab.on(async () => {
+    s.scroll({ f: 0.4 });
+    await clock.advance(20000);
+  });
+  const row = srv.rows.get(11);
+  assert.deepEqual([revealedOf(row.data), starsOf(row.data)], [[0, 20, 21], [22, 23]]);
+});
+
+test('두 기기: 사본 없이 받기가 늦은 휴대폰이 메모의 빈칸(둘째 문항)으로 열어도 태블릿 진도를 지우지 않고, 받은 뒤에는 엿보기로 지킨다', async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const tab = device(clock, srv);
+  const phone = device(clock, srv);
+  await tab.on(async () => {
+    saveStudy(U, 12, studySnapshot({ base: QS2, questions: QS2, mode: 'ordered', index: 0, results: {}, revealed: flags40(range(10)), anchor: { k: 'b', i: 9, d: 100 } }));
+    await clock.advance(3000);
+  });
+  const tabCt = srv.rows.get(12).clientAt;
+  await clock.advance(60000);
+  srv.listDelay = 3000;
+  await phone.on(async () => {
+    const s = await openScreen(clock, { qs: QS2, setId: 12, target: { kind: 'note', questionId: 102, blankNo: 1 } });
+    assert.deepEqual([s.init.resumed, s.v.index], [false, 1], '시험 전제: 사본 없이 둘째 문항으로 열림');
+    s.tap(0); // 메모의 빈칸을 열어 봄(받기 전)
+    await clock.advance(20000);
+    srv.listDelay = 0;
+    assert.ok(s.peek, '늦게 받은 기록이 있는데 엿보기가 되지 않았습니다');
+    assert.deepEqual([s.v.index, s.shown()], [1, [0]], '화면은 메모의 문항 그대로');
+    s.scroll({ k: 'b', i: 1, d: 30 });
+    await clock.advance(20000);
+  });
+  const row = srv.rows.get(12);
+  assert.deepEqual([row.data.cur, row.data.q[101].r, row.data.q[101].a], ['101', range(10), { k: 'b', i: 9, d: 100 }], '메모로 연 휴대폰이 태블릿의 이어 볼 자리를 바꿨습니다');
+  assert.equal(row.clientAt, tabCt);
+});
+
+test('엿보다가 하드 ↔ 보통을 오가도(switch peek) 보통 문제집의 이어 볼 자리는 그대로, 엿보기가 아니면 바꾼 절로', async () => {
+  const clock = fakeClock();
+  const a0 = { k: 'h', i: 30, d: 153, f: 0.81 };
+  for (const peek of [true, false]) {
+    globalThis.localStorage = new MemoryStorage();
+    configureStudySync({ api: null, now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+    saveStudy(U, 11, studySnapshot({ base: QS, questions: QS, mode: 'ordered', index: 0, results: {}, revealed: flags40([1, 2]), anchor: a0 }));
+    await clock.advance(1000);
+    const s = await openScreen(clock, { target: { kind: 'switch', qIndex: 0, heading: { kind: 'h1', label: '제목 11', hid: 11, total: 40 }, p: 0.12, toHard: false, peek } });
+    assert.deepEqual(s.v.anchor, { k: 'h', i: 11, d: 0, p: 0.12 }, '같은 절로 감');
+    s.scroll({ k: 'h', i: 11, d: 20, f: 0.3 });
+    s.tap(5);
+    const rec = loadStudy(U, 11);
+    assert.deepEqual(rec.q[101].r, [1, 2, 5]);
+    if (peek) assert.deepEqual(rec.q[101].a, a0, '엿보기인데 이어 볼 자리가 바뀌었습니다');
+    else assert.deepEqual(rec.q[101].a, { k: 'h', i: 11, d: 20, f: 0.3 });
+  }
+});
+
+test('받는 동안 ct 를 두고 저장한 진도는 받기가 끝나면(다른 기기 기록이 없으면) 새 ct 로 굳혀 올린다', async () => {
+  const clock = fakeClock();
+  const srv = fakeServer(clock);
+  const a = device(clock, srv);
+  await a.on(async () => {
+    const s = await openScreen(clock);
+    s.tap(0);
+    await clock.advance(3000);
+    const ct0 = loadStudy(U, 11).ct;
+    srv.listDelay = 3000;
+    const done = s.refresh();
+    await clock.advance(10);
+    s.tap(1);
+    assert.equal(loadStudy(U, 11).ct, ct0);
+    assert.ok(loadStudy(U, 11).bb, '받는 동안의 진도를 바탕에 굳혔습니다');
+    await clock.advance(3500);
+    await done;
+    const r = loadStudy(U, 11);
+    assert.ok(r.ct > ct0, '받기가 끝났는데 새 ct 로 굳히지 않았습니다');
+    assert.equal(r.bb, undefined);
+    await clock.advance(3000);
+    assert.equal(srv.rows.get(11).clientAt, r.ct);
+    assert.deepEqual(revealedOf(srv.rows.get(11).data), [0, 1]);
+  });
 });

@@ -9,11 +9,11 @@ import SolveToc from "../components/SolveToc";
 import { PencilIcon } from "../components/NoteIcons";
 import { plainPreview, textModel } from "../utils/textBlocks";
 import { blankContext, questionContext } from "../utils/notes";
-import { clearStudy, loadStudy, saveStudy } from "../utils/studyState";
-import { freshStudyBeforeOpen } from "../api/study";
+import { clearStudy, loadStudy, saveStudy, studyStale } from "../utils/studyState";
+import { freshStudyBeforeOpen, pendingStudyPull, refreshStudy } from "../api/study";
 import {
   GRADED_TYPES, applyTarget, blankCountOf, flagsOf, indicesOf, initialSolveState, keepResume, normalizeType, openedIndices,
-  questionHash, starOnlyRevealed, studySnapshot, toggleIndex,
+  questionHash, refreshView, starOnlyRevealed, studySnapshot, toggleIndex,
 } from "../utils/solveStudy";
 import { applyAnchor, captureAnchor, pulse, readingProgress, scrollElTo, sectionProgress } from "../utils/solveScroll";
 import { hasSet, pairOf, rememberHardMode } from "../utils/hardMode";
@@ -40,6 +40,9 @@ const NOTE_CHIP_MS = 12000;
 // 다시 열었을 때 읽던 자리를 맞춘 뒤, 늦게 바뀌는 배치(필기를 불러와 빈칸 폭이 바뀜·그림)를 따라 다시 맞추는 시간.
 // 사용자가 손대면(누름·휠·키·직접 스크롤) 바로 그만둔다
 const RESTORE_SETTLE_MS = 4000;
+// 이만큼 손대지 않다가 다시 손대면(누름·키·휠) 다른 기기 공부 기록을 한 번 받아 본다 — 화면을 켜 둔 채(wake lock) 휴대폰에서
+// 공부하고 돌아왔을 수 있다. 읽기만 하며 오래 멈춰 있어도 받기는 작은 요청 하나
+const IDLE_REFRESH_MS = 20000;
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩";
 const NO_ANSWERS = [];
 const NO_STARS = [];
@@ -469,7 +472,8 @@ const S = {
 
 // target: 처음 열 자리(없으면 이어 보기) — App 이 넘긴다
 //  { kind: "note", questionId, blankNo }  질문 메모의 '빈칸 보기': 그 빈칸으로 가서 깜빡임. 이어 볼 자리는 바꾸지 않는다(엿보기)
-//  { kind: "switch", qIndex, heading, p, f, toHard }  '하드로/보통으로': 짝 문제집에서 읽던 절과 같은 절로
+//  { kind: "switch", qIndex, heading, p, f, toHard, peek }  '하드로/보통으로': 짝 문제집에서 읽던 절과 같은 절로.
+//    peek: 메모에서 엿보다가 바꿈 — 바꾼 쪽에서도 엿보기(오가도 보통 문제집의 이어 볼 자리가 메모의 절로 바뀌지 않게)
 // knownSets: 부른 쪽이 이미 가진 문제집 목록(짝 찾기용 — 없으면 대시보드 기억, 그것도 없으면 받아 봄)
 // backLabel: 머리 줄 ← 단추 글(메모에서 왔으면 '← 메모로'), onSwitchSet(짝 문제집, target): 보통 ↔ 하드
 export default function SolveView({ set, target = null, knownSets = null, backLabel = "← 목록으로", onBack, onSwitchSet }) {
@@ -512,7 +516,12 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   });
   const targetRef = useRef(target); // 처음 열 자리(다시 시도 때도 같은 자리로)
   const peekRef = useRef(null); // 메모에서 엿보는 중: { saved: 열기 전 기록, anchor: 그 문항의 읽던 자리 } — 저장할 때 이어 볼 자리를 지킨다
+  // 메모에서 와서(또는 엿보다가 짝 문제집으로 바꿔) 엿보기로 열었고 사용자가 아직 끝내지 않았나 — 열 때 이어 볼 기록이 없어
+  // peekRef 가 비어 있어도 참(늦게 받은 기록·짝 문제집으로 바꿀 때 엿보기를 이어 가게). 답을 내거나 문항을 옮기면 끝
+  const peekLive = useRef(!!target && (target.kind === "note" || (target.kind === "switch" && !!target.peek)));
   const [restoreTick, setRestoreTick] = useState(0); // 읽던 자리 맞추기를 다시 돌릴 때('읽던 곳으로')
+  const mounted = useRef(false); // 늦게 끝난 받기가 떠난 화면의 상태를 저장하지 않게
+  const afterRefreshRef = useRef(null); // 받기가 끝난 뒤 받은 기록을 화면에 얹기(아래 afterRefresh)
 
   const headRef = useRef(null); // 위에 붙은 머리 묶음(아래 끝 = 읽는 줄)
   const bodyRef = useRef(null); // 문항 카드 본문(읽던 자리·읽은 정도의 기준)
@@ -569,10 +578,12 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
           restoreRef.current = init.resumed && init.anchor && cq ? { qid: cq.id, anchor: init.anchor } : null;
         }
         // 메모에서 엿보기: 이어 볼 자리(보던 문항·읽던 자리)는 그대로 지킨다. 같은 문항을 읽던 중이었으면 '읽던 곳으로' 단추.
+        // 엿보다가 짝 문제집으로 바꿨으면(switch peek) 그쪽에서도 엿보기('읽던 곳으로' 없이).
         // 이어 볼 기록이 없으면(처음 엶·끝낸 문제집·문항 묶음이 바뀜) 지킬 것이 없어 보통처럼 저장 — 메모에서 와 읽은 것이 남게
         const initCur = init.resumed ? init.questions[init.index] : null;
         const backAnchor = note && initCur && cq && String(initCur.id) === String(cq.id) ? init.anchor : null;
-        peekRef.current = note && init.resumed ? { saved, anchor: backAnchor } : null;
+        peekRef.current = t && t.found && peekLive.current && init.resumed ? { saved, anchor: backAnchor } : null;
+        if (!t || !t.found) peekLive.current = false;
         if (note) {
           setChip({ kind: "note", text: t.focusBlank != null ? `메모의 빈칸 ${t.focusBlank + 1}` : "메모의 문항", back: !!backAnchor });
         } else {
@@ -585,13 +596,19 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
           const kind = tgt.toHard ? "하드" : "보통";
           showToast(t.anchor && t.anchor.k === "h" ? `${kind} 문제집 · 같은 절로 왔습니다` : `${kind} 문제집으로 바꿨습니다`, "info");
         }
-        // 열 때마다 '마지막으로 본 때'(대시보드)를 남긴다(★ 는 남김). 내용은 바꾸지 않는다(open) — 이 기기가 아직 받지 못한
-        // 다른 기기의 진도를 열기만 해서 덮지 않게(utils/studyState.js saveStudy)
-        saveStudy(
-          username, setId,
-          init.resumed ? saved : studySnapshot({ base: list, questions: list, mode: null, index: 0, stars: init.stars }),
-          { open: true },
-        );
+        // 열 때마다 '마지막으로 본 때'(대시보드)를 남기고, 화면이 시작하는 상태(메모·바꾸기로 연 자리 포함, 엿보기면 이어 볼
+        // 자리는 그대로)를 이 화면의 바탕으로 둔다(open). 새 ct 는 주지 않는다 — 이 기기가 아직 받지 못한 다른 기기의 진도를
+        // 열기만 해서 덮지 않게, 이 상태에서 사용자가 진도를 바꿨을 때만(utils/studyState.js saveStudy)
+        let openSnap = studySnapshot({
+          base: list, questions: st.questions, mode: st.mode, index: st.index, results: st.results, revealed: st.revealed,
+          anchor: restoreRef.current ? restoreRef.current.anchor : null, stars: st.stars, counts: st.counts, filterPre: st.filterPre,
+        });
+        if (peekRef.current) openSnap = keepResume(openSnap, saved);
+        saveStudy(username, setId, openSnap, { open: true, seen: saved });
+        // 받기가 1.5초를 넘겨 아직 끝나지 않았으면(느린 연결) 끝난 뒤 받은 기록을 화면에 얹는다. 그때까지 진도를 바꾼 저장은
+        // 새 ct 없이(받은 기록을 이기지 않게) — 받은 기록 위에 다시 얹는다
+        const pending = pendingStudyPull();
+        if (pending) pending.then(() => afterRefreshRef.current?.(), () => {});
       } catch (e) {
         console.error(e);
         // 로그인이 끊긴 것이면 App 이 로그인 화면으로 보낸다
@@ -701,24 +718,132 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
       ready: !loadingQ && !loadError, base: baseQuestions, questions, mode, index: currentIndex,
       results, revealed: fillRev, done, qid: currentId, n: fillBlankCount,
       stars, counts, filterPre, starMode: starMode && starTools,
+      fill: isFill, headings: fillHeadings, canSwitch: !!(pair && onSwitchSet),
     };
   });
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
-  // 공부 기록 저장: 지금 상태 + 읽던 자리(화면에서 잼). 다시 연 자리를 맞추는 중이면 맞추려는 자리를 그대로
+  // 목차: 지금 읽는 제목(읽는 줄 위로 올라간 마지막 제목)
+  const currentHeading = useCallback(() => {
+    const body = bodyRef.current;
+    if (!body) return null;
+    const line = lineOf(headRef.current) + 8;
+    let cur = null;
+    for (const el of body.querySelectorAll("[data-qm-h]")) {
+      if (el.getBoundingClientRect().top <= line) cur = Number(el.getAttribute("data-qm-h"));
+      else break;
+    }
+    return cur;
+  }, []);
+
+  // 지금 읽는 자리를 짝 문제집(보통 ↔ 하드)에 넘길 꼴로: 읽던 절(제목)·그 절 안 비율·본문 비율
+  const placeNow = useCallback(() => {
+    const s = live.current;
+    const body = bodyRef.current;
+    const line = lineOf(headRef.current);
+    const hid = s && s.fill ? currentHeading() : null;
+    const h = hid != null ? s.headings.find((x) => x.hid === hid) : null;
+    const cap = captureAnchor(body, line);
+    return {
+      heading: h ? { kind: h.kind, label: h.label, hid: h.hid, total: s.headings.length } : null,
+      p: h ? sectionProgress(body, line, h.hid) : 0,
+      f: cap && Number.isFinite(cap.f) ? cap.f : null,
+    };
+  }, [currentHeading]);
+
+  // 저장할 읽던 자리: 다시 연 자리를 맞추는 중이면 맞추려는 자리, 아니면 화면에서 잼
+  const anchorNow = useCallback(() => {
+    const s = live.current;
+    const r = restoreRef.current;
+    return r && s && String(r.qid) === String(s.qid) ? r.anchor : captureAnchor(bodyRef.current, lineOf(headRef.current));
+  }, []);
+
+  // 공부 기록 저장: 지금 상태 + 읽던 자리. 받는 중이면 새 ct 없이(utils/studyState.js saveStudy)
   const persist = useCallback(() => {
     clearTimeout(saveTimer.current);
     saveTimer.current = 0;
     const s = live.current;
     if (!s || !s.ready || !s.base.length) return;
-    const r = restoreRef.current;
-    const anchor = r && String(r.qid) === String(s.qid)
-      ? r.anchor
-      : captureAnchor(bodyRef.current, lineOf(headRef.current));
-    let snap = studySnapshot({ ...s, anchor });
+    // 엿보기(메모에서 옴)인데 그사이 다른 기기 기록을 받았으면 그 기록의 이어 볼 자리를 지킨다 — 열 때 기록이 없었으면
+    // (받기가 늦음) 이제부터 엿보기. 받은 기록이 이 화면과 같은 문항을 보던 것이면 '읽던 곳으로'도
+    if (peekLive.current && studyStale(username, setId)) {
+      const got = loadStudy(username, setId);
+      const init = initialSolveState(got, s.base);
+      if (init.resumed || peekRef.current) {
+        const cq = s.questions[s.index];
+        const back = init.resumed && !!cq && String(init.questions[init.index]?.id) === String(cq.id) ? init.anchor : null;
+        peekRef.current = { saved: got, anchor: back };
+        if (mounted.current) setChip((c) => (c && c.kind === "note" ? { ...c, back: !!back } : c));
+      }
+    }
+    let snap = studySnapshot({ ...s, anchor: anchorNow() });
     // 메모에서 엿보는 중이면 이어 볼 자리는 열기 전 그대로(연 빈칸·★ 은 지금 것)
     if (peekRef.current) snap = keepResume(snap, peekRef.current.saved);
     saveStudy(username, setId, snap);
-  }, [username, setId]);
+  }, [username, setId, anchorNow]);
+
+  // 받기가 끝난 뒤(열 때 1.5초를 넘긴 받기·화면이 다시 보일 때·한동안 손대지 않다가 다시 손댈 때). 그사이 받은 다른 기기 기록이
+  // 이 화면과 다르면 이 화면에서 한 일을 그 위에 얹어 저장하고(saveStudy → rebaseStudy), 받은 연 빈칸·★ 등을 화면에도 보인다.
+  // 같은 문항을 보고 있을 때만 연 빈칸·채점까지(아니면 ★ 만 — 화면이 갑자기 다른 문항으로 넘어가지 않게). 읽던 자리(스크롤)는
+  // 옮기지 않는다 — 보고 있는 글이 움직이지 않게
+  const afterRefresh = useCallback(() => {
+    const s = live.current;
+    if (!mounted.current || !s || !s.ready || !s.base.length || !studyStale(username, setId)) return;
+    persist(); // 이 화면에서 한 일을 받은 기록 위에(엿보기면 받은 기록의 이어 볼 자리를 지키며)
+    const rec = loadStudy(username, setId);
+    if (!rec) return;
+    const v = refreshView(rec, s);
+    const next = v.same
+      ? { ...s, stars: v.stars, results: v.results, revealed: v.revealed, counts: v.counts, filterPre: v.filterPre }
+      : { ...s, stars: v.stars };
+    live.current = next; // 다음 그림 전에 저장(스크롤 멈춤·가려짐)이 와도 받은 것을 보고 저장하게
+    setStars(v.stars);
+    if (v.same) {
+      setResults(v.results);
+      setFillRevealed(v.revealed);
+      setCounts(v.counts);
+      setFilterPre(v.filterPre);
+    }
+    // 화면이 이제 이 기록을 보여 준다 — 바탕으로(이어지는 저장이 받은 것을 '사용자가 바꾼 것'으로 보지 않게).
+    // 다른 문항을 보고 있으면 기록 내용은 그대로 두고 바탕만(seen 없이)
+    let snap = studySnapshot({ ...next, anchor: anchorNow() });
+    if (peekRef.current) snap = keepResume(snap, peekRef.current.saved);
+    saveStudy(username, setId, snap, { open: true, seen: v.same ? rec : undefined });
+  }, [persist, anchorNow, username, setId]);
+  useLayoutEffect(() => { afterRefreshRef.current = afterRefresh; });
+
+  // 다른 기기에서 공부했을 수 있는 때 — 화면이 다시 보일 때, 한동안(IDLE_REFRESH_MS) 손대지 않다가 다시 손댈 때 — 공부 기록을
+  // 받아 이 화면에 얹는다(afterRefresh). 받는 동안 이 화면의 저장은 새 ct 를 주지 않는다(utils/studyState.js saveStudy):
+  // 화면을 켜 둔 채(wake lock) 휴대폰에서 공부하고 돌아와 누른 빈칸 하나가 그사이 휴대폰에서 연 빈칸·★ 을 지우지 않게
+  const loaded = !loadingQ && !loadError;
+  useEffect(() => {
+    if (!loaded || !username) return undefined;
+    let last = Date.now();
+    const refresh = () => {
+      const p = refreshStudy(username);
+      if (p) p.then(() => afterRefreshRef.current?.(), () => {});
+    };
+    const onAct = () => {
+      const now = Date.now();
+      if (now - last >= IDLE_REFRESH_MS) refresh();
+      last = now;
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      last = Date.now();
+      refresh();
+    };
+    const ACT = ["pointerdown", "keydown", "wheel", "touchstart"];
+    for (const t of ACT) window.addEventListener(t, onAct, { capture: true, passive: true });
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      for (const t of ACT) window.removeEventListener(t, onAct, { capture: true });
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loaded, username]);
   const scheduleSave = useCallback(() => {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(persist, 500);
@@ -882,18 +1007,6 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     />
   ), [fillAnswers, inkLayer, toggleFill]);
 
-  // 목차: 지금 읽는 제목(읽는 줄 위로 올라간 마지막 제목)
-  const currentHeading = useCallback(() => {
-    const body = bodyRef.current;
-    if (!body) return null;
-    const line = lineOf(headRef.current) + 8;
-    let cur = null;
-    for (const el of body.querySelectorAll("[data-qm-h]")) {
-      if (el.getBoundingClientRect().top <= line) cur = Number(el.getAttribute("data-qm-h"));
-      else break;
-    }
-    return cur;
-  }, []);
   // 목차에서 고른 제목으로: 읽는 줄 바로 아래에 오게
   const jumpToHeading = useCallback((hid) => {
     const el = bodyRef.current?.querySelector(`[data-qm-h="${hid}"]`);
@@ -977,30 +1090,21 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     setChip(null);
     if (!p || !p.anchor || !current) return;
     peekRef.current = null;
+    peekLive.current = false;
     lastJump.current = null;
     restoreRef.current = { qid: current.id, anchor: p.anchor };
     setRestoreTick((n) => n + 1);
   }
 
   // 보통 ↔ 하드: 지금 자리를 저장하고, 읽던 절(제목)·그 절 안 비율을 짝 문제집에 넘긴다(빈칸 번호는 둘이 달라 쓰지 않음).
-  // 대시보드 카드의 하드모드 켬/끔도 바꾼 쪽으로(목록으로 가서 다시 풀어도 같은 쪽이 열리게)
+  // 엿보는 중(메모에서 옴)이면 바꾼 쪽에서도 엿보기(peek). 대시보드 카드의 하드모드 켬/끔도 바꾼 쪽으로
   function switchPair() {
     if (!pair || !onSwitchSet || !current) return;
-    const body = bodyRef.current;
-    const line = lineOf(headRef.current);
-    const hid = isFill ? currentHeading() : null;
-    const h = hid != null ? fillHeadings.find((x) => x.hid === hid) : null;
-    const cap = captureAnchor(body, line);
+    const place = placeNow();
     const qIndex = Math.max(0, baseQuestions.findIndex((q) => String(q.id) === String(current.id)));
     persist();
     rememberHardMode(username, pair.baseId, pair.toHard);
-    onSwitchSet(pair.set, {
-      qIndex,
-      heading: h ? { kind: h.kind, label: h.label, hid: h.hid, total: fillHeadings.length } : null,
-      p: h ? sectionProgress(body, line, h.hid) : 0,
-      f: cap && Number.isFinite(cap.f) ? cap.f : null,
-      toHard: pair.toHard,
-    });
+    onSwitchSet(pair.set, { qIndex, ...place, toHard: pair.toHard, peek: peekLive.current });
   }
 
   // 진행 표시(여러 문항): 머리줄 숫자는 지금 보는 문항 번호, 막대는 끝낸 문항 수(지나온 문항 + 지금 문항을 채점했으면 1).
@@ -1012,6 +1116,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
 
   function recordAnswer(correct, userAnswer) {
     peekRef.current = null; // 메모에서 왔어도 답을 냈으면 보통처럼 이 자리를 남긴다
+    peekLive.current = false;
     setResults((r) => ({ ...r, [currentIndex]: { correct, userAnswer } }));
     setShowExplanation(false);
   }
@@ -1038,6 +1143,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     restoreRef.current = null;
     lastJump.current = null;
     peekRef.current = null;
+    peekLive.current = false;
     setChip(null);
     setFilterPre(null);
     window.scrollTo(0, 0);

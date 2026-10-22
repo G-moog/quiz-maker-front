@@ -63,4 +63,4 @@ export function putStudy(setId, data, clientAt, { keepalive = false } = {}) {
 
 connectStudySync({ list: listStudy, put: putStudy });
 
-export { syncStudy, pullStudy, flushStudy, freshStudyBeforeOpen } from "../utils/studyState";
+export { syncStudy, pullStudy, flushStudy, freshStudyBeforeOpen, refreshStudy, pendingStudyPull } from "../utils/studyState";
