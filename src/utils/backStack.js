@@ -5,19 +5,42 @@
 // React 에서는 useBack(열림, 닫는 함수) 으로 쓴다(아래).
 import { useEffect, useRef } from "react";
 
+// 닫는 함수가 이 값을 돌려주면 '닫지 않음'(예: '저장하지 않은 내용이 있습니다. 나갈까요?' 에서 취소) —
+// 뒤로 가기로 빠진 칸을 같은 자리에 다시 쌓는다. 그 칸의 release() 도 그대로 쓸 수 있다
+export const STAY = Symbol("qm-back-stay");
+
 const stack = []; // { id, onBack, pushed }
 let seq = 0;
 let ignorePops = 0; // 우리가 부른 history.go 로 올 popstate 수
+let pendingGo = 0; // 이번 차례(마이크로태스크)에 걷어 낼 칸 수 — release 여러 번을 history.go 한 번으로 모은다
 let listening = false;
 
 function flushPending() {
-  if (ignorePops > 0) return;
+  if (ignorePops > 0 || pendingGo > 0) return;
   for (const e of stack) {
     if (!e.pushed) {
       e.pushed = true;
       try { window.history.pushState({ qmBack: e.id }, ""); } catch { /* history 를 못 쓰면 뒤로 가기만 안 됨 */ }
     }
   }
+}
+
+// 한 렌더에서 부모·자식 화면이 함께 닫히면(예: 메모 고치기 칸이 열린 채 목록으로) release 가 여러 번 불린다.
+// 같은 차례에 history.go 를 여러 번 부르면 브라우저가 한 번만 움직이기도 해서(남은 칸·무시할 popstate 수가 어긋남)
+// 모아서 한 번에 부른다
+function scheduleGo(n) {
+  if (pendingGo === 0) queueMicrotask(runGo);
+  pendingGo += n;
+}
+
+function runGo() {
+  const n = pendingGo;
+  pendingGo = 0;
+  if (n > 0) {
+    ignorePops++;
+    try { window.history.go(-n); } catch { ignorePops--; }
+  }
+  flushPending();
 }
 
 function onPop() {
@@ -30,7 +53,12 @@ function onPop() {
   for (let i = stack.length - 1; i >= 0; i--) {
     if (stack[i].pushed) {
       const [top] = stack.splice(i, 1);
-      top.onBack();
+      if (top.onBack() === STAY) {
+        // 닫지 않음: 같은 칸(같은 release)을 같은 자리에 다시 올린다
+        top.pushed = false;
+        stack.splice(Math.min(i, stack.length), 0, top);
+        flushPending();
+      }
       return;
     }
   }
@@ -55,14 +83,12 @@ export function pushBack(onBack) {
     // 이 칸과 그 위에 쌓인 칸을 함께 걷어 낸다(위의 것은 닫는 함수를 부르지 않음 — 부모가 닫히면 같이 사라지는 화면)
     const removed = stack.splice(i);
     const n = removed.filter((e) => e.pushed).length;
-    if (n > 0) {
-      ignorePops++;
-      try { window.history.go(-n); } catch { ignorePops--; }
-    }
+    if (n > 0) scheduleGo(n);
   };
 }
 
 // open 이 true 인 동안 history 에 한 칸을 둔다. 뒤로 가기가 오면 onBack() — 보통 open 을 false 로 바꾸는 함수.
+// onBack 이 STAY 를 돌려주면 닫지 않고 칸을 다시 쌓는다.
 // 앱 단추로 open 이 false 가 되면 칸을 걷어 낸다. onBack 은 늘 최신 것을 부른다
 export function useBack(open, onBack) {
   const ref = useRef(onBack);
