@@ -11,7 +11,8 @@ export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_PwxvwnquiYrE4LjVppTXhw_3
 // Vercel 프로젝트를 만든 뒤 채운다 — 지금은 없음. 꼴이 틀리면 앱이 시작하지 않고 빌드도 실패한다(assertProdHosts).
 // 여기 없는 주소(미리보기·로컬)에서는 리허설 띠나 '운영 데이터' 확인을 보인다(설계서 3.4절).
 // 단, Vercel 운영 빌드는 어느 주소로 열어도(운영 배포의 git-master 별칭 등) 운영으로 본다(utils/startup.js)
-export const PROD_HOSTS = ["quizmaker-steel.vercel.app"];   // 2026-10-22 만든 Vercel 프로젝트의 운영 주소
+// 첫 번째가 대표 주소(비밀번호 재설정 메일이 돌아오는 곳). 2026-10-22 산 도메인. vercel.app 주소는 Vercel 이 대표 주소로 넘겨준다(307)
+export const PROD_HOSTS = ["quiz-maker.study", "quizmaker-steel.vercel.app"];
 // 옛 Railway 앱 주소: 여기서 열리면 '주소가 바뀌었습니다' 화면만 보인다
 export const LEGACY_APP_HOST = "quiz-maker.up.railway.app";
 // 앱이 요구하는 DB 판(supabase/migrations 의 마지막 schema_version). DB 가 이보다 낮으면 '서버 준비 중'
