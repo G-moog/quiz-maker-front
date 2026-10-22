@@ -223,3 +223,24 @@ test('공부 기록: 관리자(계정 준비로 만든 사용자)도 같은 길,
   assert.equal((await sql(db, OWNER, 'select last_user_write_at from public.qm_settings'))[0].last_user_write_at, null);
   await db.close();
 });
+
+test('공부 기록: 진도 없는 기록(앱이 client_at 1970-01-01 로 올림)도 받고, 어느 진도에도 지며 at·days 는 남김', async () => {
+  const { db, alice, a1, a2 } = await setup();
+  const WEAK = '1970-01-01T00:00:00.000Z';
+  // 처음: 진도 없는 기록만 있으면 그대로 들어감(시각 꼴도 그대로)
+  const w = await rpc(db, alice, 'qm_put_study', { p_set_id: a1.id, p_data: rec({ at: T3, days: ['2026-10-22'] }), p_client_at: WEAK });
+  assert.equal(w.clientAt, WEAK);
+  // 다른 기기의 진도(T1 — 진도 없는 기록보다 '옛' 때 고쳤어도)가 이김
+  const s = await rpc(db, alice, 'qm_put_study', { p_set_id: a1.id, p_data: rec({ q: { 101: { r: [0, 1] } } }), p_client_at: T1 });
+  assert.deepEqual(s.data.q, { 101: { r: [0, 1] } });
+  assert.equal(s.data.at, T3, '진도 없는 기기에서 본 때(at)가 사라졌습니다');
+  // 진도가 있는 줄에 진도 없는 기록이 와도 내용은 그대로, days·at 만 합침
+  const w2 = await rpc(db, alice, 'qm_put_study', { p_set_id: a1.id, p_data: rec({ at: T3, days: ['2026-10-23'], cur: 'weak' }), p_client_at: WEAK });
+  assert.deepEqual([w2.data.q, w2.data.cur, w2.clientAt], [{ 101: { r: [0, 1] } }, '101', T1]);
+  assert.deepEqual(w2.data.days, ['2026-10-20', '2026-10-22', '2026-10-23']);
+  // 진도 없는 기록끼리는 같은 시각 — 나중에 온 것(올리는 쪽)이 이김
+  await rpc(db, alice, 'qm_put_study', { p_set_id: a2.id, p_data: rec({ cur: 'a' }), p_client_at: WEAK });
+  const w3 = await rpc(db, alice, 'qm_put_study', { p_set_id: a2.id, p_data: rec({ cur: 'b' }), p_client_at: WEAK });
+  assert.equal(w3.data.cur, 'b');
+  await db.close();
+});
