@@ -311,7 +311,8 @@ export class InkInput {
       blank: blankEl ? Number(blankEl.dataset.inkBlank) : null, eraser, last: p, shown: false, captured: false,
       slop: eraser ? TAP_SLOP : tapSlop(e.pointerType, !!blankEl),
       // 그리는 선 끝에 잠깐 붙일 예측 점(저장 안 함)과 펜 시험 페이지에 알릴 입력 값
-      pred: [], moveAt: t, moves: 0, samples: 0, predMoves: 0, predMax: 0, predAhead: 0, frames: 0, lagSum: 0, lagMax: 0,
+      // (lagAt: 지연을 마지막으로 잰 입력의 시각 — 같은 입력을 두 번 세지 않게)
+      pred: [], moveAt: t, moves: 0, samples: 0, predMoves: 0, predMax: 0, predAhead: 0, frames: 0, lagSum: 0, lagMax: 0, lagAt: null,
       stroke: eraser ? null : tool === "hl"
         ? { tool: "hl", color: HL_COLOR, w: HL_WIDTH, pts: [] }
         : { tool: "pen", color, w: PEN_WIDTH, pts: [] },
@@ -716,7 +717,8 @@ export class InkInput {
     this.emit("erase", { n: hits.length });
   }
 
-  // 한 그림에 한 번(rAF): 지금까지 모은 점 + 예측 점으로 그리는 중인 선의 d 만 바꾼다. ts - moveAt = 마지막 입력에서 그림 시작까지
+  // 한 그림에 한 번(rAF): 지금까지 모은 점 + 예측 점으로 그리는 중인 선의 d 만 바꾼다. ts - moveAt = 마지막 입력에서 그림 시작까지.
+  // 지연은 새 입력이 들어온 그림만 센다 — 펜이 멈춰 예측 꼬리만 걷는 그림(dropPrediction, PREDICT_HOLD_MS 뒤)은 입력 지연이 아니다
   drawLive(ts) {
     this.liveRaf = 0;
     const a = this.active;
@@ -724,7 +726,8 @@ export class InkInput {
     const s = a.stroke;
     const path = this.hooks.livePath(s.tool);
     if (!path) return;
-    if (Number.isFinite(ts) && ts >= a.moveAt) {
+    if (Number.isFinite(ts) && ts >= a.moveAt && a.lagAt !== a.moveAt) {
+      a.lagAt = a.moveAt;
       a.frames += 1;
       a.lagSum += ts - a.moveAt;
       a.lagMax = Math.max(a.lagMax, ts - a.moveAt);
