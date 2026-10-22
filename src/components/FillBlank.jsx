@@ -1,5 +1,7 @@
+import { memo } from "react";
+
 // 풀기 화면의 빈칸 단추: 가린 상태는 번호(index + 1), 연 상태는 정답. SolveView·펜 시험 페이지가 함께 쓴다.
-// data-ink-blank: 필기 모드에서 펜 두 번 콕이 어느 빈칸인지 찾는 표시(InkInput)
+// data-ink-blank: 필기 모드에서 펜 두 번 콕이 어느 빈칸인지 찾는 표시(InkInput). 이어 보기·'다음 가린 빈칸'도 이걸로 찾는다
 //
 // 단추 모양
 //  표 칸 안(inTable): 좁은 칸을 넘지 않게 여백·테두리를 줄임. 연 상태의 긴 정답은 버튼 안에서 줄바꿈
@@ -17,7 +19,8 @@ function blankStyle(revealed, inTable, fixed) {
     border: `${inTable ? 1.5 : 2}px ${revealed ? "solid" : "dashed"} #f59e0b`,
     background: revealed ? "#f59e0b" : "transparent",
     color: revealed ? "#1a1a1a" : "#f59e0b",
-    transition: "all 0.2s ease",
+    // 바뀌는 색만 부드럽게(예전 all 은 바뀌지 않는 속성까지 지켜봄)
+    transition: "background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease",
     lineHeight: 1.4,
     ...(revealed || fixed ? {} : { whiteSpace: "nowrap", overflowWrap: "normal" }),
   };
@@ -25,7 +28,8 @@ function blankStyle(revealed, inTable, fixed) {
 
 const CELL = { gridArea: "1 / 1" };
 
-export default function FillBlank({ index, revealed, answer, inTable = false, fixed = false, onToggle }) {
+// memo: 빈칸이 230개인 페이지에서 하나를 열 때 나머지 단추는 다시 그리지 않는다(부모는 onToggle 을 고정된 함수로 넘김)
+function FillBlank({ index, revealed, answer, inTable = false, fixed = false, onToggle }) {
   const shown = answer ?? "?";
   return (
     <button
@@ -33,7 +37,8 @@ export default function FillBlank({ index, revealed, answer, inTable = false, fi
       data-ink-blank={index}
       style={blankStyle(revealed, inTable, fixed)}
       onClick={() => onToggle(index)}
-      title={revealed ? "클릭하여 가리기" : `클릭하여 ${index + 1}번 빈칸 정답 확인`}
+      aria-pressed={revealed}
+      title={revealed ? "눌러서 가리기" : `눌러서 ${index + 1}번 빈칸 정답 확인`}
     >
       {fixed ? (
         <>
@@ -44,3 +49,5 @@ export default function FillBlank({ index, revealed, answer, inTable = false, fi
     </button>
   );
 }
+
+export default memo(FillBlank);
