@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { HL_OPACITY, centerlinePath, outlinePath } from "./geometry";
-import { visibleStrokes } from "./inkStore";
+import { DRAW_SCALE, DRAW_TRANSFORM, HL_OPACITY, centerlinePath, chunkStrokes, outlinePath } from "./geometry";
+import { oldStrokes, visibleStrokes } from "./inkStore";
 import { InkInput } from "./InkInput";
 
 // 필기 영역: 문항 본문을 감싸는 div. 필기 층이 켜지면(layerOn: 필기 모드 켬, 또는 이 문항에 보여 줄 필기가 있음)
@@ -8,6 +8,9 @@ import { InkInput } from "./InkInput";
 // 층은 pointer-events: none 이고 입력은 이 div 가 받는다(enabled 일 때만, InkInput). 좌표는 이 div 왼쪽 위 기준 px.
 // 입력은 글 상자 바깥 카드 여백까지 받는다(.qm-ink-bleed — 줄 맨 앞 글자 왼쪽이나 마지막 줄 아래에서 시작한 선도 그어지게).
 // 필기 층이 꺼져 있으면 div 는 넘겨받은 style 그대로 — 지금 화면과 똑같다.
+// 예전 필기 흐리게 보기(store.oldOn — InkNotices 의 단추): 본문이 바뀌기 전의 필기를 글자 아래에 흐리게 겹친다. 읽기만 —
+// 지우개·되돌리기·저장은 지금 필기만 다룬다(층도 따로). 필기 모드를 꺼도 보인다 — 보는 동안은 보관소가 필기 층을 켜게 해서
+// (hasVisibleInk → layerOn) 빈칸이 필기할 때와 같은 정답 폭이 된다(번호 폭 빈칸 위에 겹치면 줄이 어긋나므로)
 // 안내(본문 바뀜·다른 폭의 필기·저장 실패 등)는 여기가 아니라 화면 위쪽 묶음에 띄운다(InkNotices — 글 위치가 바뀌지 않게).
 
 const LAYER_STYLE = { position: "relative", isolation: "isolate" };
@@ -23,12 +26,12 @@ const svgStyle = (kind, hidden) => ({
   visibility: hidden ? "hidden" : "visible",
 });
 
-// 저장된 선 하나 — 선은 한 번 그은 뒤 바뀌지 않으므로 memo 로 다시 계산하지 않는다
+// 저장된 선 하나 — 선은 한 번 그은 뒤 바뀌지 않으므로 memo 로 다시 계산하지 않는다(좌표 단위 0.1px — geometry DRAW_SCALE)
 const StrokePath = memo(function StrokePath({ s }) {
   if (s.tool === "hl") {
     return (
       <path
-        d={centerlinePath(s.pts)} fill="none" stroke={s.color} strokeWidth={s.w}
+        d={centerlinePath(s.pts)} fill="none" stroke={s.color} strokeWidth={s.w * DRAW_SCALE}
         strokeLinecap="round" strokeLinejoin="round" strokeOpacity={HL_OPACITY}
       />
     );
@@ -36,13 +39,45 @@ const StrokePath = memo(function StrokePath({ s }) {
   return <path d={outlinePath(s.pts, s.w)} fill={s.color} />;
 });
 
-// 층 하나(형광펜 또는 펜). 마지막 <path> 는 그리는 중인 선(InkInput 이 직접 d 를 바꾼다 — React 를 거치지 않게)
-const InkLayer = memo(function InkLayer({ kind, strokes, hidden, liveRef }) {
+// 선 묶음(geometry.chunkStrokes): 선 하나를 더하거나 지우면 그 선이 든 묶음만 다시 맞춰 보고 나머지 묶음은 건너뛴다 —
+// 선이 2,000개인 문항에서 선 하나 더할 때마다 2,000개를 하나씩 맞춰 보지 않게. 그리는 차례(DOM 차례)는 선 배열 차례 그대로
+const sameList = (a, b) => a.length === b.length && a.every((s, i) => s === b[i]);
+const StrokeChunk = memo(function StrokeChunk({ list }) {
+  return list.map((s) => <StrokePath key={s.id} s={s} />);
+}, (a, b) => sameList(a.list, b.list));
+
+// 예전 필기 층(읽기만): 글자 아래(형광펜 층보다도 아래), 흐리게. 형광펜·펜 선을 쓴 차례대로 함께
+const OLD_OPACITY = 0.4;
+const OldLayer = memo(function OldLayer({ strokes, hidden }) {
+  return (
+    <svg aria-hidden="true" focusable="false" data-ink-old="" style={{ ...svgStyle("hl", hidden), opacity: OLD_OPACITY }}>
+      <g transform={DRAW_TRANSFORM}>
+        {chunkStrokes(strokes).map((c) => <StrokeChunk key={c.key} list={c.list} />)}
+      </g>
+    </svg>
+  );
+});
+
+// 층 하나(형광펜 또는 펜): 저장된 선들
+const InkLayer = memo(function InkLayer({ kind, strokes, hidden }) {
   const mine = strokes.filter((s) => (s.tool === "hl") === (kind === "hl"));
   return (
     <svg aria-hidden="true" focusable="false" data-ink-layer={kind} style={svgStyle(kind, hidden)}>
-      {mine.map((s) => <StrokePath key={s.id} s={s} />)}
-      <path ref={liveRef} data-ink-live="" />
+      <g transform={DRAW_TRANSFORM}>
+        {chunkStrokes(mine).map((c) => <StrokeChunk key={c.key} list={c.list} />)}
+      </g>
+    </svg>
+  );
+});
+
+// 그리는 중인 선 하나만 담는 층(바로 앞 층과 같은 자리·같은 겹 순서). InkInput 이 그림마다 d 를 직접 바꾼다 — React 를 거치지 않게.
+// 저장된 선들과 다른 <svg> 라서 그림마다 바뀌는 선 하나 때문에 선이 수천 개인 층 전체를 다시 배치하지 않는다
+const LiveLayer = memo(function LiveLayer({ kind, hidden, liveRef }) {
+  return (
+    <svg aria-hidden="true" focusable="false" data-ink-live-layer={kind} style={svgStyle(kind, hidden)}>
+      <g transform={DRAW_TRANSFORM}>
+        <path ref={liveRef} data-ink-live="" />
+      </g>
     </svg>
   );
 });
@@ -59,7 +94,7 @@ export default function InkSurface({ store, enabled, layerOn, onBlankTap, onEven
   const setHlLive = useCallback((node) => { live.current.hl = node; }, []);
 
   // 영역 폭·높이: 필기 층을 쓰거나 저장된 필기를 찾아볼 때만 잰다(필기가 없고 모드가 꺼져 있으면 아무것도 하지 않음)
-  const watch = enabled || layerOn || !!snap.record;
+  const watch = enabled || layerOn || !!snap.record || snap.oldOn;
   useEffect(() => {
     if (!el || !watch) return;
     const measure = () => {
@@ -84,13 +119,19 @@ export default function InkSurface({ store, enabled, layerOn, onBlankTap, onEven
   }, [el, enabled, store]);
 
   const strokes = visibleStrokes(snap);
-  const areaStyle = layerOn ? { ...style, ...LAYER_STYLE, ...(enabled ? INPUT_STYLE : null) } : style;
+  const old = snap.oldOn ? oldStrokes(snap).strokes : null;
+  const showOld = !!old?.length;
+  const areaStyle = layerOn || showOld ? { ...style, ...LAYER_STYLE, ...(enabled ? INPUT_STYLE : null) } : style;
+  const mode = layerOn ? (enabled ? "on" : "view") : showOld ? "old" : undefined;
   return (
-    <div ref={setEl} className={className} style={areaStyle} data-ink-area={layerOn ? (enabled ? "on" : "view") : undefined}>
+    <div ref={setEl} className={className} style={areaStyle} data-ink-area={mode}>
       {enabled && <div className="qm-ink-bleed" aria-hidden="true" />}
-      {layerOn && <InkLayer kind="hl" strokes={strokes} hidden={snap.hidden} liveRef={setHlLive} />}
+      {showOld && <OldLayer strokes={old} hidden={snap.hidden} />}
+      {layerOn && <InkLayer kind="hl" strokes={strokes} hidden={snap.hidden} />}
+      {enabled && <LiveLayer kind="hl" hidden={snap.hidden} liveRef={setHlLive} />}
       {children}
-      {layerOn && <InkLayer kind="pen" strokes={strokes} hidden={snap.hidden} liveRef={setPenLive} />}
+      {layerOn && <InkLayer kind="pen" strokes={strokes} hidden={snap.hidden} />}
+      {enabled && <LiveLayer kind="pen" hidden={snap.hidden} liveRef={setPenLive} />}
     </div>
   );
 }

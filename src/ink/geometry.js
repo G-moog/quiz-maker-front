@@ -120,10 +120,61 @@ export function inertiaStep(v, dt, tau = INERTIA_TAU) {
   return { v: v * k, d: v * tau * (1 - k) };
 }
 
+// 두 손가락을 차례로 뗄 때: 첫 손가락을 뗀 뒤 남은 손가락이 이 ms 안에 떨어지면 '함께 뗌'(휙 밀고 놓음) — 첫 손가락을 뗄 때의
+// 속도와 남은 손가락의 속도 중 빠른 것으로 관성(차례로 떼는 사이 남은 손가락이 느려져도 휙 민 만큼은 미끄러지게).
+// 그보다 늦으면 남은 손가락의 속도만 — 대고 있다 떼면(최근 움직임 없음) 관성 없음. 그 사이 페이지는 남은 손가락을 따라간다(InkInput)
+export const FLING_PAIR_MS = 120;
+
+// 두 손가락 스크롤을 끝낼 때의 관성 속도(px/ms). samples = 남은 손가락까지 이어 모은 스크롤 기록,
+// lift = 첫 손가락을 뗀 때와 그때의 속도 { at, v }(한 번에 다 뗐으면 null)
+export function flingVelocity(samples, now, lift = null) {
+  const v = releaseVelocity(samples, now);
+  if (!lift || now - lift.at > FLING_PAIR_MS) return v;
+  return Math.abs(lift.v) > Math.abs(v) ? lift.v : v;
+}
+
+// 영역 밖(카드 여백·머리 줄)에 닿은 손가락을 두 손가락 스크롤에 함께 세는가: 영역 손가락과 거의 함께(OUTSIDE_JOIN_MS 안)
+// 닿았을 때만 — 화면 가장자리에 얹어 둔 엄지(태블릿을 쥔 손)가 다른 손의 빈칸 터치를 스크롤로 바꾸지 않게.
+// 영역 밖 손가락이 먼저 닿았으면(p = { at, moved }) 그 뒤 거의 움직이지 않았고(OUTSIDE_STILL_PX 미만) 페이지도 움직이지
+// 않았어야 한다(scrollAt: 마지막 scroll 이벤트) — 브라우저가 이미 그 손가락으로 스크롤하고 있으면 둘이 함께 움직이지 않게 맡겨 둔다
+export const OUTSIDE_JOIN_MS = 200;
+export const OUTSIDE_STILL_PX = 4;
+export function outsideJoinable(p, now, scrollAt = -Infinity) {
+  return !!p && !p.moved && now - p.at <= OUTSIDE_JOIN_MS && !(scrollAt >= p.at);
+}
+
 // ── 선 모양 ──
 const r1 = (v) => Math.round(v * 10) / 10;
 const r2 = (v) => Math.round(v * 100) / 100;
-const xy = (p) => `${r1(p[0])},${r1(p[1])}`;
+
+// ── 예측 점(그리는 중인 선에만) ──
+// 브라우저가 알려 주는 '곧 올 펜 자리'(PointerEvent.getPredictedEvents)를 그리는 중인 선 끝에 잠깐 붙여 선이 펜촉을
+// 더 바짝 따라오게 한다(체감 지연 줄이기). 저장하지 않는다 — 다음 움직임에서 새 예측으로 바꾸고, 뗄 때 버린다.
+// 너무 앞선 예측(시간·거리)은 자르고, 펜이 멈추면 걷는다(멈춘 자리보다 앞서 그려진 꼬리가 남지 않게)
+export const PREDICT_MAX_POINTS = 3;
+export const PREDICT_MAX_MS = 25; // 지금 이벤트보다 이만큼 넘게 앞선 예측은 버린다
+export const PREDICT_MAX_PX = 24; // 마지막 실제 점에서 이만큼 넘게 떨어진 예측은 이 거리까지만(방향은 그대로)
+export const PREDICT_HOLD_MS = 60; // 새 움직임 없이 이만큼 지나면 예측 꼬리를 걷는다
+
+// last: 마지막 실제 점 [x, y, 힘], preds: 예측 자리 [{ x, y, t }](영역 기준 px, t = 이벤트 시각), now: 지금 이벤트 시각
+// → 그리는 선에 붙일 점들 [[x, y, 힘]…](힘은 마지막 실제 점 그대로 — 예측 이벤트의 힘은 믿을 수 없다)
+export function predictTail(last, preds, now) {
+  const out = [];
+  if (!last || !preds?.length) return out;
+  for (const q of preds) {
+    if (out.length >= PREDICT_MAX_POINTS) break;
+    if (!q || !Number.isFinite(q.x) || !Number.isFinite(q.y)) continue;
+    if (Number.isFinite(q.t) && Number.isFinite(now) && q.t - now > PREDICT_MAX_MS) break;
+    const d = distance(last[0], last[1], q.x, q.y);
+    if (d > PREDICT_MAX_PX) {
+      const k = PREDICT_MAX_PX / d;
+      out.push([r1(last[0] + (q.x - last[0]) * k), r1(last[1] + (q.y - last[1]) * k), last[2]]);
+      break;
+    }
+    out.push([r1(q.x), r1(q.y), last[2]]);
+  }
+  return out;
+}
 
 // 점 더하기: 앞 점과 0.75px 보다 가까우면 버린다(좌표는 소수 1자리). 더했으면 true
 export function addPoint(pts, x, y, p) {
@@ -143,42 +194,78 @@ export function penRadius(w, p) {
   return (w / 2) * (0.55 + 0.9 * pressureOf(p));
 }
 
-function pathLength(pts) {
+// 선 길이가 min 보다 짧은가(점처럼 보이는 선) — 길이를 다 재지 않고 min 을 넘는 순간 멈춘다
+function shorterThan(pts, min) {
   let len = 0;
-  for (let i = 1; i < pts.length; i++) len += distance(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
-  return len;
+  for (let i = 1; i < pts.length; i++) {
+    len += distance(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+    if (len >= min) return false;
+  }
+  return true;
 }
 
-// 점들을 지나는 매끄러운 선: 점 사이 중간점을 잇는 2차 곡선(첫 점에서 시작한 뒤 이어 붙일 부분)
-function smoothTail(arr) {
-  const n = arr.length;
-  if (n < 3) return arr.slice(1).map((p) => `L${xy(p)}`).join("");
+// ── 선 그림(SVG path 의 d) ──
+// 단위는 0.1px 정수(DRAW_SCALE): 필기 층은 <g transform="scale(0.1)"> 안에 그린다(InkSurface — DRAW_TRANSFORM).
+// 첫 점만 절대 좌표, 나머지는 앞 점에서 얼마나 갔는지(상대 명령 q·l·a). 소수 좌표 글보다 짧고(약 절반) 만들기 빠르다(약 4배) —
+// 획이 2,000개인 긴 문항을 열 때 그리기 준비와 브라우저의 path 읽기가 함께 준다. 자리는 예전처럼 0.1px 단위로 반올림한 그대로
+export const DRAW_SCALE = 10;
+export const DRAW_TRANSFORM = `scale(${1 / DRAW_SCALE})`;
+const tenth = (v) => Math.round(v * DRAW_SCALE);
+
+// 점들(0.1px 정수, 평평한 배열 [x0, y0, x1, y1, …], n 개)을 지나는 매끄러운 선 — 점 사이 중간점을 잇는 2차 곡선.
+// 첫 점에서 시작한 뒤 이어 붙일 부분(상대 명령). at = [x, y]: 지금 펜 자리(끝난 자리로 바뀐다)
+function smoothTail(A, n, at) {
+  let cx = at[0];
+  let cy = at[1];
   let d = "";
-  for (let i = 1; i < n - 1; i++) {
-    d += `Q${xy(arr[i])} ${r1((arr[i][0] + arr[i + 1][0]) / 2)},${r1((arr[i][1] + arr[i + 1][1]) / 2)}`;
+  if (n < 3) {
+    for (let i = 1; i < n; i++) {
+      d += `l${A[2 * i] - cx},${A[2 * i + 1] - cy}`;
+      cx = A[2 * i];
+      cy = A[2 * i + 1];
+    }
+  } else {
+    for (let i = 1; i < n - 1; i++) {
+      const qx = A[2 * i];
+      const qy = A[2 * i + 1];
+      const mx = Math.round((qx + A[2 * i + 2]) / 2);
+      const my = Math.round((qy + A[2 * i + 3]) / 2);
+      d += `q${qx - cx},${qy - cy} ${mx - cx},${my - cy}`;
+      cx = mx;
+      cy = my;
+    }
+    d += `l${A[2 * n - 2] - cx},${A[2 * n - 1] - cy}`;
+    cx = A[2 * n - 2];
+    cy = A[2 * n - 1];
   }
-  return `${d}L${xy(arr[n - 1])}`;
+  at[0] = cx;
+  at[1] = cy;
+  return d;
 }
 
 function circlePath(x, y, r) {
-  return `M${r1(x - r)},${r1(y)}a${r1(r)},${r1(r)} 0 1 0 ${r1(2 * r)},0a${r1(r)},${r1(r)} 0 1 0 ${r1(-2 * r)},0Z`;
+  const t = Math.max(1, tenth(r));
+  return `M${tenth(x) - t},${tenth(y)}a${t},${t} 0 1 0 ${2 * t},0a${t},${t} 0 1 0 ${-2 * t},0z`;
 }
 
-// 펜 선: 누르는 힘에 따라 굵기가 변하는 테두리(채운 도형). 양옆 테두리를 매끄럽게 잇고 두 끝은 반원
+// 펜 선: 누르는 힘에 따라 굵기가 변하는 테두리(채운 도형). 양옆 테두리를 매끄럽게 잇고 두 끝은 반원 (단위 0.1px)
 export function outlinePath(pts, w) {
   const n = pts.length;
   if (!n) return "";
-  const raw = pts.map((p) => penRadius(w, p[2]));
+  const raw = new Array(n);
+  for (let i = 0; i < n; i++) raw[i] = penRadius(w, pts[i][2]);
   // 힘 값이 튀어 굵기가 울퉁불퉁하지 않게 이웃과 평균
-  const rs = raw.map((v, i) => (raw[Math.max(0, i - 1)] + 2 * v + raw[Math.min(n - 1, i + 1)]) / 4);
-  if (n === 1 || pathLength(pts) < 0.5) return circlePath(pts[0][0], pts[0][1], rs[0]);
-  const left = [];
-  const right = [];
+  const rs = new Array(n);
+  for (let i = 0; i < n; i++) rs[i] = (raw[i > 0 ? i - 1 : 0] + 2 * raw[i] + raw[i < n - 1 ? i + 1 : n - 1]) / 4;
+  if (n === 1 || shorterThan(pts, 0.5)) return circlePath(pts[0][0], pts[0][1], rs[0]);
+  // 왼쪽 테두리는 앞에서부터, 오른쪽 테두리는 뒤에서부터(돌아오는 길) 담는다
+  const left = new Int32Array(2 * n);
+  const right = new Int32Array(2 * n);
   let nx = 0;
   let ny = 1;
   for (let i = 0; i < n; i++) {
-    const a = pts[Math.max(0, i - 1)];
-    const b = pts[Math.min(n - 1, i + 1)];
+    const a = pts[i > 0 ? i - 1 : 0];
+    const b = pts[i < n - 1 ? i + 1 : n - 1];
     const dx = b[0] - a[0];
     const dy = b[1] - a[1];
     const len = Math.hypot(dx, dy);
@@ -186,20 +273,61 @@ export function outlinePath(pts, w) {
       nx = -dy / len;
       ny = dx / len;
     }
-    left.push([pts[i][0] + nx * rs[i], pts[i][1] + ny * rs[i]]);
-    right.push([pts[i][0] - nx * rs[i], pts[i][1] - ny * rs[i]]);
+    const x = pts[i][0];
+    const y = pts[i][1];
+    const r = rs[i];
+    const j = 2 * (n - 1 - i);
+    left[2 * i] = tenth(x + nx * r);
+    left[2 * i + 1] = tenth(y + ny * r);
+    right[j] = tenth(x - nx * r);
+    right[j + 1] = tenth(y - ny * r);
   }
-  const re = r1(rs[n - 1]);
-  const r0 = r1(rs[0]);
-  right.reverse();
-  return `M${xy(left[0])}${smoothTail(left)}A${re},${re} 0 0 0 ${xy(right[0])}${smoothTail(right)}A${r0},${r0} 0 0 0 ${xy(left[0])}Z`;
+  const at = [left[0], left[1]];
+  let d = `M${left[0]},${left[1]}${smoothTail(left, n, at)}`;
+  const re = tenth(rs[n - 1]);
+  d += `a${re},${re} 0 0 0 ${right[0] - at[0]},${right[1] - at[1]}`;
+  at[0] = right[0];
+  at[1] = right[1];
+  d += smoothTail(right, n, at);
+  const r0 = tenth(rs[0]);
+  return `${d}a${r0},${r0} 0 0 0 ${left[0] - at[0]},${left[1] - at[1]}z`;
 }
 
-// 형광펜 선: 가운데 선(굵기는 stroke-width 로)
+// 형광펜 선: 가운데 선(굵기는 stroke-width 로 — 0.1px 단위라 w × DRAW_SCALE)
 export function centerlinePath(pts) {
-  if (!pts.length) return "";
-  if (pts.length === 1) return `M${xy(pts[0])}l0.01,0`;
-  return `M${xy(pts[0])}${smoothTail(pts)}`;
+  const n = pts.length;
+  if (!n) return "";
+  const A = new Int32Array(2 * n);
+  for (let i = 0; i < n; i++) {
+    A[2 * i] = tenth(pts[i][0]);
+    A[2 * i + 1] = tenth(pts[i][1]);
+  }
+  if (n === 1) return `M${A[0]},${A[1]}l1,0`;
+  return `M${A[0]},${A[1]}${smoothTail(A, n, [A[0], A[1]])}`;
+}
+
+// 그릴 선 묶기(InkSurface): 이웃한 선끼리 id 묶음 번호(id ÷ size)가 같으면 한 묶음 → [{ key, list }].
+// 선 id 는 그은 차례로 커지므로 보통 묶음 하나에 size 개 안팎. key 는 묶음 번호 — 묶음의 첫 선을 지워도 그대로라
+// 묶음을 새로 만들지 않는다. id 차례가 섞인 배열(다시 읽어 합친 필기)에서 같은 번호가 또 나오면 "번호:몇째"로 겹치지 않게.
+// 선 배열 차례는 그대로(그리는 차례가 바뀌지 않게)
+export const DRAW_CHUNK = 64;
+export function chunkStrokes(strokes, size = DRAW_CHUNK) {
+  const out = [];
+  const seen = new Map();
+  let cur = null;
+  let ci = NaN;
+  for (const s of strokes) {
+    const c = Math.floor(s.id / size);
+    if (!cur || c !== ci) {
+      const k = seen.get(c) ?? 0;
+      seen.set(c, k + 1);
+      cur = { key: k ? `${c}:${k}` : String(c), list: [] };
+      out.push(cur);
+      ci = c;
+    }
+    cur.list.push(s);
+  }
+  return out;
 }
 
 // ── 지우개 ──

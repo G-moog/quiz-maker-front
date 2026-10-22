@@ -1,6 +1,8 @@
-import { loadInk as dbLoadInk, saveInk as dbSaveInk } from "./inkDb.js";
+import { loadInk as dbLoadInk, loadLatestArchive as dbLoadArchive, saveInk as dbSaveInk } from "./inkDb.js";
 import { driftExceeds, matchWidth, packRecord, unpackRecord } from "./geometry.js";
 import { loadInkTool, saveInkTool } from "./inkMode.js";
+import { inkHints } from "./inkHint.js";
+import { oldNoticeMemory } from "./inkOldNotice.js";
 
 // 필기 상태 보관소(React 바깥). 풀기 화면 하나에 하나를 만들고, 필기 영역·도구 막대가 useSyncExternalStore 로 읽는다.
 // 선이 늘어도 문항 본문(긴 글)을 다시 그리지 않게 상태를 화면(SolveView) 밖에 둔다.
@@ -11,6 +13,14 @@ import { loadInkTool, saveInkTool } from "./inkMode.js";
 //  unsure  : 이 문항 필기를 불러오지 못함(저장소 오류). 이때 쓴 필기는 저장 직전에 다시 읽어 저장된 필기 위에 얹는다 —
 //            그대로 저장하면 보지 못한 예전 필기(다른 폭 포함)를 덮어써 없애므로. 다시 읽지도 못하면 저장하지 않고 경고만
 //  archivedKey : 문항 글이 바뀌기 전의 예전 필기를 보관하고 새 필기로 바꾼 문항(안내용)
+//  hint    : 이 문항에 보여 줄 필기가 있을 것 같다(이 기기의 기억 — inkHint.js). 불러오는 동안만 hasVisibleInk 에 쓴다
+//            (필기 모드를 끈 채 필기가 있는 문항을 열 때 첫 그림부터 필기 층·정답 폭 빈칸으로 그리게 — 글이 한 번 다시 흐르지 않게)
+//  old     : 이 문항에 보관한 예전 필기 가운데 가장 최근 것 { record, at(보관한 때), quiet } (없으면 null — 불러온 뒤 따로 읽음).
+//            quiet: '보관되어 있습니다' 안내를 저절로 띄우지 않음 — 이 기기에서 그 안내를 닫았거나(inkOldNotice.js),
+//            이 화면에서 막 보관한 것(저장이 끝나면 '따로 보관했습니다' 안내가 뜸)
+//  oldOn   : 예전 필기를 흐리게 겹쳐 보는 중('흐리게 보기' — 읽기만. 지금 필기·되돌리기·저장과 상관없다).
+//            보여 줄 것: 본문이 바뀌어 숨긴 지금 기록, 아니면 old(oldRecord). 보는 동안은 필기 층을 켠다(hasVisibleInk) —
+//            예전 필기는 필기 층(정답 폭 빈칸) 위에서 쓴 것이라, 필기 모드를 끈 채 번호 폭 빈칸 위에 겹치면 줄이 어긋난다
 // 저장은 마지막 변화 SAVE_DELAY 뒤 한 번에. 펜·마우스가 닿아 있는 동안은 미룬다(쓰는 중에 저장으로 선이 늦게 따라오지 않게 —
 // 다만 떼기를 놓친 때를 대비해 SAVE_BUSY_MAX_MS 넘게는 미루지 않음). 문항을 옮기거나 화면을 떠날 때는 바로(flush)
 export const SAVE_DELAY = 600;
@@ -23,6 +33,43 @@ const newId = () => ++seq; // 선 id: 그은 순서대로 커진다(지운 선�
 // 본문이 바뀌어(지문 다름) 예전 필기를 숨겨야 하는가
 export function isStale(s) {
   return !!s.record && s.record.textHash !== s.textHash;
+}
+
+// 예전 필기(읽기만 — '흐리게 보기'): 본문이 바뀌어 숨긴 지금 기록, 아니면 이 문항에 보관한 가장 최근 기록
+export function oldRecord(s) {
+  if (isStale(s)) return s.record;
+  return s.old?.record ?? null;
+}
+
+export function hasOld(s) {
+  return hasStrokes(oldRecord(s));
+}
+
+// 지금 폭에 겹쳐 그릴 예전 필기 { strokes, approx }. 같은 폭(±WIDTH_TOLERANCE_PX)이 없으면 가장 가까운 폭의 것
+// (approx — 다른 화면 폭에서 쓴 것이라 자리가 어긋남)
+const NO_OLD = Object.freeze({ strokes: Object.freeze([]), approx: false });
+export function oldStrokes(s) {
+  const rec = oldRecord(s);
+  if (!rec || !s.width) return NO_OLD;
+  const exact = rec.layouts[matchWidth(rec.layouts, s.width)]?.strokes;
+  if (exact?.length) return { strokes: exact, approx: false };
+  let best = null;
+  let bestD = Infinity;
+  for (const [w, l] of Object.entries(rec.layouts)) {
+    const d = Math.abs(Number(w) - s.width);
+    if (l?.strokes?.length && d < bestD) {
+      best = l.strokes;
+      bestD = d;
+    }
+  }
+  return best ? { strokes: best, approx: true } : NO_OLD;
+}
+
+// 보관한 예전 필기 안내를 필기 모드에서 저절로 띄우는 기간(보관한 뒤). 지나면 안내 없이 둔다(백업에는 그대로).
+// 그 안에서도 이 기기에서 한 번 닫았거나 이 화면에서 막 보관한 것(old.quiet)이면 띄우지 않는다
+export const OLD_NOTICE_MS = 30 * 24 * 60 * 60 * 1000;
+export function oldNoticeDue(s, now = Date.now()) {
+  return !!s.old && !s.old.quiet && !isStale(s) && now - (s.old.at || 0) <= OLD_NOTICE_MS;
 }
 
 // 지금 쓰는 저장 폭(정해지지 않았으면 지금 폭)
@@ -58,7 +105,9 @@ export function canRedo(s) {
   return appliesHere(s, s.future[s.future.length - 1]);
 }
 
-const hasStrokes = (rec) => !!rec && Object.values(rec.layouts).some((l) => l.strokes.length);
+function hasStrokes(rec) {
+  return !!rec && Object.values(rec.layouts).some((l) => l.strokes.length);
+}
 
 // 불러오지 못한 채 쓴 필기(mine)를 저장소에 있던 필기(stored) 위에 얹는다(보지 못한 필기를 지우지 않게).
 // 폭마다 저장된 선 위에 새 선을 더하고 다른 폭은 그대로 둔다. 저장된 필기가 다른 본문(지문 다름)의 것이면
@@ -74,17 +123,21 @@ export function mergeOnto(stored, mine, textHash) {
   return { record: { textHash, layouts }, prev: null };
 }
 
-// db: { loadInk, saveInk } (시험에서 바꿔 끼움), prefs: { load, save } 도구 기억
+// db: { loadInk, saveInk, loadArchive? } (시험에서 바꿔 끼움), prefs: { load, save } 도구 기억,
+// hints: { has(key, textHash), note(key, record), width(w) } 필기가 있는 문항 기억,
+// oldClosed: { closedAt(key), close(key, at) } 보관한 예전 필기 안내를 닫은 문항 기억
 export function createInkStore({
-  db = { loadInk: dbLoadInk, saveInk: dbSaveInk },
+  db = { loadInk: dbLoadInk, saveInk: dbSaveInk, loadArchive: dbLoadArchive },
   prefs = { load: loadInkTool, save: saveInkTool },
+  hints = inkHints,
+  oldClosed = oldNoticeMemory,
 } = {}) {
   const pref = prefs.load();
   let s = {
     key: null, textHash: "", loaded: false, unsure: false, record: null,
     width: 0, height: 0, lw: 0,
     tool: pref.tool, color: pref.color, hidden: false,
-    history: [], future: [], saveError: false, archivedKey: null,
+    history: [], future: [], saveError: false, archivedKey: null, old: null, oldOn: false, hint: false,
   };
   const listeners = new Set();
   let timer = 0;
@@ -93,10 +146,28 @@ export function createInkStore({
   let busy = false;
   let loadSeq = 0;
   let queued = []; // 불러오기가 끝나기 전에 그은 선(끝나면 더한다)
+  const closedHere = new Set(); // 이 화면에서 예전 필기 안내를 닫은 문항(그 뒤에 끝난 보관도 닫은 것으로 — save)
 
   function emit(patch) {
     s = { ...s, ...patch };
     for (const l of [...listeners]) l();
+  }
+
+  // 이 문항에 보관한 예전 필기 가운데 가장 최근 것을 읽어 둔다('흐리게 보기'용 — 저장소에만 있고 지금 필기와 섞이지 않음).
+  // 그 사이 문항이 바뀌었거나, 그 사이 바뀐 본문 위에 새로 써서 old 가 이미 잡혔으면(addStroke — 막 숨긴 기록이 가장 최근 것)
+  // 버린다. 못 읽으면 없는 것으로
+  function loadOld(key, my) {
+    if (typeof db.loadArchive !== "function") return;
+    db.loadArchive(key).then(
+      (it) => {
+        if (my !== loadSeq || s.key !== key || s.old) return;
+        const record = it ? unpackRecord(it.value, newId) : null;
+        if (!hasStrokes(record)) return;
+        const at = Number(it.value.archivedAt) || 0;
+        emit({ old: { record, at, quiet: oldClosed.closedAt(key) >= at } });
+      },
+      () => {},
+    );
   }
 
   // 저장 하나. 이번 지문의 필기가 다른 지문(문항이 바뀌기 전)의 저장 기록을 대신하면 저장소가 예전 것을 먼저 보관한다
@@ -104,10 +175,16 @@ export function createInkStore({
     const archiveStale = p.archive && !!p.record && p.record.textHash === p.textHash;
     db.saveInk(p.key, packRecord(p.record), { archiveStale }).then(
       (res) => {
+        hints.note(p.key, p.record);
         const patch = {};
         if (s.saveError) patch.saveError = false;
-        if (res?.archived && s.key === p.key) patch.archivedKey = p.key;
+        // 이 화면에서 안내를 닫은 뒤에 끝난 보관: 보관한 때가 닫은 때보다 늦으므로 닫은 때를 다시 적는다(다음에 열 때 안 뜨게)
+        if (res?.archived && closedHere.has(p.key)) oldClosed.close(p.key, Date.now());
+        const archived = !!res?.archived && s.key === p.key;
+        if (archived) patch.archivedKey = p.key;
         if (Object.keys(patch).length) emit(patch);
+        // 보관한 예전 필기: 바뀐 본문 위에 새로 쓸 때 이미 화면에 들고 있다(addStroke). 없을 때만 저장소에서 읽는다
+        if (archived && !s.old) loadOld(p.key, loadSeq);
       },
       () => emit({ saveError: true }),
     );
@@ -186,7 +263,9 @@ export function createInkStore({
       return () => listeners.delete(l);
     },
     getSnapshot: () => s,
-    hasVisibleInk: () => visibleStrokes(s).length > 0,
+    // 필기 층을 켤 필기가 있는가: 불러오는 동안은 기억(hint)으로, 불러온 뒤에는 진짜 필기로.
+    // 예전 필기를 흐리게 보는 동안도 켠다(빈칸을 필기할 때와 같은 정답 폭으로 — 예전 필기가 쓴 자리에 맞게)
+    hasVisibleInk: () => (s.hint && !s.loaded) || visibleStrokes(s).length > 0 || (s.oldOn && hasOld(s)),
     visibleStrokes: () => visibleStrokes(s),
     flush,
     // 펜·마우스가 필기 영역에 닿아 있음(InkInput). 닿아 있는 동안은 저장을 미루고, 떼면 SAVE_DELAY 뒤 저장
@@ -204,20 +283,24 @@ export function createInkStore({
       flush();
       const my = ++loadSeq;
       queued = [];
-      emit({ key, textHash, loaded: !key, unsure: false, record: null, lw: 0, history: [], future: [], hidden: false });
+      const hint = !!key && hints.has(key, textHash);
+      emit({ key, textHash, loaded: !key, unsure: false, record: null, lw: 0, history: [], future: [], hidden: false, old: null, oldOn: false, hint });
       if (!key) return;
       const done = (record, unsure) => {
         if (my !== loadSeq) return;
+        if (!unsure) hints.note(key, record);
         emit({ loaded: true, unsure, record, lw: resolveWidth(record, s.width) });
         const early = queued;
         queued = [];
         for (const st of early) api.addStroke(st);
+        loadOld(key, my);
       };
       // 못 불러오면 '필기 없음'처럼 쓰게 두되 unsure — 저장할 때 다시 읽어 합친다(flush)
       db.loadInk(key).then((raw) => done(unpackRecord(raw, newId), false), () => done(null, true));
     },
     setSize(width, height) {
       if (width === s.width && height === s.height) return;
+      if (width !== s.width) hints.width(width);
       emit(width === s.width ? { height } : { width, height, lw: resolveWidth(s.record, width) });
     },
     setTool(tool) {
@@ -232,6 +315,18 @@ export function createInkStore({
     toggleHidden() {
       emit({ hidden: !s.hidden });
     },
+    // 예전 필기 흐리게 보기 켬/끔(보여 줄 예전 필기가 없으면 켜지 않음)
+    toggleOld() {
+      if (!s.oldOn && !hasOld(s)) return;
+      emit({ oldOn: !s.oldOn });
+    },
+    // 보관한 예전 필기 안내를 닫음: 이 기기에 기억해 다음에 열 때 저절로 띄우지 않는다(InkNotices)
+    dismissOld() {
+      if (!s.key) return;
+      closedHere.add(s.key);
+      oldClosed.close(s.key, Date.now());
+      if (s.old && !s.old.quiet) emit({ old: { ...s.old, quiet: true } });
+    },
 
     // 선 하나 더하기. 본문이 바뀐 예전 필기는 새로 쓰면 화면에서 비운다(되돌리기로 살릴 수 있고, 저장할 때 따로 보관된다). 받았으면 true
     // (이 문항 필기를 아직 불러오는 중이면 기다렸다가 더한다 — 보통 몇 ms)
@@ -244,15 +339,19 @@ export function createInkStore({
       }
       const history = [...s.history];
       let base = s.record;
+      let old = s.old;
       if (isStale(s)) {
         history.push({ type: "record", prev: s.record });
         base = null;
+        // 숨겨 둔 예전 필기는 저장할 때 보관된다 — '흐리게 보기'도 끊기지 않게 바로 그것을 보관한 예전 필기로.
+        // 저장이 끝나면 '따로 보관했습니다' 안내가 뜨므로 '보관되어 있습니다'는 저절로 띄우지 않는다(quiet — 띠가 두 번 바뀌지 않게)
+        old = { record: s.record, at: Date.now(), quiet: true };
       }
       const w = inkWidth(s);
       const st = { tool: stroke.tool, color: stroke.color, w: stroke.w, pts: stroke.pts, id: newId() };
       history.push({ type: "add", width: w, id: st.id });
       const cur = base?.layouts[w]?.strokes ?? EMPTY;
-      commit(withStrokes(base ? { ...base, textHash: s.textHash } : null, w, [...cur, st]), history, { hidden: false, future: [] });
+      commit(withStrokes(base ? { ...base, textHash: s.textHash } : null, w, [...cur, st]), history, { hidden: false, future: [], old });
       return true;
     },
     // 지우개에 닿은 선들 지우기. 한 번 끄는 동안(group 같음)은 되돌리기 한 번에 함께 살아난다.
@@ -318,11 +417,12 @@ export function createInkStore({
       commit(withStrokes(s.record, e.width, cur.filter((x) => !gone.has(x.id))), [...s.history, e], { future });
     },
     // 본문이 바뀐 예전 필기: '그래도 보기'는 지금 본문의 필기로 받아들이고, '지우기'는 통째로 지운다(확인을 받은 뒤)
+    // (둘 다 흐리게 보던 것은 끈다 — 받아들인 필기는 그대로 보이고, 지운 필기는 볼 것이 없음)
     acceptStale() {
-      if (isStale(s)) commit({ ...s.record, textHash: s.textHash }, s.history, null, false);
+      if (isStale(s)) commit({ ...s.record, textHash: s.textHash }, s.history, { oldOn: false }, false);
     },
     dropRecord() {
-      if (s.record) commit(null, [...s.history, { type: "record", prev: s.record }], { future: [] });
+      if (s.record) commit(null, [...s.history, { type: "record", prev: s.record }], { future: [], oldOn: false });
     },
   };
   return api;
