@@ -1,0 +1,74 @@
+// 안드로이드 뒤로 가기(와 브라우저 뒤로 단추)를 앱 안에서 처리한다.
+// 화면·창을 열 때 pushBack(닫는 함수)로 history 에 한 칸을 쌓고, 뒤로 가기가 오면 가장 위의 닫는 함수를 부른다.
+// 앱 안 단추로 닫을 때는 release() 가 쌓아 둔 칸을 history.go(-n) 으로 걷어 낸다 — 그때 오는 popstate 는 무시한다.
+// 걷어 내는 중(popstate 가 아직 안 옴)에 새 칸을 쌓으면 순서가 꼬이므로, 그동안의 pushState 는 popstate 뒤로 미룬다.
+// React 에서는 useBack(열림, 닫는 함수) 으로 쓴다(아래).
+import { useEffect, useRef } from "react";
+
+const stack = []; // { id, onBack, pushed }
+let seq = 0;
+let ignorePops = 0; // 우리가 부른 history.go 로 올 popstate 수
+let listening = false;
+
+function flushPending() {
+  if (ignorePops > 0) return;
+  for (const e of stack) {
+    if (!e.pushed) {
+      e.pushed = true;
+      try { window.history.pushState({ qmBack: e.id }, ""); } catch { /* history 를 못 쓰면 뒤로 가기만 안 됨 */ }
+    }
+  }
+}
+
+function onPop() {
+  if (ignorePops > 0) {
+    ignorePops--;
+    flushPending();
+    return;
+  }
+  // 사용자가 뒤로 감: 쌓인 칸 중 history 에 실제로 올라간 가장 위의 것을 닫는다
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (stack[i].pushed) {
+      const [top] = stack.splice(i, 1);
+      top.onBack();
+      return;
+    }
+  }
+}
+
+// 닫는 함수를 쌓는다. 돌려받은 release() 는 앱 안 단추로 닫을 때 부른다(뒤로 가기로 이미 닫혔으면 아무 일도 안 함)
+export function pushBack(onBack) {
+  if (typeof window === "undefined") return () => {};
+  if (!listening) {
+    window.addEventListener("popstate", onPop);
+    listening = true;
+  }
+  const entry = { id: ++seq, onBack, pushed: false };
+  stack.push(entry);
+  flushPending();
+  let released = false;
+  return function release() {
+    if (released) return;
+    released = true;
+    const i = stack.indexOf(entry);
+    if (i === -1) return; // 뒤로 가기로 이미 빠짐
+    // 이 칸과 그 위에 쌓인 칸을 함께 걷어 낸다(위의 것은 닫는 함수를 부르지 않음 — 부모가 닫히면 같이 사라지는 화면)
+    const removed = stack.splice(i);
+    const n = removed.filter((e) => e.pushed).length;
+    if (n > 0) {
+      ignorePops++;
+      try { window.history.go(-n); } catch { ignorePops--; }
+    }
+  };
+}
+
+// open 이 true 인 동안 history 에 한 칸을 둔다. 뒤로 가기가 오면 onBack() — 보통 open 을 false 로 바꾸는 함수.
+// 앱 단추로 open 이 false 가 되면 칸을 걷어 낸다. onBack 은 늘 최신 것을 부른다
+export function useBack(open, onBack) {
+  const ref = useRef(onBack);
+  useEffect(() => { ref.current = onBack; });
+  useEffect(() => {
+    if (!open) return undefined;
+    return pushBack(() => ref.current?.());
+  }, [open]);
+}
