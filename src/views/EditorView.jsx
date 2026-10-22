@@ -7,6 +7,7 @@ import { buildTableTemplate, plainPreview } from "../utils/textBlocks";
 import { parseAnswers } from "../utils/answers";
 import { fillLockReason, fromInline, toInline } from "../utils/fillInline";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
+import "./EditorView.css";
 
 const TYPE_LABEL = { multiple: "객관식", short: "주관식", ox: "O/X", fill: "빈칸 채우기" };
 // App 의 뒤로 가기 확인과 같은 문구
@@ -108,25 +109,32 @@ const S = {
     border: `1px solid ${color}`, color, borderRadius: 6,
     fontWeight: 700, fontSize: 12, cursor: "pointer", transition: "background 0.15s ease",
   }),
+  // 문항 목록: 줄(li) 하나 = 고르는 단추(줄 전체) + ✕ 단추(오른쪽 위에 겹쳐 놓음, 단추 안에 단추를 넣지 않으려고).
+  // 고르는 단추의 오른쪽 여백 48 = 옛 배치의 오른쪽 여백 16 + ✕ 자리 32 — 글 폭·줄 높이가 예전(누르는 div)과 같다
+  qList: { listStyle: "none" },
   qItem: (active, type) => ({
-    padding: "12px 16px", borderBottom: "1px solid #2e2e2e", cursor: "pointer",
+    position: "relative", borderBottom: "1px solid #2e2e2e",
     background: active ? "#242424" : "#1a1a1a",
     borderLeft: `3px solid ${active ? (TYPE_COLOR[type]?.border ?? "#f59e0b") : "transparent"}`,
-    display: "flex", justifyContent: "space-between", alignItems: "flex-start",
     transition: "background 0.15s ease",
   }),
-  qBody: { flex: 1, minWidth: 0 },
-  qNum: { fontSize: 11, color: "#555555", marginBottom: 3 },
-  qText: { fontSize: 13, color: "#f1f1f1", fontWeight: 500, lineHeight: 1.4, overflowWrap: "anywhere" },
-  // 누르는 자리 40×40, 음수 여백으로 보이는 ✕ 위치는 거의 그대로
+  qPick: {
+    display: "block", width: "100%", padding: "12px 48px 12px 16px",
+    background: "none", border: "none", borderRadius: 0, color: "inherit", font: "inherit",
+    textAlign: "left", cursor: "pointer",
+  },
+  qNum: { display: "block", fontSize: 11, color: "#8a8a8a", marginBottom: 3 },
+  qText: { display: "block", fontSize: 13, color: "#f1f1f1", fontWeight: 500, lineHeight: 1.4, overflowWrap: "anywhere" },
+  // 누르는 자리 40×40, 보이는 ✕ 위치는 예전과 같게(줄 위에서 2px, 오른쪽에서 4px)
   qDel: {
+    position: "absolute", top: 2, right: 4,
     background: "none", border: "none", color: "#555555",
-    cursor: "pointer", fontSize: 16, padding: 0, flexShrink: 0,
-    width: 40, height: 40, margin: "-10px -12px -10px 4px",
+    cursor: "pointer", fontSize: 16, padding: 0,
+    width: 40, height: 40,
     display: "inline-flex", alignItems: "center", justifyContent: "center",
     transition: "color 0.15s ease",
   },
-  sideEmpty: { color: "#555555", fontSize: 13, textAlign: "center", padding: "32px 16px" },
+  sideEmpty: { color: "#8a8a8a", fontSize: 13, textAlign: "center", padding: "32px 16px" },
   // 문항 목록을 못 불러왔을 때(빈 목록으로 숨기지 않음)
   loadError: {
     margin: 12, padding: "10px 12px", borderRadius: 8, fontSize: 13, lineHeight: 1.5,
@@ -147,7 +155,7 @@ const S = {
     background: "none", border: "none", color: "#a0a0a0",
     fontSize: 14, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
   },
-  idle: { color: "#555555", textAlign: "center", marginTop: 80, fontSize: 15 },
+  idle: { color: "#8a8a8a", textAlign: "center", marginTop: 80, fontSize: 15 },
   typeBadge: (type) => ({
     display: "inline-block", fontSize: 11, fontWeight: 700, borderRadius: 4,
     padding: "2px 7px", marginBottom: 16,
@@ -241,11 +249,17 @@ const S = {
   // 이미지 업로드 UI
   imgSection: { marginBottom: 16 },
   imgUploadLabel: {
-    display: "inline-flex", alignItems: "center", gap: 6,
+    position: "relative", display: "inline-flex", alignItems: "center", gap: 6,
     padding: "8px 16px", background: "#242424",
     border: "2px dashed #2e2e2e", borderRadius: 7,
     fontSize: 13, color: "#a0a0a0", cursor: "pointer",
     transition: "border-color 0.15s ease, color 0.15s ease",
+  },
+  // file 칸은 보이지 않게만 숨긴다(hidden = display:none 이면 Tab 으로 닿지 않음). 칸 안에 1px 로 겹쳐 두고
+  // 누르기는 감싼 label 이 받는다. Tab 으로 오면 Enter·Space 로 파일 고르기가 열린다
+  fileInput: {
+    position: "absolute", left: 0, top: 0, width: 1, height: 1,
+    opacity: 0, overflow: "hidden", pointerEvents: "none",
   },
   imgPreviewWrap: { position: "relative", display: "inline-block", marginTop: 6 },
   imgPreview: {
@@ -321,6 +335,13 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
   const formKeySeq = useRef(0);
   const formRef = useRef(form); // 비동기(저장·그림) 뒤에 지금 열린 폼을 보려고
   useEffect(() => { formRef.current = form; });
+  const sidebarRef = useRef(null);
+  const editorRef = useRef(null);
+  // 키보드 초점 옮기기: 초점이 있던 단추가 사라지거나(줄 지우기·폼 닫기) 숨으면(폭 900px 이하는 목록·폼 중 하나만
+  // 보임) 다음 그리기 뒤 보이는 곳으로 — Tab 이 문서 처음(body)부터 다시 시작하지 않게.
+  // 값: { id } 그 문항의 목록 줄, "form" 폼 맨 위 '← 문항 목록', 없는 줄이면 첫 유형 단추
+  const focusNext = useRef(null);
+  const returnFocusId = useRef(null); // 폼을 닫으면 초점을 돌려줄 목록 줄(연 문항 id, 새 문항이면 null)
 
   // 문항 목록. 늦게 온 옛 응답(다른 문제집)은 버린다
   useEffect(() => {
@@ -364,17 +385,38 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
     wasEditing.current = editing;
   }, [editing]);
 
+  // focusNext 처리(위 스크롤 되돌리기 뒤). 초점이 아직 보이는 곳에 있으면 건드리지 않는다 — 넓은 화면에서 목록 줄로
+  // 폼을 열면 초점은 그 줄에 그대로. 손가락·펜으로 누른 뒤 옮긴 초점은 :focus-visible 이 아니라 테두리가 안 보인다
+  useLayoutEffect(() => {
+    const want = focusNext.current;
+    if (!want) return;
+    focusNext.current = null;
+    const shown = (el) => !!el && el.isConnected && el.getClientRects().length > 0;
+    const now = document.activeElement;
+    if (now && now !== document.body && shown(now)) return;
+    let el;
+    if (want === "form") el = editorRef.current?.querySelector(".qm-ed-back");
+    else {
+      el = want.id != null ? sidebarRef.current?.querySelector(`.qm-ed-q[data-qid="${want.id}"]`) : null;
+      if (!shown(el)) el = sidebarRef.current?.querySelector("button"); // 그 줄이 없으면 첫 유형 단추(객관식)
+    }
+    if (shown(el)) el.focus({ preventScroll: true });
+  });
+
   // 폼 열기·닫기. 폼마다 새 key — 늦게 끝난 그림 올리기·저장이 다른 폼에 붙지 않게
   function openForm(next) {
     const f = { ...next, key: ++formKeySeq.current };
     setForm(f);
     setBaseSig(formSig(f));
     setFillError("");
+    returnFocusId.current = next.id ?? null;
+    focusNext.current = "form";
   }
   function closeForm() {
     setForm(null);
     setBaseSig("");
     setFillError("");
+    focusNext.current = { id: returnFocusId.current };
   }
 
   // 다른 문항·유형으로 넘어갈 때 고치던 것이 있으면 묻는다('취소' 단추는 묻지 않음 — 버리려고 누른 것)
@@ -482,7 +524,10 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
         const q = await addQuestion(set.id, payload);
         if (q && q.id != null) setQuestions((list) => [...list, q].sort(byOrder));
         else setLoadTry((n) => n + 1);
-        if (still()) closeForm();
+        if (still()) {
+          returnFocusId.current = q?.id ?? null; // 닫은 뒤 키보드 초점은 새로 생긴 줄로
+          closeForm();
+        }
       }
       return true;
     } catch (e) {
@@ -493,13 +538,16 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
     }
   }
 
-  async function handleDelete(e, id) {
-    e.stopPropagation();
+  async function handleDelete(id) {
     if (!confirm("문항을 삭제할까요?")) return;
     try {
       await deleteQuestion(id);
       setQuestions((list) => list.filter((q) => q.id !== id));
       if (formRef.current?.id === id) closeForm();
+      // 눌렀던 ✕ 는 사라지므로 키보드 초점은 그 자리의 다음 줄(마지막 줄이었으면 바로 위 줄)로
+      const i = questions.findIndex((q) => q.id === id);
+      const near = questions[i + 1] ?? questions[i - 1];
+      focusNext.current = { id: near ? near.id : null };
     } catch (e) { alert(e.message); }
   }
 
@@ -593,7 +641,7 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
   const uploadingA = !!form && uploading.answer === form.key;
 
   return (
-    <div style={S.page}>
+    <div style={S.page} className="qm-ed-page">
       <nav style={S.nav} className="qm-ed-nav">
         <div style={S.navLeft}>
           <button
@@ -621,7 +669,7 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
 
       <div className="qm-ed-layout" data-editing={form ? "true" : "false"}>
         {/* ── 사이드바 ── */}
-        <div style={S.sidebar} className="qm-ed-sidebar">
+        <div style={S.sidebar} className="qm-ed-sidebar" ref={sidebarRef}>
           <div style={S.addBtns}>
             {["multiple", "short", "ox", "fill"].map((type) => (
               <button
@@ -645,31 +693,42 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
           {questions.length === 0 ? (
             !loadError && <div style={S.sideEmpty}>문항을 추가해보세요</div>
           ) : (
-            questions.map((q, i) => (
-              <div
-                key={q.id}
-                style={S.qItem(form?.id === q.id, normalizeType(q.type))}
-                onClick={() => handleSelectQuestion(q)}
-              >
-                <div style={S.qBody}>
-                  <div style={S.qNum}>{i + 1}번 · {TYPE_LABEL[normalizeType(q.type)]}</div>
-                  <div style={S.qText}>{plainPreview(q.text, 40) || "(내용 없음)"}</div>
-                </div>
-                <button
-                  style={S.qDel}
-                  onClick={(e) => handleDelete(e, q.id)}
-                  onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
-                  onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
-                  aria-label={`${i + 1}번 문항 삭제`}
-                  title="문항 삭제"
-                >✕</button>
-              </div>
-            ))
+            // 줄마다 진짜 단추(Tab·Enter·Space), 지금 연 문항은 aria-current. 단추 안은 span(단추 안에 div 를 두지 않음)
+            <ul style={S.qList} aria-label="문항 목록">
+              {questions.map((q, i) => {
+                const active = form?.id === q.id;
+                return (
+                  <li key={q.id} style={S.qItem(active, normalizeType(q.type))}>
+                    <button
+                      type="button"
+                      className="qm-ed-q"
+                      data-qid={q.id}
+                      style={S.qPick}
+                      aria-current={active ? "true" : undefined}
+                      onClick={() => handleSelectQuestion(q)}
+                    >
+                      <span style={S.qNum}>{i + 1}번 · {TYPE_LABEL[normalizeType(q.type)]}</span>
+                      <span style={S.qText}>{plainPreview(q.text, 40) || "(내용 없음)"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="qm-ed-q-del"
+                      style={S.qDel}
+                      onClick={() => handleDelete(q.id)}
+                      onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.color = "#f87171"; }}
+                      onPointerLeave={(e) => { e.currentTarget.style.color = "#555555"; }}
+                      aria-label={`${i + 1}번 문항 삭제`}
+                      title="문항 삭제"
+                    >✕</button>
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </div>
 
         {/* ── 편집 패널 ── */}
-        <div style={S.editor} className="qm-ed-editor">
+        <div style={S.editor} className="qm-ed-editor" ref={editorRef}>
           {!form ? (
             <div style={S.idle}>
               위에서 유형을 선택해 새 문항을 작성하거나,<br />
@@ -743,18 +802,25 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
 
               {showTableInsert && (
                 <div style={S.tablePanel}>
-                  <span style={S.miniLabel}>행</span>
+                  {/* 글씨를 눌러도 칸에 초점(htmlFor), 초점이 오면 다른 칸처럼 테두리가 금색 */}
+                  <label style={S.miniLabel} htmlFor="qm-ed-table-rows">행</label>
                   <input
+                    id="qm-ed-table-rows"
                     type="number" min={1} max={10}
                     value={tableRows}
                     onChange={(e) => setTableRows(Math.max(1, Number(e.target.value) || 1))}
+                    onFocus={focusGold}
+                    onBlur={blurGray}
                     style={S.numInput}
                   />
-                  <span style={S.miniLabel}>열</span>
+                  <label style={S.miniLabel} htmlFor="qm-ed-table-cols">열</label>
                   <input
+                    id="qm-ed-table-cols"
                     type="number" min={1} max={10}
                     value={tableCols}
                     onChange={(e) => setTableCols(Math.max(1, Number(e.target.value) || 1))}
+                    onFocus={focusGold}
+                    onBlur={blurGray}
                     style={S.numInput}
                   />
                   <button type="button" style={S.tableConfirmBtn} onClick={insertTable}>삽입</button>
@@ -792,12 +858,13 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
                 ) : (
                   <label
                     style={S.imgUploadLabel}
+                    className="qm-ed-upload"
                     onPointerEnter={(e) => { if (e.pointerType !== "mouse") return; e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
                     onPointerLeave={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
                   >
                     {uploadingQ ? "⏳ 업로드 중..." : "📷 이미지 업로드"}
                     <input
-                      type="file" accept={IMAGE_ACCEPT} hidden
+                      type="file" accept={IMAGE_ACCEPT} style={S.fileInput}
                       disabled={uploadingQ}
                       onChange={(e) => { handleImageUpload(e.target.files[0], "question"); e.target.value = ""; }}
                     />
@@ -806,14 +873,17 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
               </div>
 
               {/* ── 답안 방식 선택 ── */}
-              <label style={{ ...S.fieldLabel, marginBottom: 6 }}>답안 방식</label>
-              <div style={S.answerModeRow}>
+              {/* 묶음 이름은 칸에 이어지는 label 이 아니라 글(div) + role=group — 눌린 쪽은 aria-pressed */}
+              <div id="qm-ed-answer-mode" style={{ ...S.fieldLabel, marginBottom: 6 }}>답안 방식</div>
+              <div style={S.answerModeRow} role="group" aria-labelledby="qm-ed-answer-mode">
                 <button
                   style={S.answerModeBtn(form.answerMode !== "image")}
+                  aria-pressed={form.answerMode !== "image"}
                   onClick={() => setForm((f) => ({ ...f, answerMode: "text" }))}
                 >기본 답안</button>
                 <button
                   style={S.answerModeBtn(form.answerMode === "image")}
+                  aria-pressed={form.answerMode === "image"}
                   onClick={() => setForm((f) => ({ ...f, answerMode: "image" }))}
                 >이미지 답안</button>
               </div>
@@ -832,12 +902,13 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
                   ) : (
                     <label
                       style={S.imgUploadLabel}
+                      className="qm-ed-upload"
                       onPointerEnter={(e) => { if (e.pointerType !== "mouse") return; e.currentTarget.style.borderColor = "#f59e0b"; e.currentTarget.style.color = "#f59e0b"; }}
                       onPointerLeave={(e) => { e.currentTarget.style.borderColor = "#2e2e2e"; e.currentTarget.style.color = "#a0a0a0"; }}
                     >
                       {uploadingA ? "⏳ 업로드 중..." : "📷 답안 이미지 업로드"}
                       <input
-                        type="file" accept={IMAGE_ACCEPT} hidden
+                        type="file" accept={IMAGE_ACCEPT} style={S.fileInput}
                         disabled={uploadingA}
                         onChange={(e) => { handleImageUpload(e.target.files[0], "answer"); e.target.value = ""; }}
                       />
@@ -849,33 +920,37 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
               {/* ── 객관식 ── */}
               {form.type === "multiple" && form.answerMode !== "image" && (
                 <>
-                  <label style={S.fieldLabel}>보기 (정답 라디오 선택)</label>
-                  {opts.map((opt, i) => (
-                    <div key={i} style={S.optionRow}>
-                      <label style={S.optionPick}>
-                        <input
-                          type="radio"
-                          name="answerIndex"
-                          checked={form.answerIndex === i}
-                          onChange={() => setForm((f) => ({ ...f, answerIndex: i }))}
-                          style={S.optionRadio}
+                  <div id="qm-ed-options" style={S.fieldLabel}>보기 (정답 라디오 선택)</div>
+                  <div role="group" aria-labelledby="qm-ed-options">
+                    {opts.map((opt, i) => (
+                      <div key={i} style={S.optionRow}>
+                        <label style={S.optionPick}>
+                          <input
+                            type="radio"
+                            name="answerIndex"
+                            checked={form.answerIndex === i}
+                            onChange={() => setForm((f) => ({ ...f, answerIndex: i }))}
+                            style={S.optionRadio}
+                            aria-label={`${i + 1}번 보기를 정답으로`}
+                          />
+                          <span style={S.optionNum} aria-hidden="true">{"①②③④"[i]}</span>
+                        </label>
+                        <textarea
+                          rows={1}
+                          style={{ ...S.optionInput(form.answerIndex === i), ...S.oneLineArea }}
+                          value={opt}
+                          onChange={(e) => setOpt(i, oneLine(e.target.value))}
+                          onKeyDown={blockEnter}
+                          placeholder={`보기 ${i + 1}`}
+                          aria-label={`보기 ${i + 1}`}
+                          onFocus={(e) => { e.target.style.borderColor = "#60a5fa"; }}
+                          onBlur={(e) => {
+                            e.target.style.borderColor = form.answerIndex === i ? "#60a5fa" : "#2e2e2e";
+                          }}
                         />
-                        <span style={S.optionNum}>{"①②③④"[i]}</span>
-                      </label>
-                      <textarea
-                        rows={1}
-                        style={{ ...S.optionInput(form.answerIndex === i), ...S.oneLineArea }}
-                        value={opt}
-                        onChange={(e) => setOpt(i, oneLine(e.target.value))}
-                        onKeyDown={blockEnter}
-                        placeholder={`보기 ${i + 1}`}
-                        onFocus={(e) => { e.target.style.borderColor = "#60a5fa"; }}
-                        onBlur={(e) => {
-                          e.target.style.borderColor = form.answerIndex === i ? "#60a5fa" : "#2e2e2e";
-                        }}
-                      />
-                    </div>
-                  ))}
+                      </div>
+                    ))}
+                  </div>
                 </>
               )}
 
@@ -900,12 +975,13 @@ export default function EditorView({ set, onBack, onPreview, onDirtyChange }) {
               {/* ── O/X ── */}
               {form.type === "ox" && form.answerMode !== "image" && (
                 <>
-                  <label style={S.fieldLabel}>정답</label>
-                  <div style={S.oxRow}>
+                  <div id="qm-ed-ox" style={S.fieldLabel}>정답</div>
+                  <div style={S.oxRow} role="group" aria-labelledby="qm-ed-ox">
                     {["O", "X"].map((v) => (
                       <button
                         key={v}
                         style={S.oxBtn(v, form.answer === v)}
+                        aria-pressed={form.answer === v}
                         onClick={() => setForm((f) => ({ ...f, answer: v }))}
                       >
                         {v}
