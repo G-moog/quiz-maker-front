@@ -482,9 +482,10 @@ export default function DashboardView({ onLogout, onOpenEditor, onSolve, onOpenN
   const noteCounts = openNotes ? countNotesBySet(openNotes) : null;
 
   // 스크롤 자리: 움직일 때마다 기억하고, 기억한 목록으로 다시 열 때 그 자리로(그리기 전에 — 맨 위가 잠깐 보이지 않게).
+  // 기억이 없거나 맨 위였으면 맨 위로 — 앞 화면(질문 메모 목록 등)의 스크롤 자리가 그대로 남지 않게.
   // 듣기를 layout 효과로 두는 까닭: 화면을 떠날 때 다른 화면이 짧아져 생기는 스크롤(0 으로)을 기억하지 않게 먼저 뗀다
   useLayoutEffect(() => {
-    if (cached?.sets && cached.scrollY > 0) window.scrollTo(0, cached.scrollY);
+    window.scrollTo(0, cached?.sets ? cached.scrollY || 0 : 0);
   }, [cached]);
   useLayoutEffect(() => {
     const user = currentUser();

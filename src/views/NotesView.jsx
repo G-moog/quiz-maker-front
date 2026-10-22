@@ -194,9 +194,10 @@ export default function NotesView({ onBack, onOpenSolve, resume = false }) {
   // 이 거르기에서 방금 해결·미해결로 바꾼 메모는 칩을 바꿀 때까지 그 자리에 남긴다(잘못 눌렀으면 바로 되돌리게)
   const [stay, setStay] = useState(() => new Set(mem?.stay ?? []));
   const [expanded, setExpanded] = useState(() => new Set(mem?.expanded ?? []));
-  // 돌아왔으면 떠날 때의 스크롤 자리로(목록은 기억한 것으로 이미 그려져 있음). 기억은 한 번 쓰고 버린다
+  // 돌아왔으면 떠날 때의 스크롤 자리로(목록은 기억한 것으로 이미 그려져 있음), 아니면 맨 위로(대시보드의 스크롤 자리가
+  // 남지 않게). 기억은 한 번 쓰고 버린다
   useLayoutEffect(() => {
-    if (mem) window.scrollTo(0, mem.scrollY || 0);
+    window.scrollTo(0, mem ? mem.scrollY || 0 : 0);
     dropReturnMemory();
   }, [mem]);
   const [busy, setBusy] = useState(() => new Set());

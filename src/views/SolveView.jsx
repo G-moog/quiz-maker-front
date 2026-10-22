@@ -43,6 +43,9 @@ const RESTORE_SETTLE_MS = 4000;
 // 이만큼 손대지 않다가 다시 손대면(누름·키·휠) 다른 기기 공부 기록을 한 번 받아 본다 — 화면을 켜 둔 채(wake lock) 휴대폰에서
 // 공부하고 돌아왔을 수 있다. 읽기만 하며 오래 멈춰 있어도 받기는 작은 요청 하나
 const IDLE_REFRESH_MS = 20000;
+// '하드로/보통으로' 단추는 문항 머리(맨 위)에 있어, 읽던 곳에서 맨 위로 올라와 누르게 된다. 올라오기 전 이만큼 안에 읽던 절이
+// 있으면 그 절을 짝 문제집에 넘긴다(맨 위가 아니라)
+const DEEP_PLACE_MS = 20000;
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩";
 const NO_ANSWERS = [];
 const NO_STARS = [];
@@ -134,15 +137,17 @@ const S = {
   }),
   // 읽은 정도 막대(문항 하나짜리 빈칸 문제집): 폭은 스크롤할 때 직접 바꾼다(렌더 없이)
   readFill: { height: "100%", width: 0, background: "#f59e0b" },
-  // 이어 보기 안내: 머리 묶음 바로 아래에 겹쳐 띄운다(글 흐름 밖 — 생기거나 사라질 때 글이 움직이지 않게)
+  // 이어 보기 안내: 머리 묶음 아래 끝에 걸쳐 겹쳐 띄운다(글 흐름 밖 — 생기거나 사라질 때 글이 움직이지 않게).
+  // 머리 묶음의 아래 8px(진행 막대·머리 줄 아래 여백)에 걸치게 올려, 맨 위에서 이어 볼 때 문항 머리 단추(하드로·목차·모두 보기 —
+  // 휴대폰에서 머리 묶음 33px 아래)를 덮지 않게(예전에는 띠 아래 9px 가 '목차'·'모두 보기' 위를 덮어 '처음부터'·✕ 가 눌렸다)
   chipBand: {
-    position: "absolute", top: "100%", left: 0, right: 0,
-    display: "flex", justifyContent: "center", padding: "6px 12px 0", pointerEvents: "none",
+    position: "absolute", top: "calc(100% - 8px)", left: 0, right: 0,
+    display: "flex", justifyContent: "center", padding: "0 12px", pointerEvents: "none",
   },
   chip: {
     pointerEvents: "auto", maxWidth: "100%",
     display: "inline-flex", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", gap: 6,
-    padding: "4px 4px 4px 12px", borderRadius: 8,
+    padding: "2px 2px 2px 12px", borderRadius: 8,
     background: "#211c12", border: "1px solid rgba(245,158,11,0.45)", boxShadow: "0 6px 18px rgba(0,0,0,0.5)",
     color: "#e8c27a", fontSize: 12.5, fontWeight: 600, lineHeight: 1.4,
   },
@@ -522,6 +527,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   const [restoreTick, setRestoreTick] = useState(0); // 읽던 자리 맞추기를 다시 돌릴 때('읽던 곳으로')
   const mounted = useRef(false); // 늦게 끝난 받기가 떠난 화면의 상태를 저장하지 않게
   const afterRefreshRef = useRef(null); // 받기가 끝난 뒤 받은 기록을 화면에 얹기(아래 afterRefresh)
+  const deepRef = useRef(null); // 맨 위로 올라오기 전 마지막으로 읽던 자리 { qid, anchor, place, t } — 보통 ↔ 하드 바꾸기
 
   const headRef = useRef(null); // 위에 붙은 머리 묶음(아래 끝 = 읽는 줄)
   const bodyRef = useRef(null); // 문항 카드 본문(읽던 자리·읽은 정도의 기준)
@@ -779,11 +785,17 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
         if (mounted.current) setChip((c) => (c && c.kind === "note" ? { ...c, back: !!back } : c));
       }
     }
-    let snap = studySnapshot({ ...s, anchor: anchorNow() });
+    const anchor = anchorNow();
+    // 문항 머리(하드로/보통으로 단추)가 읽는 줄 위로 올라가 있으면 읽는 중 — 그 자리를 기억해 둔다(맨 위로 올라와 바꿀 때 씀)
+    const meta = s.canSwitch && !restoreRef.current ? bodyRef.current?.querySelector("[data-qm-meta]") : null;
+    if (meta && meta.getBoundingClientRect().bottom < lineOf(headRef.current)) {
+      deepRef.current = { qid: s.qid, anchor, place: placeNow(), t: Date.now() };
+    }
+    let snap = studySnapshot({ ...s, anchor });
     // 메모에서 엿보는 중이면 이어 볼 자리는 열기 전 그대로(연 빈칸·★ 은 지금 것)
     if (peekRef.current) snap = keepResume(snap, peekRef.current.saved);
     saveStudy(username, setId, snap);
-  }, [username, setId, anchorNow]);
+  }, [username, setId, anchorNow, placeNow]);
 
   // 받기가 끝난 뒤(열 때 1.5초를 넘긴 받기·화면이 다시 보일 때·한동안 손대지 않다가 다시 손댈 때). 그사이 받은 다른 기기 기록이
   // 이 화면과 다르면 이 화면에서 한 일을 그 위에 얹어 저장하고(saveStudy → rebaseStudy), 받은 연 빈칸·★ 등을 화면에도 보인다.
@@ -870,6 +882,12 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   // 창(목차·메모)을 닫으며 history 를 한 칸 되돌릴 때(backStack release) 크롬이 스크롤을 그 칸을 쌓을 때의 자리로
   // 되돌려 목차로 간 자리를 덮던 것은 backStack 이 앱 전체를 history.scrollRestoration = "manual" 로 두어 막는다.
   // (예전처럼 이 화면만 바꿨다 되돌리면 효과 순서 때문에 목록 화면 칸에 manual 이 남거나 auto 로 돌아가 떠나는 길마다 달랐다)
+
+  // 문항을 받아 처음 그린 뒤 맞출 읽던 자리가 없으면(처음 여는 문제집·고르기 화면) 맨 위에서 — 대시보드를 내려 둔 자리가 남아
+  // 긴 페이지 중간에서 열리고 그 자리가 읽던 자리로 저장되던 것(짧은 '불러오는 중' 동안 줄었던 스크롤이 글이 그려지며 돌아옴)
+  useLayoutEffect(() => {
+    if (!loadingQ && !restoreRef.current) window.scrollTo(0, 0);
+  }, [loadingQ]);
 
   // 스크롤: 0.5초 멈추면 저장, 읽은 정도 막대(문항 하나짜리 빈칸 문제집)는 그림마다 직접 갱신(렌더 없이)
   useEffect(() => {
@@ -1097,11 +1115,16 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   }
 
   // 보통 ↔ 하드: 지금 자리를 저장하고, 읽던 절(제목)·그 절 안 비율을 짝 문제집에 넘긴다(빈칸 번호는 둘이 달라 쓰지 않음).
+  // 단추가 문항 머리(맨 위)에 있어 읽던 곳에서 맨 위로 올라와 누르게 되므로, 올라오기 전 DEEP_PLACE_MS 안에 읽던 자리가 있으면
+  // 그 자리를 넘기고 이 문제집에도 그 자리를 남긴다(맨 위가 아니라).
   // 엿보는 중(메모에서 옴)이면 바꾼 쪽에서도 엿보기(peek). 대시보드 카드의 하드모드 켬/끔도 바꾼 쪽으로
   function switchPair() {
     if (!pair || !onSwitchSet || !current) return;
-    const place = placeNow();
+    const d = deepRef.current;
+    const deep = d && String(d.qid) === String(current.id) && Date.now() - d.t < DEEP_PLACE_MS ? d : null;
+    const place = deep ? deep.place : placeNow();
     const qIndex = Math.max(0, baseQuestions.findIndex((q) => String(q.id) === String(current.id)));
+    if (deep) restoreRef.current = { qid: current.id, anchor: deep.anchor };
     persist();
     rememberHardMode(username, pair.baseId, pair.toHard);
     onSwitchSet(pair.set, { qIndex, ...place, toHard: pair.toHard, peek: peekLive.current });
@@ -1210,8 +1233,10 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   }
 
   // 이어 보기 띠의 '처음부터': 이 문제집 기록(연 빈칸·자리·지나온 문항)을 지우고 맨 위·전부 가림부터.
-  // ★(헷갈림 표시)는 따로 모은 것이라 남긴다. clearStudy 는 늘 새 ct 로 바로 올린다 — 다른 기기도 처음부터(★ 는 그대로)
+  // ★(헷갈림 표시)는 따로 모은 것이라 남긴다. clearStudy 는 늘 새 ct 로 바로 올린다 — 다른 기기도 처음부터(★ 는 그대로).
+  // 되돌릴 수 없고 다른 기기에도 가므로 한 번 묻는다(띠가 맨 위에서 '목차' 단추 바로 위에 떠 잘못 누르기 쉬움)
   function restartFromTop() {
+    if (!confirm("처음부터 다시 볼까요?\n연 빈칸과 읽던 자리가 지워집니다(★ 는 남음). 다른 기기에도 그대로 갑니다.")) return;
     clearStudy(username, setId, studySnapshot({ base: baseQuestions, questions: baseQuestions, mode: null, index: 0, stars }));
     handleRetry();
   }
@@ -1547,7 +1572,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
               {/* 문항 번호 + 유형 (+ 하드로/보통으로 · ★만 가리기, 본문이 긴 빈칸 문항은 목차·모두 보기/가리기 —
                   긴 본문 끝까지 내려가지 않아도 되게). ★ 표시 켜고 끄기는 위에 붙은 머리 줄에(읽던 자리에서 바로) */}
               {(!singleFill || metaTools) && (
-                <div style={S.qMeta}>
+                <div style={S.qMeta} data-qm-meta="">
                   {/* 문항 하나짜리 빈칸 문제집(노션 페이지)은 'Q1 · 빈칸 채우기'가 알려 주는 것이 없어 빼고 단추 자리로 —
                       휴대폰(412px)에서 머리 줄이 한 줄에 들어가게. 단추도 없으면(짧은 페이지) 줄째 뺀다 */}
                   {!singleFill && <span style={S.qNum}>Q{currentIndex + 1}</span>}
