@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { Fragment, memo, useMemo } from "react";
 import { textModel } from "../utils/textBlocks";
 
 // 칸 글 길이. 공백 없이 긴 덩어리(주소 등)는 어차피 칸 안에서 줄바꿈되므로 8글자로만 셈
@@ -36,13 +36,14 @@ const PRE = { whiteSpace: "pre-wrap" };
 const NO_STATES = [];
 const HEAD_CLASS = { title: "qm-h qm-h--title", h1: "qm-h qm-h--1", h2: "qm-h qm-h--2" };
 
-// 조각들(글 + 빈칸)을 예전과 같은 모양으로: <span><span pre-wrap>글</span>{빈칸}</span>
+// 조각들(글 + 빈칸): <span pre-wrap>글</span>{빈칸} …. 예전에 조각마다 감싸던 바깥 span(꾸밈 없음)은 뺐다 —
+// 줄 바꿈·배치는 같고(master 와 빈칸 위치 비교) 230칸 페이지에서 DOM 이 수백 개 줄어 '모두 보기' 같은 큰 다시 배치가 가볍다
 function renderParts(parts, start, states, renderBlank, inTable) {
   return parts.map((part, pi) => (
-    <span key={pi}>
+    <Fragment key={pi}>
       <span style={PRE}>{part}</span>
       {pi < parts.length - 1 && (renderBlank ? renderBlank(start + pi, { inTable, state: states[pi] }) : "___")}
-    </span>
+    </Fragment>
   ));
 }
 
