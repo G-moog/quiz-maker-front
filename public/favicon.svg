@@ -1,20 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- 다크 라운드 배경 -->
-  <rect width="32" height="32" rx="7" fill="#1a1a1a"/>
-
-  <!-- 연필 (중심 16,16 기준 -45° 회전) -->
-  <g transform="rotate(-45, 16, 16)">
-    <!-- 지우개 (붉은 계열) -->
-    <rect x="12" y="4" width="8" height="4" rx="1.5" fill="#f87171"/>
-    <!-- 금속 밴드 -->
-    <rect x="12" y="8" width="8" height="2" fill="#d1d5db"/>
-    <!-- 연필 몸통 (주황) -->
-    <rect x="12" y="10" width="8" height="12" fill="#f59e0b"/>
-    <!-- 몸통 중앙 음영 선 -->
-    <rect x="15.5" y="10" width="1.5" height="12" fill="#d97706" opacity="0.5"/>
-    <!-- 나무 부분 (연한 주황) -->
-    <polygon points="12,22 20,22 18.5,25.5 13.5,25.5" fill="#fbbf24"/>
-    <!-- 흑연 팁 (어두운 색) -->
-    <polygon points="13.5,25.5 18.5,25.5 16,29.5" fill="#292929"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Quiz Maker 아이콘: 시험지 + 빨간 채점 동그라미 + 연필(2026-10-22) -->
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fcd34d"/><stop offset="1" stop-color="#f59e0b"/></linearGradient></defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <g transform="rotate(-7 256 256)">
+    <rect x="108" y="86" width="296" height="340" rx="30" fill="#ffffff"/>
+    <rect x="148" y="140" width="200" height="22" rx="11" fill="#cbd5e1"/>
+    <rect x="148" y="196" width="216" height="22" rx="11" fill="#cbd5e1"/>
+    <rect x="148" y="252" width="168" height="22" rx="11" fill="#cbd5e1"/>
+    <rect x="148" y="308" width="196" height="22" rx="11" fill="#cbd5e1"/>
+  </g>
+  <circle cx="300" cy="300" r="112" fill="none" stroke="#ef4444" stroke-width="30"/>
+  <g transform="rotate(40 380 360)">
+    <rect x="356" y="250" width="48" height="170" rx="6" fill="#1f2937"/>
+    <rect x="356" y="250" width="48" height="30" rx="6" fill="#fca5a5"/>
+    <polygon points="356,420 404,420 380,462" fill="#fde68a"/>
+    <polygon points="372,448 388,448 380,462" fill="#1f2937"/>
   </g>
 </svg>
