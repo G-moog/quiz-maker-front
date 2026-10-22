@@ -1,4 +1,4 @@
-// 질문 메모 도우미: 풀기 화면의 맥락 글, 목록 묶기·복사 글, 시각 표시, 저장하지 못한 초안 보관
+// 질문 메모 도우미: 풀기 화면의 맥락 글, 목록 묶기·복사 글, 시각 표시, 저장하지 못한 초안 보관, 메모 창의 이전 메모(순서·고치기 초안)
 export const NOTE_CONTENT_MAX = 2000;
 export const NOTE_CONTEXT_MAX = 1000; // 서버 한도
 const CONTEXT_CHARS = 300; // 화면에서 만드는 맥락 길이(이 안팎)
@@ -204,6 +204,131 @@ export function saveNoteDraft(draft) {
 export function clearNoteDraft() {
   try {
     localStorage.removeItem(NOTE_DRAFT_KEY);
+  } catch {
+    // 무시
+  }
+}
+
+// ── 메모 창의 '이전 메모'(이 문제집 메모를 꺼내 고치기) ──
+
+const sameId = (a, b) => a != null && b != null && String(a) === String(b);
+
+// 지금 화면(info: questionId·blankNo)과 얼마나 가까운 메모인가: 0 같은 문항의 같은 빈칸 · 1 같은 문항 · 2 이 문제집의 다른 문항
+export function sheetNoteRank(n, info) {
+  if (!sameId(n.questionId, info?.questionId)) return 2;
+  return info.blankNo != null && n.blankNo != null && Number(n.blankNo) === Number(info.blankNo) ? 0 : 1;
+}
+
+// 시각 값 → Date(시간대가 붙은 값은 그대로, 붙지 않은 값·배열은 이 기기 시각으로). 못 읽으면 null
+function noteDate(v) {
+  if (!v) return null;
+  if (Array.isArray(v)) {
+    const [y, mo, d, h = 0, mi = 0, s = 0] = v;
+    return y && mo && d ? new Date(y, mo - 1, d, h, mi, s) : null;
+  }
+  const str = String(v);
+  if (/(Z|[+-]\d{2}:?\d{2})$/.test(str)) {
+    const d = new Date(str);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(str);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0)) : null;
+}
+
+// 가까운 묶음(같은 빈칸 → 같은 문항 → 나머지) 먼저, 묶음 안에서는 새것 먼저(같은 시각이면 id 큰 것). 받은 배열은 그대로 둔다
+export function orderSheetNotes(notes, info) {
+  const time = (n) => noteDate(n.createdAt)?.getTime() ?? 0;
+  return (Array.isArray(notes) ? notes : [])
+    .map((n) => ({ n, r: sheetNoteRank(n, info), t: time(n) }))
+    .sort((a, b) => a.r - b.r || b.t - a.t || Number(b.n.id) - Number(a.n.id))
+    .map((x) => x.n);
+}
+
+// 목록 줄·고치기 머리에 붙는 자리 이름: '빈칸 8' · '이 문항' · '다른 문항 · 빈칸 3' · '다른 문항'
+// (다른 문항의 번호는 창이 모른다 — 문항 id 만 있음. 페이지 문제집은 문항이 하나라 늘 '빈칸 N')
+export function sheetNoteLabel(n, info) {
+  const blank = n.blankNo != null ? `빈칸 ${n.blankNo}` : null;
+  if (sheetNoteRank(n, info) === 2) return blank ? `다른 문항 · ${blank}` : "다른 문항";
+  return blank || "이 문항";
+}
+
+// 목록 줄의 짧은 시각: 방금 · N분 전 · N시간 전 · 어제 · N일 전(일주일 안) · 10/20(올해) · 2025/10/20
+export function relativeNoteTime(v, now = Date.now()) {
+  const d = noteDate(v);
+  if (!d) return "";
+  const diff = now - d.getTime();
+  if (diff < 60_000) return "방금"; // 기기 시계가 조금 늦어 미래로 보여도 '방금'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}분 전`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}시간 전`;
+  const today = new Date(now);
+  const day0 = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day0(today) - day0(d)) / 86_400_000); // 자정끼리의 차이(서머타임이 있는 곳에서도 반올림으로 맞게)
+  if (days <= 1) return "어제";
+  if (days < 7) return `${days}일 전`;
+  const md = `${d.getMonth() + 1}/${d.getDate()}`;
+  return d.getFullYear() === today.getFullYear() ? md : `${d.getFullYear()}/${md}`;
+}
+
+// 고치던 메모 초안: 메모마다 한 칸('qm:note-edit-draft:v1:<메모 id>') — 새 메모 초안(NOTE_DRAFT_KEY)과 따로.
+// 값: { user, note(고치기 시작할 때 받은 메모 그대로 — 원문 content 포함), content(고친 글), failed, at }
+// 한 칸만 두면 다른 문제집에서 다른 메모를 고치기 시작할 때 앞의 고친 글을 덮으므로 메모마다 둔다
+export const NOTE_EDIT_DRAFT_PREFIX = "qm:note-edit-draft:v1:";
+export const noteEditDraftKey = (noteId) => `${NOTE_EDIT_DRAFT_PREFIX}${noteId}`;
+
+// 쓸모없는 초안(글이 비었거나 원문과 같음 — 잃을 글이 없음)은 읽을 때 지운다
+function readEditDraft(key, user) {
+  let d;
+  try {
+    d = JSON.parse(localStorage.getItem(key) || "null");
+  } catch {
+    return null;
+  }
+  if (!d || typeof d.content !== "string" || !d.note || d.note.id == null || d.user !== user) return null;
+  if (key !== noteEditDraftKey(d.note.id)) return null;
+  if (!d.content.trim() || d.content.trim() === String(d.note.content ?? "").trim()) {
+    try { localStorage.removeItem(key); } catch { /* 무시 */ }
+    return null;
+  }
+  return d;
+}
+
+export function loadNoteEditDraft(user, noteId) {
+  if (noteId == null) return null;
+  return readEditDraft(noteEditDraftKey(noteId), user);
+}
+
+// 이 문제집(setId) 메모의 고치기 초안 중 가장 최근 것 — 창을 다시 열면 그 메모 고치기로 돌아간다
+export function latestNoteEditDraft(user, setId) {
+  if (setId == null) return null;
+  const keys = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(NOTE_EDIT_DRAFT_PREFIX)) keys.push(k);
+    }
+  } catch {
+    return null;
+  }
+  let best = null;
+  for (const k of keys) {
+    const d = readEditDraft(k, user);
+    if (d && sameId(d.note.setId, setId) && (!best || (d.at || 0) > (best.at || 0))) best = d;
+  }
+  return best;
+}
+
+export function saveNoteEditDraft({ user, note, content, failed = false }) {
+  try {
+    localStorage.setItem(noteEditDraftKey(note.id), JSON.stringify({ user, note, content, failed, at: Date.now() }));
+  } catch {
+    // 저장소를 못 쓰면 창 안의 글만 남는다
+  }
+}
+
+export function clearNoteEditDraft(noteId) {
+  if (noteId == null) return;
+  try {
+    localStorage.removeItem(noteEditDraftKey(noteId));
   } catch {
     // 무시
   }
