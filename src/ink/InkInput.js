@@ -1,15 +1,16 @@
 import {
-  DRAW_SCALE, ERASER_RADIUS, HL_COLOR, HL_OPACITY, HL_WIDTH, INERTIA_MAX, INERTIA_START, INERTIA_STOP, PEN_WIDTH,
-  PREDICT_HOLD_MS, TAP_MS, TAP_SLOP, TOUCH_SLOP, addPoint, centerlinePath, distance, inertiaStep, isDoubleTap,
-  isLargeContact, isTap, midpoint, outlinePath, palmBlocked, predictTail, pushSample, releaseVelocity, strokeTouches,
-  tapBlockedByScroll, tapSlop,
+  DRAW_SCALE, ERASER_RADIUS, HL_COLOR, HL_OPACITY, HL_WIDTH, INERTIA_MAX, INERTIA_START, INERTIA_STOP, OUTSIDE_JOIN_MS, OUTSIDE_STILL_PX,
+  PEN_WIDTH, PREDICT_HOLD_MS, TAP_MS, TAP_SLOP, TOUCH_SLOP, addPoint, centerlinePath, distance, flingVelocity,
+  inertiaStep, isDoubleTap, isLargeContact, isTap, midpoint, outlinePath, outsideJoinable, palmBlocked, predictTail,
+  pushSample, releaseVelocity, strokeTouches, tapBlockedByScroll, tapSlop,
 } from "./geometry.js";
 
 // 필기 모드의 입력 처리(DOM). 필기 영역 요소에 붙어 펜·손·마우스를 가른다.
 //  펜(S펜)  : 긋기 = 필기, 빈칸 두 번 콕 = 정답 보이기/가리기(한 번 콕은 아무 일 없음, 콕은 점을 남기지 않음).
 //             빈칸 위 콕은 촉이 PEN_BLANK_TAP_SLOP 만큼 미끄러져도 콕(TAP_MS 안). 브라우저가 입력을 가져가도(취소) 그은 선은 남긴다
 //  손가락   : 하나로 끌기 = 아무 일 없음(손바닥 대비), 빈칸 한 번 터치 = 지금처럼 토글(브라우저 click 그대로),
-//             둘로 밀기 = 페이지 스크롤(떼면 관성), 벌리기(확대)는 영역의 touch-action: none 이 막는다.
+//             둘로 밀기 = 페이지 스크롤(떼면 관성 — 둘을 거의 함께 뗄 때만, 하나를 대고 있는 동안은 멈춤), 벌리기(확대)는
+//             영역의 touch-action: none 이 막는다. 손가락 하나는 글 위, 하나는 카드 밖(여백·머리 줄)이어도 거의 함께 닿았으면 두 손가락 스크롤.
 //             관성·스크롤을 멈추려고 친 터치(관성 중, 끝난 뒤 SCROLL_TAP_GUARD_MS 안, 페이지가 움직이는 중)는 빈칸을 열지 않는다
 //  마우스   : 왼쪽 끌기 = 필기, 움직이지 않은 클릭 = 빈칸 토글
 //  손바닥 무시: 펜이 닿아 있는 동안(영역에서 긋는 중이면 가만히 대고 있어도), 펜 호버(에어뷰)·펜을 뗀 뒤 PALM_MS 동안
@@ -46,7 +47,8 @@ export class InkInput {
     this.palmTouches = new Set(); // 손바닥으로 본 손가락(touch identifier) — 뗄 때까지 브라우저 스크롤을 막는다
     this.penTouches = new Set(); // 펜이 함께 보낸 touch(identifier) — 손바닥으로 보지 않는다
     this.lastPenAt = null; // 마지막 펜 pointerdown 자리·때 { x, y, t }
-    this.touches = new Map(); // 영역에서 시작한 손가락들
+    this.touches = new Map(); // 영역에서 시작한 손가락들(+ 두 손가락 스크롤에 함께 센 영역 밖 손가락 — outside)
+    this.outsidePending = new Map(); // 영역 밖에 먼저 닿아 아직 움직이지 않은 손가락 { x0, y0, x, y, at, moved } — 영역 손가락이 오면 함께 센다
     this.gesture = null; // 두 손가락 스크롤 중
     this.active = null; // 펜·마우스로 누르고 있는 것(하나만)
     this.lastTap = null; // 펜 콕(두 번 콕 판정용)
@@ -120,6 +122,7 @@ export class InkInput {
     document.removeEventListener("visibilitychange", this.onVisibility);
     this.palmTouches.clear();
     this.penTouches.clear();
+    this.outsidePending.clear();
     this.stopInertia();
     // 긋던 선은 살리고(모드를 끄거나 영역이 사라지는 순간) 저장 미루기를 푼다
     if (this.active) this.salvage(this.active, "detach");
@@ -145,14 +148,39 @@ export class InkInput {
       const safe = isPalmSafe(e.target);
       const large = !safe && isLargeContact(e.width, e.height);
       this.touchDownBlocked = palmBlocked(this.palm, t, safe) || large || gliding;
-      if (gliding) this.emit("scroll-stop-tap", { where: e.target instanceof Node && this.el.contains(e.target) ? "area" : "outside" });
+      const inside = e.target instanceof Node && this.el.contains(e.target);
+      if (gliding) this.emit("scroll-stop-tap", { where: inside ? "area" : "outside" });
+      if (!inside) this.outsideDown(e, t);
     }
+  }
+
+  // 영역 밖에 닿은 손가락(카드 여백·보기·머리 줄): 손가락 하나는 글 위, 하나는 밖에 닿은 두 손가락 스크롤도 되게 한다.
+  // 영역에 손가락이 하나라도 닿아 있으면 브라우저는 스크롤하지 않으므로(두 손가락의 touch-action 교집합 = none) 여기서 함께 센다 —
+  // 영역 손가락과 거의 함께(OUTSIDE_JOIN_MS 안) 닿은 것만(가장자리에 얹어 둔 엄지는 세지 않음, geometry.outsideJoinable).
+  // 영역 밖 손가락이 먼저면 잠깐 기다렸다가, 그동안 영역 손가락이 오면 함께 센다(touchDown)
+  outsideDown(e, t) {
+    if (e.isPrimary) this.outsidePending.clear(); // 첫 손가락: 떼기를 놓쳐 남은 기록은 버린다
+    const live = this.liveTouches();
+    if (live.length) {
+      if (live.some((x) => !x.outside && t - x.at <= OUTSIDE_JOIN_MS)) this.touchDown(e, t, true);
+      return;
+    }
+    if (isLargeContact(e.width, e.height) || palmBlocked(this.palm, t)) return;
+    this.outsidePending.set(e.pointerId, { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, at: t, moved: false });
   }
 
   onWinMove(e) {
     if (e.pointerType === "touch") {
       // 닿은 뒤 커진 접촉(손바닥이 눕는 중)의 click 도 막는다
       if (!this.touchDownBlocked && !isPalmSafe(e.target) && isLargeContact(e.width, e.height)) this.touchDownBlocked = true;
+      const p = this.outsidePending.get(e.pointerId);
+      if (p) {
+        p.x = e.clientX;
+        p.y = e.clientY;
+        if (distance(p.x0, p.y0, p.x, p.y) >= OUTSIDE_STILL_PX) p.moved = true;
+      }
+      // 함께 센 영역 밖 손가락은 영역 리스너가 받지 못하므로(포인터가 영역 밖 요소에 붙어 있음) 여기서
+      if (this.touches.get(e.pointerId)?.outside) this.touchMove(e);
       return;
     }
     if (e.pointerType !== "pen") return;
@@ -169,6 +197,7 @@ export class InkInput {
   onWinUp(e) {
     // 영역 안에서 누르고 붙잡기 전에(콕만큼만 움직여) 영역 밖에서 뗀 것도 뗀 것으로
     const inside = e.target instanceof Node && this.el.contains(e.target);
+    if (e.pointerType === "touch") this.outsidePending.delete(e.pointerId);
     if (!inside && this.active && this.active.id === e.pointerId) {
       if (e.type === "pointercancel") this.onCancel(e);
       else this.onUp(e);
@@ -502,20 +531,22 @@ export class InkInput {
   }
 
   // ── 손가락 ──
-  touchDown(e, t) {
+  // outside: 영역 밖에 닿았지만 두 손가락 스크롤에 함께 세는 손가락(움직임·떼기는 창 리스너가 넘겨준다)
+  touchDown(e, t, outside = false) {
     // 첫 손가락(isPrimary)이 닿을 때는 다른 손가락이 없다 — 떼기를 놓쳐 남은 손가락이 있으면 지운다
     // (남아 있으면 다음 한 번 터치가 두 손가락으로 잘못 읽혀 빈칸이 열리지 않는다)
     if (e.isPrimary && this.touches.size) {
       this.touches.clear();
       if (this.gesture) this.endGesture(t, false);
     }
+    this.outsidePending.delete(e.pointerId);
     // 손바닥만큼 큰 접촉은 펜이 없어도 손바닥. 스크롤·관성을 멈추려고 친 터치는 빈칸을 열지 않는다(noTap)
     const large = isLargeContact(e.width, e.height);
     const blocked = large || palmBlocked(this.palm, t);
     const noTap = tapBlockedByScroll({ now: t, scrollEndAt: this.scrollEndAt, scrollAt: this.scrollAt });
     const touch = {
       id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY,
-      ignored: blocked, palm: large, noTap, multi: false, moved: false,
+      ignored: blocked, palm: large, noTap, multi: false, moved: false, outside, at: t,
     };
     this.touches.set(e.pointerId, touch);
     if (blocked) {
@@ -523,13 +554,23 @@ export class InkInput {
       else this.emit("palm", { n: 1 });
       return;
     }
+    // 영역 밖에 먼저 닿아 가만히 있던 손가락도 함께(손가락 하나는 글 위, 하나는 카드 밖)
+    if (!outside) {
+      for (const [id, p] of this.outsidePending) {
+        if (outsideJoinable(p, t, this.scrollAt)) {
+          this.touches.set(id, { id, x0: p.x0, y0: p.y0, x: p.x, y: p.y, ignored: false, palm: false, noTap: true, multi: false, moved: false, outside: true, at: p.at });
+        }
+      }
+      this.outsidePending.clear();
+    }
     const live = this.liveTouches();
     if (live.length < 2) return;
-    // 두 손가락(이상): 스크롤 시작. 이미 스크롤 중에 손가락이 더 오면 가운데점만 다시 잡는다
+    // 두 손가락(이상): 스크롤 시작. 이미 스크롤 중에 손가락이 더 오면 가운데점만 다시 잡는다(첫 손가락을 떼고 기다리던 중이면 다시 이어 감)
     for (const x of live) x.multi = true;
     const mid = midpoint(live).y;
     if (this.gesture) {
       this.gesture.mid = mid;
+      this.gesture.lift = null;
     } else {
       this.gesture = { mid, total: 0, carry: 0, samples: [{ t, v: 0 }] };
       this.emit("scroll-start", { fingers: live.length });
@@ -575,6 +616,7 @@ export class InkInput {
     this.touches.delete(e.pointerId);
     if (!touch) return;
     if (touch.multi) this.fingerLeft(t, true);
+    if (touch.outside) return; // 영역 밖 손가락의 click 은 영역 밖으로 간다(빈칸을 열 일이 없음)
     // 손가락 하나로 움직이지 않고 뗀 것만 빈칸을 연다(두 손가락 제스처의 손가락·손바닥·스크롤을 멈춘 터치는 아님)
     const single = !touch.ignored && !touch.multi && !touch.moved;
     this.touchClick = { ok: single && !touch.noTap, at: now() };
@@ -588,13 +630,22 @@ export class InkInput {
   }
 
   // 스크롤 중 손가락이 빠졌다: 둘 이상 남았으면 남은 손가락의 가운데점을 다시 잡고(셋 → 둘에서 페이지가 튀지 않게),
-  // 하나 이하면 끝(뗀 것이면 관성)
+  // 손가락 하나를 떼어 하나만 남았으면 그 손가락도 떨어지기를 기다린다 — 스크롤은 멈춰 있고, 곧(FLING_PAIR_MS) 떼면
+  // 첫 손가락을 뗄 때의 속도로 관성, 대고 있다가 떼면 관성 없음(남은 손가락이 닿아 있는 동안 미끄러지지 않게 — 브라우저처럼).
+  // 모두 떨어지면 끝(뗀 것이면 관성)
   fingerLeft(t, fling) {
     const g = this.gesture;
     if (!g) return;
     const live = this.liveTouches().filter((x) => x.multi);
-    if (live.length < 2) this.endGesture(t, fling);
-    else g.mid = midpoint(live).y;
+    if (live.length >= 2) {
+      g.mid = midpoint(live).y;
+      return;
+    }
+    if (live.length === 1 && fling) {
+      if (!g.lift) g.lift = { at: t, v: releaseVelocity(g.samples, t) };
+      return;
+    }
+    this.endGesture(t, fling);
   }
 
   endGesture(t, fling) {
@@ -604,7 +655,7 @@ export class InkInput {
     this.scrollEndAt = Math.max(this.scrollEndAt, t);
     this.emit("scroll-end", { total: g.total });
     if (!fling) return;
-    const v = releaseVelocity(g.samples, t);
+    const v = flingVelocity(g.samples, t, g.lift);
     if (Math.abs(v) >= INERTIA_START) this.startInertia(v);
   }
 

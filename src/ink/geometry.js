@@ -120,6 +120,26 @@ export function inertiaStep(v, dt, tau = INERTIA_TAU) {
   return { v: v * k, d: v * tau * (1 - k) };
 }
 
+// 두 손가락을 차례로 뗄 때: 첫 손가락을 뗀 뒤 남은 손가락이 이 ms 안에 떨어지면 '함께 뗌' — 첫 손가락을 뗄 때의 속도로 관성.
+// 더 오래 대고 있다 떼면 관성 없음(둘째 손가락이 닿아 있는 동안 화면이 미끄러지지 않게 — 그 사이 스크롤은 멈춰 있다)
+export const FLING_PAIR_MS = 120;
+
+// 두 손가락 스크롤을 끝낼 때의 관성 속도(px/ms). lift = 첫 손가락을 뗀 때와 그때의 속도 { at, v }(한 번에 다 뗐으면 null)
+export function flingVelocity(samples, now, lift = null) {
+  if (lift) return now - lift.at <= FLING_PAIR_MS ? lift.v : 0;
+  return releaseVelocity(samples, now);
+}
+
+// 영역 밖(카드 여백·머리 줄)에 닿은 손가락을 두 손가락 스크롤에 함께 세는가: 영역 손가락과 거의 함께(OUTSIDE_JOIN_MS 안)
+// 닿았을 때만 — 화면 가장자리에 얹어 둔 엄지(태블릿을 쥔 손)가 다른 손의 빈칸 터치를 스크롤로 바꾸지 않게.
+// 영역 밖 손가락이 먼저 닿았으면(p = { at, moved }) 그 뒤 거의 움직이지 않았고(OUTSIDE_STILL_PX 미만) 페이지도 움직이지
+// 않았어야 한다(scrollAt: 마지막 scroll 이벤트) — 브라우저가 이미 그 손가락으로 스크롤하고 있으면 둘이 함께 움직이지 않게 맡겨 둔다
+export const OUTSIDE_JOIN_MS = 200;
+export const OUTSIDE_STILL_PX = 4;
+export function outsideJoinable(p, now, scrollAt = -Infinity) {
+  return !!p && !p.moved && now - p.at <= OUTSIDE_JOIN_MS && !(scrollAt >= p.at);
+}
+
 // ── 선 모양 ──
 const r1 = (v) => Math.round(v * 10) / 10;
 const r2 = (v) => Math.round(v * 100) / 100;

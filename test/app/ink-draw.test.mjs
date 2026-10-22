@@ -150,3 +150,28 @@ test('예측 점: 그리는 선 끝에만 — 많아야 3개, 너무 앞선 시�
   assert.deepEqual(predictTail(last, [], 1000), []);
   assert.deepEqual(predictTail(null, [{ x: 1, y: 1 }], 1000), []);
 });
+
+test('두 손가락 관성: 한 번에 떼면 그때 속도, 차례로 떼면 120ms 안일 때만 첫 손가락을 뗄 때의 속도', async () => {
+  const { FLING_PAIR_MS, flingVelocity, releaseVelocity } = await import('../../src/ink/geometry.js');
+  const samples = [{ t: 0, v: 0 }, { t: 50, v: 100 }];
+  assert.equal(flingVelocity(samples, 50), releaseVelocity(samples, 50));
+  assert.equal(flingVelocity(samples, 50, null), 2);
+  // 첫 손가락을 t=50 에 속도 2 로 뗌 → 남은 손가락을 곧 떼면 2, 오래 대고 있다 떼면 0(그 사이 화면은 멈춰 있음)
+  const lift = { at: 50, v: 2 };
+  assert.equal(flingVelocity(samples, 50 + 30, lift), 2);
+  assert.equal(flingVelocity(samples, 50 + FLING_PAIR_MS, lift), 2);
+  assert.equal(flingVelocity(samples, 50 + FLING_PAIR_MS + 1, lift), 0);
+  assert.equal(flingVelocity(samples, 2000, lift), 0);
+});
+
+test('영역 밖 손가락: 영역 손가락과 200ms 안에 함께 닿았고 가만히 있었으며 페이지가 움직이지 않았을 때만', async () => {
+  const { OUTSIDE_JOIN_MS, outsideJoinable } = await import('../../src/ink/geometry.js');
+  const p = { at: 1000, moved: false };
+  assert.equal(outsideJoinable(p, 1050), true);
+  assert.equal(outsideJoinable(p, 1000 + OUTSIDE_JOIN_MS), true);
+  assert.equal(outsideJoinable(p, 1000 + OUTSIDE_JOIN_MS + 1), false, '가장자리에 얹어 둔 엄지');
+  assert.equal(outsideJoinable({ at: 1000, moved: true }, 1050), false, '이미 움직임(브라우저 스크롤)');
+  assert.equal(outsideJoinable(p, 1050, 1020), false, '닿은 뒤 페이지가 움직임');
+  assert.equal(outsideJoinable(p, 1050, 900), true, '닿기 전 스크롤은 상관없음');
+  assert.equal(outsideJoinable(null, 1050), false);
+});
