@@ -500,7 +500,9 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   // 질문 메모: 마지막으로 누른 빈칸 { qid: 문항 id, i: 빈칸 번호(0부터) }, 열린 메모 창의 정보, 이 문제집의 미해결 메모 수
   const [lastBlank, setLastBlank] = useState(null);
   const [noteInfo, setNoteInfo] = useState(null);
-  const [noteCount, setNoteCount] = useState(null);
+  const [setNotes, setSetNotes] = useState(null); // 이 문제집의 질문 메모(해결 포함) — 빈칸의 ✎ 표시와 단추의 미해결 수
+  const [noteTry, setNoteTry] = useState(0); // 메모 목록 다시 받기(저장·창 닫기 뒤 — 창에서 고쳤을 수 있음)
+  const [noteStart, setNoteStart] = useState(null); // 메모 창을 열며 할 일 { listOpen, editId } (✎ 로 열 때)
   const [toast, setToast] = useState(null);
   // 머리 줄 아래 작은 띠: { kind: "resume" }('지난번 읽던 곳에서 이어 봅니다') | { kind: "note", text, back }(메모에서 옴)
   const [chip, setChip] = useState(null);
@@ -642,14 +644,15 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     setLoadTry((n) => n + 1);
   }
 
-  // 메모 수는 덤 — 못 불러오면(백엔드 배포 전 등) 단추에 숫자만 안 보인다
+  // 이 문제집의 메모(해결 포함): 빈칸의 ✎ 표시와 단추의 미해결 수. 못 불러오면(백엔드 배포 전 등) 표시·숫자만 안 보인다
   useEffect(() => {
     let alive = true;
-    listNotes({ status: "open", setId })
-      .then((list) => { if (alive && Array.isArray(list)) setNoteCount(list.length); })
+    listNotes({ status: "all", setId })
+      .then((list) => { if (alive && Array.isArray(list)) setSetNotes(list); })
       .catch(() => {});
     return () => { alive = false; };
-  }, [setId]);
+  }, [setId, noteTry]);
+  const noteCount = setNotes ? setNotes.filter((n) => !n.resolved).length : null;
 
   useEffect(() => () => clearTimeout(toastTimer.current), []);
 
@@ -694,9 +697,22 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   const fillStars = useMemo(() => flagsOf(fillBlankCount, curStarList), [fillBlankCount, curStarList]);
   const starCount = curStarList.length;
   // 본문에 넘기는 빈칸 상태: 1 = 열림, 2 = ★ (TableAwareText 는 값이 바뀐 빈칸이 든 줄만 다시 그림)
+  // 지금 문항의 빈칸마다 질문 메모: 0 없음 · 1 미해결이 있음 · 2 모두 해결 → 빈칸 단추 왼쪽 위 ✎(누르면 그 메모 보기·고치기)
+  const blankNoteFlags = useMemo(() => {
+    const out = new Array(fillBlankCount).fill(0);
+    if (!setNotes || currentId == null) return out;
+    for (const n of setNotes) {
+      if (String(n.questionId) !== String(currentId) || n.blankNo == null) continue;
+      const i = Number(n.blankNo) - 1;
+      if (!(i >= 0 && i < fillBlankCount)) continue;
+      out[i] = !n.resolved ? 1 : (out[i] || 2);
+    }
+    return out;
+  }, [setNotes, currentId, fillBlankCount]);
+  // (+ 4·8 = 메모 표시: 위 blankNoteFlags 를 두 칸 올려 담음)
   const blankView = useMemo(
-    () => fillRev.map((v, i) => (v ? 1 : 0) | (fillStars[i] ? 2 : 0)),
-    [fillRev, fillStars],
+    () => fillRev.map((v, i) => (v ? 1 : 0) | (fillStars[i] ? 2 : 0) | ((blankNoteFlags[i] || 0) << 2)),
+    [fillRev, fillStars, blankNoteFlags],
   );
   // 사용자가 스스로 연 빈칸[참/거짓]: ★만 가리기가 대신 연 ★ 아닌 빈칸은 뺀다(꺼져 있으면 화면 그대로).
   // 머리 줄 '연 빈칸 n/전체'·목차의 절마다 수·결과 화면의 수, ★만 가리기를 끌 때 돌아갈 상태
@@ -725,6 +741,8 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
       results, revealed: fillRev, done, qid: currentId, n: fillBlankCount,
       stars, counts, filterPre, starMode: starMode && starTools,
       fill: isFill, headings: fillHeadings, canSwitch: !!(pair && onSwitchSet),
+      // 빈칸의 ✎ 누름(noteAt)이 메모 창 정보를 만들 때 읽는 것
+      note: { text: current ? current.text : "", answers: fillAnswers, setTitle: set ? set.title : "", qNo: currentIndex + 1, list: setNotes },
     };
   });
   useEffect(() => {
@@ -1013,17 +1031,33 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   }, []);
 
   // 빈칸 단추 그리기: 상태(state)는 TableAwareText 가 빈칸마다 넘겨준다 → 바뀐 빈칸이 든 줄만 다시 그림
+  // ✎(그 빈칸의 메모) 누름: 그 빈칸 자리로 메모 창을 열고 이전 메모 목록을 편다. 그 빈칸 메모가 하나면 바로 그 메모 고치기.
+  // 고정된 함수(빈칸 230개의 FillBlank memo 가 맞게) — 지금 문항·메모는 live 에서 읽는다(openNote 와 같은 정보)
+  const noteAt = useCallback((i) => {
+    const L = live.current;
+    if (!L || !L.fill || L.qid == null || !(i >= 0 && i < L.n)) return;
+    const nt = L.note;
+    const here = (nt.list || []).filter((n) => String(n.questionId) === String(L.qid) && Number(n.blankNo) === i + 1);
+    setLastBlank({ qid: L.qid, i });
+    setNoteStart({ listOpen: true, editId: here.length === 1 ? here[0].id : null });
+    setNoteInfo({
+      setId, setTitle: nt.setTitle, questionId: L.qid, qNo: nt.qNo, blankNo: i + 1,
+      context: blankContext(nt.text, i, nt.answers) || null,
+    });
+  }, [setId]);
   const renderBlank = useCallback((i, { inTable, state }) => (
     <FillBlank
       index={i}
       revealed={!!(state & 1)}
       star={!!(state & 2)}
+      note={(state >> 2) & 3}
       answer={fillAnswers[i]}
       inTable={inTable}
       fixed={inkLayer}
       onToggle={toggleFill}
+      onNote={noteAt}
     />
-  ), [fillAnswers, inkLayer, toggleFill]);
+  ), [fillAnswers, inkLayer, toggleFill, noteAt]);
 
   // 목차에서 고른 제목으로: 읽는 줄 바로 아래에 오게
   const jumpToHeading = useCallback((hid) => {
@@ -1457,6 +1491,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
 
   // 질문 메모 창 열기: 문제집·문항 + (빈칸 문항이면) 마지막으로 누른 빈칸과 그 줄의 글,
   // (다른 유형이면) 문제 본문 앞부분. 빈칸을 누른 적이 없으면 문제집·문항만.
+  // (빈칸의 ✎ 로 열 때는 위 noteAt)
   function openNote() {
     const info = { setId, setTitle: set.title, questionId: current?.id ?? null, qNo: currentIndex + 1, blankNo: null, context: null };
     if (isFill) {
@@ -1467,6 +1502,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     } else if (current) {
       info.context = questionContext(current.text, qtype === "multiple" ? opts : []) || null;
     }
+    setNoteStart(null);
     setNoteInfo(info);
   }
 
@@ -1477,9 +1513,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     if (!edited) setNoteInfo(null);
     showToast(edited ? "고쳤습니다" : "메모했습니다");
     if (String(info.setId) !== String(setId)) return;
-    listNotes({ status: "open", setId })
-      .then((list) => { if (Array.isArray(list)) setNoteCount(list.length); })
-      .catch(() => { if (!edited) setNoteCount((n) => (n == null ? n : n + 1)); });
+    setNoteTry((n) => n + 1); // 빈칸의 ✎ 와 단추 수를 새 목록으로
   }
 
   const bodyClass = ["qm-solve-body", showing && "qm-solve-body--fab", showNext && "qm-solve-body--fab2"].filter(Boolean).join(" ");
@@ -1833,7 +1867,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
         <button
           style={S.noteFab}
           className="qm-note-fab"
-          onClick={openNote}
+          onClick={() => openNote()}
           onPointerEnter={(e) => { if (e.pointerType === "mouse") e.currentTarget.style.opacity = "0.85"; }}
           onPointerLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
           title={noteCount ? `이 문제집의 미해결 메모 ${noteCount}개` : "읽다가 든 질문 적기"}
@@ -1846,7 +1880,12 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
         </button>
       )}
       {noteInfo && (
-        <QuestionNoteSheet info={noteInfo} onClose={() => setNoteInfo(null)} onSaved={handleNoteSaved} />
+        <QuestionNoteSheet
+          info={noteInfo}
+          start={noteStart}
+          onClose={() => { setNoteInfo(null); setNoteTry((n) => n + 1); }}
+          onSaved={handleNoteSaved}
+        />
       )}
       {toast && <div style={S.toast(toast.type)} role="status">{toast.message}</div>}
     </div>

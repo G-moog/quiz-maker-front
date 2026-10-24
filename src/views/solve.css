@@ -118,3 +118,41 @@
     padding: 0 6px;
   }
 }
+
+/* ── 질문 메모 표시(✎) ──
+   이 빈칸에 쓴 메모가 있으면 빈칸 단추 왼쪽 위에 겹쳐 띄운다(★ 는 오른쪽 위) — 단추 크기·줄 배치는 그대로(필기 위치 지킴).
+   ✎ 는 따로 눌린다(FillBlank onNote — 빈칸은 열지 않음). 손가락으로 누르기 쉽게 보이는 동그라미보다 넓게 받는다(::before).
+   모두 해결한 메모만 있으면 흐리게 */
+.qm-blank-note {
+  position: absolute;
+  top: -10px;
+  left: -8px;
+  z-index: 3;
+  width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #f59e0b;
+  color: #1a1a1a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 0 0 2px #0f0f0f;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.qm-blank-note::before {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+.qm-blank-note[data-resolved] {
+  background: #6b6b6b;
+  color: #e5e5e5;
+}
+.qm-blank-note:focus-visible {
+  outline: 2px solid #fcd34d;
+  outline-offset: 1px;
+}

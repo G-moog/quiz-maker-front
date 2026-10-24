@@ -23,8 +23,9 @@ import PrevNoteList from "./PrevNoteList";
 //  휴대폰 자판이 올라오면 창을 보이는 영역(visualViewport)에 맞춰 창 안에서 스크롤되게 하고,
 //  취소·저장 줄은 창 아래에 붙여 둔다(초안 안내·오류·긴 맥락이 한꺼번에 있어도 저장 단추가 자판에 가리지 않게).
 //
+//  start: { listOpen, editId } — 풀기 화면 빈칸의 ✎ 로 열 때. 목록을 펴서 열고, editId 가 있으면 그 메모 고치기로 시작
 //  이전 메모 고치기: 머리 줄의 '이전 메모 N' 단추로 이 문제집 메모 목록(PrevNoteList)을 펴고 접는다
-//  (접어서 시작. 태블릿처럼 보이는 영역이 넉넉하면 새로 쓸 때, 목록이 오기 전에 입력칸을 건드리지 않았을 때만 편다 —
+//  (접어서 시작. 지금 문항에 쓴 메모가 있거나 태블릿처럼 보이는 영역이 넉넉하면 새로 쓸 때, 목록이 오기 전에 입력칸을 건드리지 않았을 때만 편다 —
 //   늦게 온 목록이 쓰는(S펜으로 손글씨를 쓰는) 중인 입력칸을 밀어내지 않게).
 //  수는 이 문제집 메모 전부(해결 포함), 지금 빈칸에 쓴 메모가 있으면 노랗게.
 //  줄을 누르면 그 메모 고치기: 글이 입력칸에, 머리는 '메모 고치기'(입력칸 위 상자에도 '고치는 메모' — 자판에 머리가
@@ -178,7 +179,7 @@ function roomyScreen() {
 const SAVED_MARK_MS = 2500;
 const NEW_LOCK_MS = 900; // 고치기 저장 뒤 되살린 새 메모 글의 저장을 막는 동안(두 번 누름 막기)
 
-export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved }) {
+export default function QuestionNoteSheet({ info: freshInfo, start = null, onClose, onSaved }) {
   const user = localStorage.getItem("username") || "";
   const [draft] = useState(() => loadNoteDraft(user));
   const [info, setInfo] = useState(draft ? draft.info : freshInfo);
@@ -236,6 +237,7 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
   // 받기 전에는 자리가 없어서, 쓰는 중에 펴면 입력칸이 목록 높이만큼 밀려 내려간다)
   const [listOpen, setListOpen] = useState(false);
   const openOnArrive = useRef(!draft && !editDraft);
+  const startDone = useRef(false); // start.editId 고치기를 이미 시작했나
 
   // 안드로이드 뒤로 가기: 창만 닫는다(쓴 글·고친 글은 아래 초안으로 남아 있음)
   useBack(true, () => onClose());
@@ -250,8 +252,18 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
         const arr = keepNewerNotes(list, edited.current);
         setNotes(arr);
         setListState("ok");
-        if (openOnArrive.current && !touched.current && arr.length > 0 && roomyScreen()) setListOpen(true);
+        // 펴기: 빈칸의 ✎ 로 열었거나(start.listOpen), 지금 문항에 쓴 메모가 있으면(휴대폰도 — 풀다가 쓴 메모를 바로 보게),
+        // 넉넉한 화면(태블릿)이면. ✎ 로 연 것이 아니면 그새 입력칸을 건드렸을 때는 접은 채
+        if (start?.listOpen && arr.length > 0) setListOpen(true);
+        else if (openOnArrive.current && !touched.current && arr.length > 0 &&
+          (roomyScreen() || arr.some((n) => sheetNoteRank(n, freshInfo) < 2))) setListOpen(true);
         openOnArrive.current = false;
+        // ✎ 로 연 빈칸의 메모가 하나면 바로 그 메모 고치기(처음 받은 목록에서 한 번만)
+        if (start?.editId != null && !startDone.current) {
+          startDone.current = true;
+          const hit = arr.find((n) => String(n.id) === String(start.editId));
+          if (hit) pickNote(hit);
+        }
         // 불러온 고치기 초안의 원문을 서버 것으로(그사이 메모 화면에서 고쳤을 수 있음 — '고친 내용이 있나'를 맞게)
         setEditing((cur) => (cur ? arr.find((n) => String(n.id) === String(cur.id)) || cur : cur));
       })
@@ -262,6 +274,8 @@ export default function QuestionNoteSheet({ info: freshInfo, onClose, onSaved })
         setListState("error");
       });
     return () => { alive = false; };
+    // 목록은 문제집이 바뀌거나 다시 시도할 때만 받는다. start·freshInfo·pickNote 는 창을 연 때의 값이면 된다(처음 받은 목록에서 한 번만 씀)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listable, freshInfo.setId, listTry]);
 
   useEffect(() => () => { clearTimeout(savedTimer.current); clearTimeout(lockTimer.current); }, []);

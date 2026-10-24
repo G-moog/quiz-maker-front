@@ -33,7 +33,9 @@ function blankStyle(revealed, inTable, fixed, star) {
 const CELL = { gridArea: "1 / 1" };
 
 // memo: 빈칸이 230개인 페이지에서 하나를 열 때 나머지 단추는 다시 그리지 않는다(부모는 onToggle 을 고정된 함수로 넘김)
-function FillBlank({ index, revealed, star = false, answer, inTable = false, fixed = false, onToggle }) {
+// note: 이 빈칸에 쓴 질문 메모 — 0 없음 · 1 미해결이 있음 · 2 모두 해결. 있으면 왼쪽 위에 ✎ 를 겹쳐 띄운다
+//  (★ 처럼 position: absolute — 단추 크기·줄 배치는 그대로라 필기가 어긋나지 않음). ✎ 를 누르면 빈칸은 열지 않고 onNote(index)
+function FillBlank({ index, revealed, star = false, note = 0, answer, inTable = false, fixed = false, onToggle, onNote }) {
   const shown = answer ?? "?";
   return (
     <button
@@ -43,7 +45,7 @@ function FillBlank({ index, revealed, star = false, answer, inTable = false, fix
       style={blankStyle(revealed, inTable, fixed, star)}
       onClick={() => onToggle(index)}
       aria-pressed={revealed}
-      title={(revealed ? "눌러서 가리기" : `눌러서 ${index + 1}번 빈칸 정답 확인`) + (star ? " · ★ 헷갈림 표시" : "")}
+      title={(revealed ? "눌러서 가리기" : `눌러서 ${index + 1}번 빈칸 정답 확인`) + (star ? " · ★ 헷갈림 표시" : "") + (note ? " · ✎ 메모 있음" : "")}
     >
       {fixed ? (
         <>
@@ -52,6 +54,21 @@ function FillBlank({ index, revealed, star = false, answer, inTable = false, fix
         </>
       ) : revealed ? shown : index + 1}
       {star && <span className="qm-blank-star">★</span>}
+      {note > 0 && onNote && (
+        <span
+          className="qm-blank-note"
+          data-note-mark=""
+          data-resolved={note === 2 ? "" : undefined}
+          role="button"
+          tabIndex={0}
+          aria-label={`${index + 1}번 빈칸에 쓴 메모 보고 고치기`}
+          title="이 빈칸에 쓴 메모 보고 고치기"
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); onNote(index); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onNote(index); }
+          }}
+        >✎</span>
+      )}
     </button>
   );
 }

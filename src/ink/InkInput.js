@@ -25,7 +25,8 @@ import {
 // 브라우저가 예측 점(getPredictedEvents)을 주면 그리는 선 끝에만 잠깐 붙인다(저장하지 않음 — geometry.predictTail)
 
 // 입력칸·(빈칸이 아닌) 단추 위에서 누르면 필기를 시작하지 않고 원래 동작(포커스·클릭)을 하게 둔다
-const INTERACTIVE = "input, textarea, select, a[href], label, [contenteditable]:not([contenteditable='false']), button:not([data-ink-blank])";
+// [data-note-mark]: 빈칸 단추 안에 겹쳐 띄운 메모 표시(✎) — 빈칸 단추 안에 있어도 단추처럼(긋지 않고 빈칸도 열지 않음)
+const INTERACTIVE = "input, textarea, select, a[href], label, [contenteditable]:not([contenteditable='false']), button:not([data-ink-blank]), [data-note-mark]";
 // 선을 긋기 시작하면 초점을 빼 줄 입력칸(화면 자판이 내려가 글을 가리지 않게 — 필기 모드를 끄고 글을 누를 때와 같다)
 const TEXT_INPUT = "input, textarea, select, [contenteditable]:not([contenteditable='false'])";
 
@@ -497,6 +498,8 @@ export class InkInput {
   // 펜·마우스가 만든 click: 펜은 빈칸을 열지 않고(두 번 콕으로만), 마우스는 선을 그은 뒤면 막는다.
   // 손가락은 '한 번 터치'일 때만 그대로 둔다(끈 것·두 손가락·손바닥 무시 중·스크롤을 멈춘 터치면 막음)
   onClick(e) {
+    // 메모 표시(✎)를 누른 click 은 막지 않는다(손가락 누름은 pointerdown 에서 단추로 보고 건너뛰어 touchClick 이 없다)
+    if (e.target instanceof Element && e.target.closest("[data-note-mark]")) return;
     const type = this.clickType(e);
     let block = false;
     if (type === "pen") {
