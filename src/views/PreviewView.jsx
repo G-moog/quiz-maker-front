@@ -3,8 +3,16 @@ import { getQuestions } from "../api/quiz";
 import { SESSION_EXPIRED_MESSAGE } from "../utils/session";
 import { parseAnswers } from "../utils/answers";
 import TableAwareText from "../components/TableAwareText";
+import { parseSubject } from "../utils/folders";
 
 const CIRCLE = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"];
+
+// 인쇄 머리의 폴더 줄: 폴더 이름, 보관함이면 원래 폴더('[보관] ' 은 떼고 — 없으면 줄 없음), 새로 들어옴은 줄 없음
+function folderLine(subject) {
+  const p = parseSubject(subject);
+  if (p.kind === "folder") return p.name;
+  return p.kind === "archive" ? p.origin : "";
+}
 const NBSP = String.fromCharCode(0xa0); // 줄이 바뀌지 않는 공백
 
 // 백엔드 타입명(short_answer, multiple_choice 등)을 프론트엔드 내부명으로 정규화
@@ -164,7 +172,8 @@ export default function PreviewView({ set, onBack }) {
 
       <div className="print-sheet qm-sheet" style={S.sheet}>
         <div className="print-doc-title qm-doc-title" style={S.docTitle}>{set.title}</div>
-        {set.subject && <div style={S.docSub}>{set.subject}</div>}
+        {/* 폴더 이름(과목 칸) — 보관함 문제집은 '[보관] ' 을 떼고 원래 폴더, 새로 들어옴은 줄 없음(utils/folders.js) */}
+        {folderLine(set.subject) && <div style={S.docSub}>{folderLine(set.subject)}</div>}
         <hr style={S.divider} />
 
         {questions.map((q, i) => {

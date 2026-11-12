@@ -2,8 +2,10 @@
 // 실행: npm run test:app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hasSet, loadHardModeIds, matchHeading, pairOf, rememberHardMode } from '../../src/utils/hardMode.js';
+import { groupHardSets, hasSet, loadHardModeIds, matchHeading, pairOf, rememberHardMode } from '../../src/utils/hardMode.js';
 import { textModel } from '../../src/utils/textBlocks.js';
+import { clearDashCache, readDashCache, writeDashCache } from '../../src/utils/dashboard.js';
+import { cardsOfPlace, groupCardsByFolder } from '../../src/utils/folders.js';
 
 const SETS = [
   { id: 30, title: '[하드] [Notion] 습도' },
@@ -67,5 +69,43 @@ test('rememberHardMode: 대시보드 카드의 하드모드 켬/끔을 바꾼 �
     assert.deepEqual(loadHardModeIds('lee'), []);
   } finally {
     delete globalThis.localStorage;
+  }
+});
+
+// 폴더(subject)는 짝 규칙에 끼지 않는다 — 짝은 제목으로만(보통·하드의 폴더가 달라도, 보관함이어도 짝)
+test('pairOf: 폴더가 달라도 짝 — 보통은 보관함, 하드는 옛 폴더·빈 값이어도 같은 카드', () => {
+  const sets = [
+    { id: 61, title: '[하드] [Notion] 착과부하', subject: '생육·착과' },
+    { id: 60, title: '[Notion] 착과부하', subject: '[보관] 생육·착과' },
+    { id: 71, title: '[하드] [통합본] 습도와 증산', subject: null },
+    { id: 70, title: '[통합본] 습도와 증산', subject: '증산·습도' },
+  ];
+  assert.deepEqual(pairOf(sets, 60), { set: sets[0], toHard: true, baseId: 60 });
+  assert.deepEqual(pairOf(sets, 71), { set: sets[3], toHard: false, baseId: 70 });
+  // 대시보드 카드도 같은 짝: 카드는 보통의 폴더(하드의 폴더는 보지 않음)
+  const g = groupCardsByFolder(groupHardSets(sets));
+  assert.deepEqual(g.archive.map((c) => [c.set.id, c.hard.id]), [[60, 61]]);
+  assert.deepEqual(g.folders.get('증산·습도').map((c) => [c.set.id, c.hard.id]), [[70, 71]]);
+  assert.equal(g.folders.has('생육·착과'), false);
+});
+
+test('pairOf: 대시보드 기억(서버 목록 전체 — 보관함·다른 폴더 포함)에서 짝을 찾는다(풀기 화면이 여는 길)', () => {
+  clearDashCache();
+  const sets = [
+    { id: 81, title: '[하드] [Notion] 줄 돌리기', subject: '' },
+    { id: 80, title: '[Notion] 줄 돌리기', subject: '현장 노하우' },
+    { id: 90, title: '[Notion] 옛 쪽', subject: '[보관] 현장 노하우' },
+    { id: 91, title: '[하드] [Notion] 옛 쪽', subject: '[보관] 현장 노하우' },
+  ];
+  writeDashCache('kim', { sets, place: { kind: 'folder', name: '현장 노하우' } });
+  try {
+    const list = readDashCache('kim')?.sets;
+    // 폴더 보기에 보이는 카드(현장 노하우)만이 아니라 전체 목록이 기억에 있어야 보관함 카드의 짝도 찾는다
+    assert.deepEqual(cardsOfPlace(groupHardSets(list), { kind: 'folder', name: '현장 노하우' }).map((c) => c.set.id), [80]);
+    assert.equal(hasSet(list, 90), true);
+    assert.deepEqual(pairOf(list, 90), { set: sets[3], toHard: true, baseId: 90 });
+    assert.deepEqual(pairOf(list, '81'), { set: sets[1], toHard: false, baseId: 80 });
+  } finally {
+    clearDashCache();
   }
 });

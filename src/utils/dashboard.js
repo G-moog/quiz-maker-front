@@ -33,12 +33,13 @@ export function lastStudiedOf(card, map) {
   return tb > ta ? b : a;
 }
 
-// 찾기: 제목·과목·짝인 하드 문제집 제목에서, 띄어 쓴 낱말이 모두 들어 있는 카드만(대소문자 무시)
-export function filterCards(cards, query) {
+// 찾기: 제목·과목·짝인 하드 문제집 제목에서, 띄어 쓴 낱말이 모두 들어 있는 카드만(대소문자 무시).
+// labelOf(카드): 화면에 보이는 카드 표 글도 함께 찾는다(대시보드가 폴더 표 — 보관 카드의 '보관함' 등 — 를 넘김. 이 파일은 다른 파일을 부르지 않으므로)
+export function filterCards(cards, query, labelOf = null) {
   const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return cards;
   return cards.filter((c) => {
-    const hay = [c.set.title, c.set.subject, c.hard?.title]
+    const hay = [c.set.title, c.set.subject, c.hard?.title, labelOf ? labelOf(c) : null]
       .filter((v) => typeof v === "string")
       .join("\n")
       .toLowerCase();
@@ -150,9 +151,12 @@ export function cardNoteCount(card, counts) {
 }
 
 // ── 목록 기억(이 탭의 메모리에만) ──
-// 풀기·편집·메모 화면에서 대시보드로 돌아올 때 '불러오는 중' 없이 바로 그리고 스크롤 자리를 되살린 뒤 뒤에서 새로 받는다.
+// 풀기·편집·메모 화면에서 대시보드로 돌아올 때 '불러오는 중' 없이 바로 그리고 보던 자리(폴더)·스크롤을 되살린 뒤 뒤에서 새로 받는다.
+// sets 는 서버 목록 전체 그대로(풀기 화면이 여기서 하드 짝을 찾는다 — 보관함·다른 폴더 것도 빼지 않음).
+// place: 보던 자리(utils/folders.js — 폴더 목록·폴더·복습 차례·보관함), query: 찾기 글,
+// scrollByPlace: 자리별 스크롤 { 자리 열쇠(folders.placeKey): y } — 폴더에서 목록으로 나와도 목록의 그 자리로.
 // 사용자 이름별로 하나. 로그아웃·로그인 끊김 때 App 이 지운다
-let dashCache = null; // { username, sets, openNotes, scrollY }
+let dashCache = null; // { username, sets, openNotes, place, query, scrollByPlace }
 
 export function readDashCache(username) {
   return dashCache && dashCache.username === username ? dashCache : null;
@@ -160,9 +164,20 @@ export function readDashCache(username) {
 
 export function writeDashCache(username, patch) {
   if (!dashCache || dashCache.username !== username) {
-    dashCache = { username, sets: null, openNotes: null, scrollY: 0 };
+    dashCache = { username, sets: null, openNotes: null, place: null, query: "", scrollByPlace: {} };
   }
   Object.assign(dashCache, patch);
+}
+
+// 자리별 스크롤 기억·읽기(없으면 0 — 맨 위)
+export function writeDashScroll(username, key, y) {
+  writeDashCache(username, {});
+  dashCache.scrollByPlace = { ...dashCache.scrollByPlace, [key]: y };
+}
+
+export function dashScrollOf(cache, key) {
+  const y = cache && cache.scrollByPlace ? cache.scrollByPlace[key] : 0;
+  return typeof y === "number" && y > 0 ? y : 0;
 }
 
 export function clearDashCache() {

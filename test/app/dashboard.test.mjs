@@ -1,11 +1,12 @@
-// 대시보드 도우미(src/utils/dashboard.js) 시험: 마지막 공부 표시·찾기·최근 공부 순·복습 차례·공부 요약·메모 수·목록 기억
+// 대시보드 도우미(src/utils/dashboard.js) 시험: 마지막 공부 표시·찾기·최근 공부 순·복습 차례·공부 요약·메모 수·목록 기억(자리·스크롤)
 // 실행: npm run test:app
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  SORT_DEFAULT, SORT_RECENT, SORT_REVIEW, cardNoteCount, clearDashCache, countNotesBySet, filterCards, lastStudiedOf,
-  loadSortMode, readDashCache, relativeDay, saveSortMode, sortCards, studySummary, summaryText, writeDashCache,
+  SORT_DEFAULT, SORT_RECENT, SORT_REVIEW, cardNoteCount, clearDashCache, countNotesBySet, dashScrollOf, filterCards, lastStudiedOf,
+  loadSortMode, readDashCache, relativeDay, saveSortMode, sortCards, studySummary, summaryText, writeDashCache, writeDashScroll,
 } from '../../src/utils/dashboard.js';
+import { HOME, folderLabel, normalizePlace, placeKey } from '../../src/utils/folders.js';
 
 // 이 기기 시각 기준(시험 PC 의 시간대와 무관하게): 같은 날 자정 언저리도 달력 날짜로
 const at = (y, m, d, h = 12, mi = 0) => new Date(y, m - 1, d, h, mi);
@@ -51,6 +52,17 @@ test('filterCards: 제목·과목·하드 제목, 대소문자 무시, 낱말 �
   assert.deepEqual(titles('없는말'), []);
 });
 
+test("filterCards: 카드에 보이는 폴더 표로도 찾기 — 보관 카드는 subject 가 '[보관] …' 이라도 '보관함'으로", () => {
+  const archived = { set: { id: 5, title: '[Notion] 옛 쪽', subject: '[보관] 양액·배지' }, hard: null };
+  const list = [...cards, archived];
+  const label = (c) => folderLabel(c);
+  assert.deepEqual(filterCards(list, '보관함').map((c) => c.set.id), []); // 표 없이는 안 맞음(날 subject 는 '[보관] …')
+  assert.deepEqual(filterCards(list, '보관함', label).map((c) => c.set.id), [5]);
+  assert.deepEqual(filterCards(list, '양액·배지', label).map((c) => c.set.id), [5]); // 원래 폴더는 날 subject 로 그대로 맞음
+  assert.deepEqual(filterCards(list, '병해충·방제', label).map((c) => c.set.id), [8]); // 폴더 카드는 폴더 이름
+  assert.deepEqual(filterCards(list, '', label).length, 4);
+});
+
 test('sortCards: 기본은 그대로, 최근 공부 순은 늦은 것부터 · 기록 없는 것은 뒤에 원래 순서', () => {
   const map = { 26: '2026-10-21T01:00:00.000Z', 8: '2026-10-21T05:00:00.000Z' };
   assert.equal(sortCards(cards, SORT_DEFAULT, map), cards);
@@ -72,16 +84,51 @@ test('countNotesBySet·cardNoteCount: 미해결 메모 수(하드 짝 더함, �
 test('목록 기억: 사용자별, 지우면 없음', () => {
   clearDashCache();
   assert.equal(readDashCache('a'), null);
-  writeDashCache('a', { sets: [1], scrollY: 300 });
-  assert.deepEqual(readDashCache('a'), { username: 'a', sets: [1], openNotes: null, scrollY: 300 });
+  writeDashCache('a', { sets: [1] });
+  writeDashScroll('a', 'home', 300);
+  assert.deepEqual(readDashCache('a'), { username: 'a', sets: [1], openNotes: null, place: null, query: '', scrollByPlace: { home: 300 } });
   assert.equal(readDashCache('b'), null);
-  writeDashCache('a', { scrollY: 10 });
-  assert.equal(readDashCache('a').scrollY, 10);
+  writeDashScroll('a', 'home', 10);
+  assert.equal(dashScrollOf(readDashCache('a'), 'home'), 10);
   assert.deepEqual(readDashCache('a').sets, [1]);
   writeDashCache('b', { sets: [] }); // 다른 사용자가 쓰면 앞 사용자 것은 버림
   assert.equal(readDashCache('a'), null);
   clearDashCache();
   assert.equal(readDashCache('b'), null);
+});
+
+test('목록 기억: 보던 자리·찾기 글·자리별 스크롤 — 폴더에서 풀고 돌아오면 그 폴더 그 자리, 목록으로 나오면 목록의 그 자리', () => {
+  clearDashCache();
+  const folder = { kind: 'folder', name: '양액·배지' };
+  writeDashCache('a', { sets: [{ id: 1 }] });
+  writeDashScroll('a', placeKey(HOME), 820); // 폴더 목록을 내려 보다가
+  writeDashCache('a', { place: folder, query: '' }); // 폴더로 들어가
+  writeDashScroll('a', placeKey(folder), 240); // 폴더 안을 내려 풀기로
+  const back = readDashCache('a'); // 풀기 → 뒤로: 첫 그림 전에 읽는 값
+  assert.deepEqual(normalizePlace(back.place), folder);
+  assert.equal(dashScrollOf(back, placeKey(back.place)), 240);
+  assert.equal(dashScrollOf(back, placeKey(HOME)), 820); // ← 로 목록에 나오면 목록의 그 자리
+  assert.equal(dashScrollOf(back, 'folder:가본 적 없음'), 0); // 처음 여는 자리는 맨 위
+  writeDashCache('a', { place: HOME, query: '습도' });
+  assert.deepEqual(readDashCache('a').place, HOME);
+  assert.equal(readDashCache('a').query, '습도');
+  assert.deepEqual(readDashCache('a').sets, [{ id: 1 }]); // 하드 짝을 찾는 전체 목록은 그대로
+  clearDashCache();
+});
+
+test('목록 기억: 이상한 자리·스크롤 값은 첫 화면·맨 위로(오래된 기억 때문에 빈 화면이 되지 않게)', () => {
+  clearDashCache();
+  writeDashCache('a', { place: { kind: 'folder', name: '   ' } });
+  assert.equal(normalizePlace(readDashCache('a').place), HOME);
+  writeDashCache('a', { place: { kind: 'none' } });
+  assert.equal(normalizePlace(readDashCache('a').place), HOME);
+  assert.equal(normalizePlace(readDashCache('b')?.place), HOME); // 다른 사용자(기억 없음)
+  writeDashScroll('a', 'home', -5);
+  assert.equal(dashScrollOf(readDashCache('a'), 'home'), 0);
+  writeDashScroll('a', 'home', Number.NaN);
+  assert.equal(dashScrollOf(readDashCache('a'), 'home'), 0);
+  assert.equal(dashScrollOf(null, 'home'), 0);
+  clearDashCache();
 });
 
 test('sortCards: 복습 차례는 공부한 지 오래된 것부터 · 공부한 적 없는 것은 뒤에 원래 순서(하드 짝은 늦은 쪽)', () => {

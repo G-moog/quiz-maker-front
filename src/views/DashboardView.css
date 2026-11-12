@@ -60,3 +60,576 @@
     word-spacing: -1.5px;
   }
 }
+
+/* ── 문제집 폴더(utils/folders.js) ──
+   휴대폰(412px)을 먼저 맞추고, 넓은 화면(태블릿 가로·PC)은 폴더 줄을 두세 줄로 나란히. 누르는 곳은 모두 40px 이상 */
+
+/* 폴더 목록(첫 화면): '복습 차례 ›' 한 줄 + 폴더 줄 + '+ 새 폴더' */
+.qm-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.qm-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+  gap: 8px;
+}
+.qm-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 54px;
+  padding: 9px 10px 9px 14px;
+  background: #1a1a1a;
+  border: 1px solid #2e2e2e;
+  border-radius: 10px;
+  color: #f1f1f1;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+/* 이름 옆에 통계 — 모자라면 통계가 이름 아래 줄로 내려간다(가로 넘침 없이) */
+.qm-folder-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.qm-folder-name {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.qm-folder-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 5px;
+  row-gap: 2px;
+  font-size: 12px;
+  color: #8a8a8a;
+  white-space: nowrap;
+}
+.qm-folder-notes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  height: 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(245, 158, 11, 0.12);
+  color: #f5b544;
+}
+.qm-folder-new {
+  padding: 0 5px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(52, 211, 153, 0.14);
+  color: #34d399;
+}
+.qm-folder-chev {
+  flex-shrink: 0;
+  color: #6b6b6b;
+  font-size: 20px;
+  line-height: 1;
+}
+.qm-folder-row--inbox {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.qm-folder-row--archive {
+  opacity: 0.6;
+}
+.qm-review-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px 8px 14px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 10px;
+  color: #f1f1f1;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.qm-review-label {
+  flex-shrink: 0;
+  color: #f59e0b;
+  font-size: 14px;
+  font-weight: 700;
+}
+.qm-review-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #d0d0d0;
+}
+.qm-review-when {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+.qm-new-folder {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  background: none;
+  border: 1px dashed #3a3a3a;
+  border-radius: 10px;
+  color: #a0a0a0;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.qm-new-folder--flat {
+  margin-top: 12px;
+}
+/* 폴더가 없는 평평한 목록 아래의 '보관함' 한 줄 */
+.qm-folders--flat {
+  margin-top: 12px;
+}
+/* 마우스에서만 올림 효과(휴대폰에서 누른 뒤 테두리가 남지 않게 — 카드와 같은 규칙) */
+@media (hover: hover) and (pointer: fine) {
+  .qm-folder-row:hover,
+  .qm-review-row:hover {
+    border-color: #f59e0b;
+  }
+  .qm-new-folder:hover {
+    border-color: #f59e0b;
+    color: #f59e0b;
+  }
+}
+@media (min-width: 721px) {
+  .qm-new-folder {
+    width: auto;
+    min-width: 220px;
+    align-self: flex-start;
+  }
+}
+
+/* 폴더 보기 머리: ← 이름(남은 폭, 길면 '…') · [고르기] · ⋯ */
+.qm-place-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 10px;
+}
+.qm-place-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 6px 0 0;
+  background: none;
+  border: none;
+  color: #f1f1f1;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+.qm-place-arrow {
+  flex-shrink: 0;
+  color: #a0a0a0;
+  font-size: 18px;
+}
+.qm-place-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qm-place-count {
+  flex-shrink: 0;
+  color: #8a8a8a;
+  font-size: 13px;
+  font-weight: 600;
+}
+.qm-place-btn {
+  flex-shrink: 0;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 14px;
+  background: #242424;
+  border: 1px solid #2e2e2e;
+  border-radius: 7px;
+  color: #d0d0d0;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.qm-place-btn[aria-pressed="true"] {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #f59e0b;
+}
+.qm-place-more {
+  padding: 0 10px;
+  font-size: 16px;
+  line-height: 1;
+}
+.qm-unmerged {
+  margin: -6px 0 10px;
+  font-size: 12px;
+  color: #8a8a8a;
+}
+
+/* 카드 제목 앞의 작은 표('통합본') — 실제 제목의 '[통합본] ' 을 줄여 보인 것 */
+.qm-title-tag {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 4px;
+  color: #f5b544;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+/* 보관함 카드(보관함 보기·찾기 결과): 흐리게 */
+.qm-card--dim {
+  opacity: 0.6;
+}
+.qm-card--dim.qm-card--picked {
+  opacity: 0.9;
+}
+/* 고르기 모드: 카드 전체가 고르기 단추. ✏ ✕ 자리에 ✓ 동그라미(자리는 그대로 — 제목 줄이 움직이지 않게) */
+.qm-card--selecting .qm-card-icons {
+  visibility: hidden;
+}
+.qm-card--picked {
+  outline: 2px solid #f59e0b;
+  outline-offset: -2px;
+}
+.qm-card-pick {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+.qm-card--picked .qm-card-pick {
+  background: rgba(245, 158, 11, 0.07);
+}
+.qm-card-pick:focus-visible {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+}
+.qm-pick-mark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #6b6b6b;
+  border-radius: 50%;
+  background: #0f0f0f;
+  color: transparent;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1;
+}
+.qm-card--picked .qm-pick-mark {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #000;
+}
+
+/* 아래 고정 막대(고르기 · 쓰는 중 n/N · 일부 실패). 본문은 막대만큼 아래 여백을 더 둔다(마지막 카드가 가리지 않게) —
+   막대 높이는 SelectBar 가 재서 --qm-bar-h 로 알린다(오류 글이 길어 여러 줄이 되어도 그만큼. 아래 안전 여백 포함). 재기 전에는 넉넉히.
+   겹침 차례: 화면 잠금(80) < 막대(90) < 창(100 — 옮길 곳 고르기 창이 열리면 막대 단추는 창 뒤로) < 토스트(300) */
+.qm-dash-body.qm-dash-body--bar {
+  padding-bottom: calc(var(--qm-bar-h, calc(90px + env(safe-area-inset-bottom, 0px))) + 20px);
+}
+.qm-select-bar {
+  position: fixed;
+  z-index: 90;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 10px calc(16px + env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+  background: #1a1a1a;
+  border-top: 1px solid #2e2e2e;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.5);
+}
+.qm-select-bar--error {
+  border-top-color: rgba(248, 113, 113, 0.5);
+}
+.qm-select-bar-in {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  width: 100%;
+  max-width: 760px;
+}
+.qm-select-bar-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #f1f1f1;
+  font-size: 14px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.qm-select-bar--error .qm-select-bar-text {
+  color: #f87171;
+  font-size: 13px;
+  font-weight: 600;
+}
+.qm-select-bar-count {
+  margin-left: 6px;
+  color: #f59e0b;
+}
+.qm-select-bar-btns {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.qm-bar-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  background: #242424;
+  border: 1px solid #2e2e2e;
+  border-radius: 7px;
+  color: #d0d0d0;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.qm-bar-btn--main {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: #000;
+}
+.qm-bar-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.qm-bar-progress {
+  flex: 1 1 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: #2e2e2e;
+  overflow: hidden;
+}
+.qm-bar-progress > div {
+  height: 100%;
+  background: #f59e0b;
+  transition: width 0.2s ease;
+}
+/* 쓰는 동안 화면 잠금(막대만 보임). 일부 실패 막대가 떠 있는 동안에도 잠근다('다시'·'닫기'만 — 고른 카드·자리를 바꾸지 않게) */
+.qm-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: progress;
+}
+.qm-lock--failed {
+  cursor: default;
+}
+/* 좁은 휴대폰(360px 안팎): 막대 단추 여백을 줄여 '3개 골랐습니다'와 단추 셋이 한 줄에 */
+@media (max-width: 400px) {
+  .qm-select-bar {
+    padding-left: calc(12px + env(safe-area-inset-left, 0px));
+    padding-right: calc(12px + env(safe-area-inset-right, 0px));
+  }
+  .qm-bar-btn {
+    padding: 0 10px;
+  }
+}
+
+/* 폴더 칩(새 문제집·✏ 수정 창의 '폴더') */
+.qm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.qm-chip {
+  max-width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  background: #242424;
+  border: 1px solid #2e2e2e;
+  border-radius: 20px;
+  color: #d0d0d0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.qm-chip--on {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+.qm-chip--new {
+  border-style: dashed;
+}
+.qm-chip--archive:not(.qm-chip--on) {
+  color: #8a8a8a;
+}
+
+/* 옮길 곳 고르기 창 */
+.qm-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.qm-pick-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  /* 위아래 여백: 긴 폴더 이름(40자)이 두 줄이 되어도 글이 테두리에 붙지 않게(한 줄이면 높이 44px 그대로) */
+  padding: 8px 14px;
+  background: #242424;
+  border: 1px solid #2e2e2e;
+  border-radius: 8px;
+  color: #f1f1f1;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.qm-pick-option:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.qm-pick-option--new {
+  justify-content: center;
+  background: none;
+  border-style: dashed;
+  color: #a0a0a0;
+}
+.qm-pick-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.qm-pick-here {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+.qm-pick-new {
+  padding-top: 4px;
+}
+
+/* 새 폴더 창의 넣을 문제집 목록(창 안에서 따로 스크롤 — 아래 만들기 단추가 늘 보이게) */
+.qm-check-list {
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
+  margin-bottom: 12px;
+  border: 1px solid #2e2e2e;
+  border-radius: 8px;
+}
+.qm-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #242424;
+  color: #d0d0d0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.qm-check-row:last-child {
+  border-bottom: none;
+}
+.qm-check-row--on {
+  background: rgba(245, 158, 11, 0.08);
+  color: #f1f1f1;
+}
+.qm-check-row input {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  accent-color: #f59e0b;
+}
+.qm-check-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.qm-check-folder {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+/* ✕ 창: 지울 문제집 이름과 세로로 쌓은 단추 셋 */
+.qm-del-name {
+  margin: 6px 0 10px;
+  color: #f1f1f1;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.qm-del-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* 글 안의 작은 단추('그 폴더로'·'폴더 목록으로') — 누르는 자리는 위아래로 넓힌다 */
+.qm-link-btn {
+  padding: 10px 2px;
+  margin: -10px 0;
+  background: none;
+  border: none;
+  color: #f59e0b;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
