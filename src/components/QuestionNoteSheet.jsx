@@ -618,8 +618,10 @@ export default function QuestionNoteSheet({ info: freshInfo, start = null, onClo
     ? { ...S.overlay, top: box.top, bottom: "auto", height: box.height, ...(box.keyboard ? { paddingTop: 8, paddingBottom: 8 } : {}) }
     : S.overlay;
 
+  // data-ink-guard-free: 필기 모드의 '펜 뒤 손가락 click 막기'(태블릿 프로필 HAND_TAP_AFTER_PEN_MS)를 받지 않음 —
+  // 펜으로 쓴 뒤 손가락으로 '저장'을 바로 누르게(손바닥 무시는 그대로)
   return (
-    <div style={overlayStyle} onClick={onOverlayClick}>
+    <div style={overlayStyle} onClick={onOverlayClick} data-ink-guard-free="">
       <div
         ref={sheetRef}
         style={S.sheet}

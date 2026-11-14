@@ -1,4 +1,4 @@
-// 필기(S펜) 계산 — DOM·React 없이 값만 다루는 순수 함수와 상수.
+// 필기(펜) 계산 — DOM·React 없이 값만 다루는 순수 함수와 상수.
 // 단위: 좌표 px(필기 영역 왼쪽 위 기준), 시간 ms, 속도 px/ms. 점 하나 = [x, y, 누르는 힘(0~1)]
 // (실제 태블릿으로 아직 재 보지 못한 문턱값은 모두 여기 이름 붙은 상수로 둔다 — ?pentest 로 재고 고친다)
 
@@ -33,33 +33,64 @@ export const SCROLL_TAP_GUARD_MS = 300;
 // 페이지가 아직 움직이는 중(마지막 scroll 이벤트가 이 ms 안)에 닿은 손가락도 '멈추는 터치'
 export const SCROLL_MOVING_MS = 120;
 
+// ── 태블릿별 입력 판정 값(펜·손 가르기) ──
+// GALAXY = 지금까지 쓰던 값 그대로(위 상수 자체 — 시험 ink-tablet 이 지킨다). 다른 태블릿은 다른 값만 덮어쓴다.
+// 0 인 값(HAND_TAP_AFTER_PEN_MS·PEN_BOUNCE_MS·PEN_OVERLAP_BLOCK)은 그 규칙을 쓰지 않음 — 갤럭시는 모두 0
+export const GALAXY = Object.freeze({
+  id: "galaxy",
+  TAP_SLOP, PEN_BLANK_TAP_SLOP, TAP_MS, DOUBLE_TAP_MS, PALM_MS, PALM_SAFE_MS, PEN_STUCK_MS, PEN_HELD_MAX_MS,
+  TOUCH_SLOP, PALM_CONTACT_PX,
+  PEN_TOUCH_MS: 100, // 펜이 함께 보낸 touch: 펜 pointerdown 뒤 이 ms 안 ……
+  PEN_TOUCH_PX: 2, //   …… 같은 자리(±px) (InkInput.isPenTouch — 예전 숫자 그대로)
+  ERASER_BUTTONS: 34, // 펜 buttons 중 지우개로 볼 비트(2 = 옆 단추, 32 = 지우개 끝)
+  HAND_TAP_AFTER_PEN_MS: 0, // 펜을 쓴 뒤(뗌·호버) 이 ms 동안 손가락 click 을 받지 않음(스크롤은 됨, 머리 줄·[data-ink-guard-free] 제외)
+  PEN_BOUNCE_MS: 0, // 펜 콕을 뗀 뒤 이 ms 안에 같은 빈칸에 다시 닿으면 촉이 튄 것 — 같은 콕으로 합침
+  PEN_OVERLAP_BLOCK: 0, // 1 이면 펜이 닿는 순간 이미 닿아 있던 손(머리 줄 밖)의 click 을 막음
+});
+// 레노버 Y700 5세대(리전탭, TB323FU) + 펜 AP501U(탭 펜 플러스, 액티브 정전식). 실측 전 처음 값 — ?pentest 로 고친다
+export const Y700 = Object.freeze({
+  ...GALAXY,
+  id: "y700",
+  PALM_MS: 700, // 호버가 없거나 짧아도 펜을 뗀 뒤 손바닥을 조금 더 오래 막게
+  PALM_CONTACT_PX: 42, // 크기 눈금을 모름 — 손가락을 손바닥으로 잘못 보는 쪽(영역 손 입력이 모두 죽음)으로 틀리지 않게
+  HAND_TAP_AFTER_PEN_MS: 1000,
+  PEN_BOUNCE_MS: 50,
+  PEN_OVERLAP_BLOCK: 1,
+});
+export const TABLET_PROFILES = Object.freeze({ galaxy: GALAXY, y700: Y700 });
+// id → 값 묶음. 모르는 값('__proto__' 포함)은 GALAXY
+export function profileOf(id) {
+  return typeof id === "string" && Object.hasOwn(TABLET_PROFILES, id) ? TABLET_PROFILES[id] : GALAXY;
+}
+
 export function distance(ax, ay, bx, by) {
   return Math.hypot(bx - ax, by - ay);
 }
 
 // 콕으로 볼 움직임 한도: 빈칸 위에서 시작한 펜만 넓게(두 번 콕), 나머지는 TAP_SLOP
-export function tapSlop(pointerType, onBlank) {
-  return pointerType === "pen" && onBlank ? PEN_BLANK_TAP_SLOP : TAP_SLOP;
+export function tapSlop(pointerType, onBlank, prof = GALAXY) {
+  return pointerType === "pen" && onBlank ? prof.PEN_BLANK_TAP_SLOP : prof.TAP_SLOP;
 }
 
 // 펜·마우스로 누른 것이 '콕'인가 (moved: 처음 누른 곳에서 가장 멀리 간 거리, slop: tapSlop)
 // 펜은 시간 한도(TAP_MS)를 늘 본다 — 짧고 느린 선이 콕으로 바뀌지 않게
-export function isTap(moved, ms, pointerType, slop = TAP_SLOP) {
-  return moved < slop && (pointerType === "mouse" || ms < TAP_MS);
+export function isTap(moved, ms, pointerType, slop, prof = GALAXY) {
+  const s = slop ?? prof.TAP_SLOP;
+  return moved < s && (pointerType === "mouse" || ms < prof.TAP_MS);
 }
 
 // 두 번 콕: 같은 빈칸을 콕(prev) → DOUBLE_TAP_MS 안에 다시 콕(tap). 콕 = { blank, downAt, upAt }
-export function isDoubleTap(prev, tap) {
+export function isDoubleTap(prev, tap, prof = GALAXY) {
   if (!prev || tap.blank == null || prev.blank !== tap.blank) return false;
   const gap = tap.downAt - prev.upAt;
-  return gap >= 0 && gap <= DOUBLE_TAP_MS;
+  return gap >= 0 && gap <= prof.DOUBLE_TAP_MS;
 }
 
 // 접촉이 손바닥만큼 큰가(크기를 모르면 0·1 — 아님)
-export function isLargeContact(w, h) {
+export function isLargeContact(w, h, prof = GALAXY) {
   const a = Number.isFinite(w) ? w : 0;
   const b = Number.isFinite(h) ? h : 0;
-  return Math.max(a, b) > PALM_CONTACT_PX;
+  return Math.max(a, b) > prof.PALM_CONTACT_PX;
 }
 
 // 손가락이 닿은 때(now)가 스크롤을 멈추는 터치인가: 관성이 돌던 중(gliding), 두 손가락 스크롤·관성이 끝난 지
@@ -75,11 +106,23 @@ export function tapBlockedByScroll({ gliding = false, now, scrollEndAt = -Infini
 //   그 뒤에 펜이 공중에 떠 있다는 신호(lastPenAir: buttons 0 인 펜 움직임 = 호버)가 왔으면 닿아 있지 않은 것(떼기를 놓침) —
 //   이때는 호버 규칙(PALM_MS)만 남는다. 손바닥 판정에만 쓰고 긋던 선은 건드리지 않는다
 // safe(머리 줄·도구 막대): 펜이 닿아 있거나 뗀 직후(PALM_SAFE_MS)만 — 펜을 든 손으로도 단추를 누를 수 있게
-export function palmBlocked({ penDown, lastPenDown, lastPenHover = -Infinity, lastPenUp = -Infinity, penActiveAt = null, lastPenAir = -Infinity }, now, safe = false) {
-  const held = penActiveAt != null && !(lastPenAir > penActiveAt) && now - penActiveAt < PEN_HELD_MAX_MS;
-  const down = held || (!!penDown && (lastPenDown === undefined || now - Math.max(lastPenDown, lastPenHover) < PEN_STUCK_MS));
-  if (safe) return down || now - lastPenUp < PALM_SAFE_MS;
-  return down || now - lastPenHover < PALM_MS || now - lastPenUp < PALM_MS;
+export function palmBlocked({ penDown, lastPenDown, lastPenHover = -Infinity, lastPenUp = -Infinity, penActiveAt = null, lastPenAir = -Infinity }, now, safe = false, prof = GALAXY) {
+  const held = penActiveAt != null && !(lastPenAir > penActiveAt) && now - penActiveAt < prof.PEN_HELD_MAX_MS;
+  const down = held || (!!penDown && (lastPenDown === undefined || now - Math.max(lastPenDown, lastPenHover) < prof.PEN_STUCK_MS));
+  if (safe) return down || now - lastPenUp < prof.PALM_SAFE_MS;
+  return down || now - lastPenHover < prof.PALM_MS || now - lastPenUp < prof.PALM_MS;
+}
+
+// 펜을 쓴 직후 손가락 click 을 막는가(HAND_TAP_AFTER_PEN_MS — 갤럭시 0 = 늘 아님). 마지막 펜 뗌·펜 움직임(호버 포함)에서 센다
+export function handTapGuarded({ lastPenUp = -Infinity, lastPenHover = -Infinity }, now, prof = GALAXY) {
+  return prof.HAND_TAP_AFTER_PEN_MS > 0 && now - Math.max(lastPenUp, lastPenHover) < prof.HAND_TAP_AFTER_PEN_MS;
+}
+
+// 펜 콕(tap)이 바로 앞 펜 콕(prev)에서 촉이 튄 것인가 — 같은 빈칸, 뗀 뒤 PEN_BOUNCE_MS 안에 다시 닿음(갤럭시 0 = 늘 아님)
+export function isPenBounce(prev, tap, prof = GALAXY) {
+  if (!(prof.PEN_BOUNCE_MS > 0) || !prev || tap.blank == null || prev.blank !== tap.blank) return false;
+  const gap = tap.downAt - prev.upAt;
+  return gap >= 0 && gap < prof.PEN_BOUNCE_MS;
 }
 
 // ── 두 손가락 스크롤 ──

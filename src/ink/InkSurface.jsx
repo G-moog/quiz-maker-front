@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyn
 import { DRAW_SCALE, DRAW_TRANSFORM, HL_OPACITY, centerlinePath, chunkStrokes, outlinePath } from "./geometry";
 import { oldStrokes, visibleStrokes } from "./inkStore";
 import { InkInput } from "./InkInput";
+import { profileNow } from "./tablet";
 
 // 필기 영역: 문항 본문을 감싸는 div. 필기 층이 켜지면(layerOn: 필기 모드 켬, 또는 이 문항에 보여 줄 필기가 있음)
 // 본문 위아래에 SVG 층을 겹친다 — 형광펜은 글자 아래(z-index -1, 글자를 덮지 않아 그대로 읽힘), 펜은 글자 위.
@@ -113,6 +114,7 @@ export default function InkSurface({ store, enabled, layerOn, onBlankTap, onEven
       onBlankTap: (i) => hooks.current.onBlankTap?.(i),
       onEvent: (type, detail) => hooks.current.onEvent?.(type, detail),
       livePath: (kind) => live.current[kind],
+      profile: profileNow, // 태블릿 프로필(이벤트마다 읽음 — 고르면 바로 적용, 다시 붙이지 않음)
     });
     input.attach();
     return () => input.detach();

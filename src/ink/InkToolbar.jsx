@@ -1,7 +1,10 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { PEN_COLORS, HL_COLOR } from "./geometry";
 import { canRedo, canUndo, visibleStrokes } from "./inkStore";
 import { shortcutOf } from "./inkMode";
+import { profileNow, tabletOf, tabletStore } from "./tablet";
+import { useLongPress } from "./longPress";
+import TabletPicker from "./TabletPicker";
 import { EraserIcon, EyeIcon, HighlighterIcon, PenIcon, RedoIcon, UndoIcon } from "./InkIcons";
 import { TrashIcon } from "../components/NoteIcons";
 import "./ink.css";
@@ -18,6 +21,7 @@ const S = {
     background: on ? "rgba(255,77,79,0.16)" : "transparent",
     border: `1px solid ${on ? "#ff4d4f" : "#3a3a3a"}`,
     color: on ? "#ff7a7c" : "#a0a0a0",
+    userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
   }),
   tool: (active) => ({
     display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
@@ -29,20 +33,42 @@ const S = {
   dot: (color) => ({ width: 18, height: 18, borderRadius: "50%", background: color, boxShadow: "0 0 0 1px rgba(0,0,0,0.4)" }),
 };
 
-export function InkModeButton({ on, onToggle }) {
+export function InkModeButton({ on, onToggle, onTabletChange }) {
+  const tablet = useSyncExternalStore(tabletStore.subscribe, tabletStore.get);
+  const [picking, setPicking] = useState(false);
+  const press = useLongPress(profileNow);
+  const btnRef = useRef(null);
+  const hintId = useId();
+  const openPicker = useCallback(() => setPicking(true), []);
+  const closePicker = useCallback(() => setPicking(false), []);
+  function pick(id) {
+    setPicking(false);
+    if (id === tablet) return;
+    tabletStore.set(id);
+    onTabletChange?.(tabletOf(id).changed);
+  }
   return (
-    <button
-      type="button"
-      className="qm-ink-toggle"
-      style={S.toggle(on)}
-      onClick={onToggle}
-      aria-pressed={on}
-      aria-label="필기 모드"
-      title={on ? "필기 모드 끄기" : "필기 모드 켜기 — S펜으로 쓰기, 빈칸은 두 번 콕, 스크롤은 두 손가락"}
-    >
-      <PenIcon size={17} />
-      <span className="qm-ink-toggle-label">필기 모드</span>
-    </button>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className="qm-ink-toggle"
+        style={S.toggle(on)}
+        onClick={onToggle}
+        onPointerDown={(e) => press.down(e, openPicker)}
+        onTouchStart={press.touchStart}
+        onContextMenu={(e) => press.contextMenu(e, openPicker)}
+        aria-pressed={on}
+        aria-label="필기 모드"
+        aria-describedby={hintId}
+        title={on ? "필기 모드 끄기 (꾹 누르면 태블릿 고르기)" : "필기 모드 켜기 — 펜으로 쓰기, 빈칸은 두 번 콕, 스크롤은 두 손가락 (꾹 누르면 태블릿 고르기)"}
+      >
+        <PenIcon size={17} />
+        <span className="qm-ink-toggle-label">필기 모드</span>
+      </button>
+      <span id={hintId} hidden>꾹 누르면 태블릿 고르기</span>
+      {picking && <TabletPicker current={tablet} onPick={pick} onClose={closePicker} returnFocus={btnRef} />}
+    </>
   );
 }
 
@@ -129,7 +155,7 @@ export function InkToolbar({ store }) {
       >
         <EyeIcon off={s.hidden} />
       </ToolButton>
-      <span className="qm-ink-hint">S펜: 쓰기 · 빈칸 두 번 콕 &nbsp;|&nbsp; 손: 빈칸 한 번 · 두 손가락 스크롤</span>
+      <span className="qm-ink-hint">펜: 쓰기 · 빈칸 두 번 콕 &nbsp;|&nbsp; 손: 빈칸 한 번 · 두 손가락 스크롤</span>
     </div>
   );
 }

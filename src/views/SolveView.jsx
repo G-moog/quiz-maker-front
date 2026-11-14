@@ -512,7 +512,8 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   const [starMode, setStarMode] = useState(false); // ★ 표시 중: 빈칸을 누르면 열지 않고 ★ 를 달고 뗀다
   const [filterPre, setFilterPre] = useState(null); // ★만 가리기를 켰으면 켜기 전 연 빈칸 번호(끄면 되돌림), 꺼져 있으면 null
   const [counts, setCounts] = useState({}); // 지나온 빈칸 문항의 연 빈칸 수 { [문항 id]: 수 } — 결과 화면
-  // 필기 모드(S펜): 켬/끔은 이 기기에 기억(inkMode.js). 필기는 문항마다 이 기기(IndexedDB)에 — src/ink/
+  // 필기 모드(펜): 켬/끔은 이 기기에 기억(inkMode.js). 필기는 문항마다 이 기기(IndexedDB)에 — src/ink/
+  //  태블릿(펜·손을 가르는 기준)도 이 기기에 기억(ink/tablet.js) — '필기 모드' 단추를 꾹 눌러 고른다
   const [inkOn, setInkOn] = useState(loadInkMode);
   const [username] = useState(() => localStorage.getItem("username") || "");
   // 짝(보통 ↔ 하드) 문제집: { set, toHard, baseId } | null(짝 없음) | undefined(아직 모름 — 목록을 받아 봄).
@@ -1553,7 +1554,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
               {starCount > 0 && <span style={S.starToggleCount} aria-hidden="true">{starCount}</span>}
             </button>
           )}
-          {showing && <InkModeButton on={inkOn} onToggle={toggleInk} />}
+          {showing && <InkModeButton on={inkOn} onToggle={toggleInk} onTabletChange={(msg) => showToast(msg, "info")} />}
         </nav>
         {inkActive && <InkToolbar store={ink} />}
         <div style={S.progressBar} role="presentation">
