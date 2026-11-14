@@ -119,15 +119,20 @@ export function handTapGuarded({ lastPenUp = -Infinity, lastPenHover = -Infinity
   return prof.HAND_TAP_AFTER_PEN_MS > 0 && now - Math.max(lastPenUp, lastPenHover) < prof.HAND_TAP_AFTER_PEN_MS;
 }
 
-// 촉 튐의 접촉: 튄 쪽 접촉은 몇 ms 뿐이다. 사람의 콕은 빨라도 접촉마다 40ms 넘게 닿으므로, 두 접촉 중 하나가 이보다 짧을 때만 튐으로 본다
+// 촉 튐의 접촉: 튄 쪽 접촉은 몇 ms 뿐이다. 사람의 콕은 빨라도 접촉마다 40ms 넘게 닿으므로, 두 접촉 중 하나가 이보다 짧으면 튐으로 본다
 export const PEN_BOUNCE_CONTACT_MS = 30;
+// 사람은 펜을 뗀 뒤 이보다 빨리 다시 콕 하지 못한다(안드로이드 두 번 탭 최소 간격 DOUBLE_TAP_MIN_TIME 40ms) — 뗀 뒤 이 안에 다시 닿으면
+// 접촉 시간과 상관없이 튐(누르는 힘이 문턱 근처라 한 번 콕 가운데가 잠깐 끊긴 것: 45ms + 8ms 끊김 + 57ms 도 한 콕)
+export const PEN_RETAP_MIN_MS = 40;
 
-// 펜 콕(tap)이 바로 앞 펜 콕(prev)에서 촉이 튄 것인가 — 같은 빈칸, 뗀 뒤 PEN_BOUNCE_MS 안에 다시 닿음, 두 접촉 중 하나가
-// PEN_BOUNCE_CONTACT_MS 보다 짧음(뗀 뒤 곧바로 다시 닿은 진짜 빠른 두 번 콕은 튐이 아님). 콕 = { blank, downAt, upAt }. 갤럭시 0 = 늘 아님
+// 펜 콕(tap)이 바로 앞 펜 콕(prev)에서 촉이 튄 것인가 — 같은 빈칸, 뗀 뒤 PEN_BOUNCE_MS 안에 다시 닿았고
+//   ① 뗀 뒤 PEN_RETAP_MIN_MS 안에 다시 닿음, 또는 ② 두 접촉 중 하나가 PEN_BOUNCE_CONTACT_MS 보다 짧음.
+// 뗀 뒤 40ms 넘어 다시 닿은 진짜 빠른 두 번 콕(두 접촉 모두 30ms 넘음)은 튐이 아님. 콕 = { blank, downAt, upAt }. 갤럭시 0 = 늘 아님
 export function isPenBounce(prev, tap, prof = GALAXY) {
   if (!(prof.PEN_BOUNCE_MS > 0) || !prev || tap.blank == null || prev.blank !== tap.blank) return false;
   const gap = tap.downAt - prev.upAt;
-  return gap >= 0 && gap < prof.PEN_BOUNCE_MS && Math.min(prev.upAt - prev.downAt, tap.upAt - tap.downAt) < PEN_BOUNCE_CONTACT_MS;
+  if (!(gap >= 0 && gap < prof.PEN_BOUNCE_MS)) return false;
+  return gap < PEN_RETAP_MIN_MS || Math.min(prev.upAt - prev.downAt, tap.upAt - tap.downAt) < PEN_BOUNCE_CONTACT_MS;
 }
 
 // ── 두 손가락 스크롤 ──

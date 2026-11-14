@@ -107,21 +107,38 @@ test("isTap: slop 을 빼면(undefined) 프로필 TAP_SLOP, null 은 예전 기�
   assert.equal(G.isTap(5.99, 100, "mouse", undefined, Y700), true);
 });
 
-test("촉 튐은 두 접촉 중 하나가 아주 짧을 때만(PEN_BOUNCE_CONTACT_MS 30) — 뗀 뒤 40ms 에 다시 닿은 진짜 빠른 두 번 콕은 열림", () => {
+test("촉 튐: 뗀 뒤 40ms(PEN_RETAP_MIN_MS) 안에 다시 닿으면 접촉 시간과 상관없이, 40~50ms 는 두 접촉 중 하나가 30ms(PEN_BOUNCE_CONTACT_MS) 보다 짧을 때만 — 뗀 뒤 40ms 넘어 다시 닿은 진짜 빠른 두 번 콕은 열림", () => {
   const tap = (blank, downAt, upAt) => ({ blank, downAt, upAt });
   assert.equal(G.PEN_BOUNCE_CONTACT_MS, 30);
+  assert.equal(G.PEN_RETAP_MIN_MS, 40);
   assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 65, 70), Y700), true, "콕 + 5ms 뒤 튐(접촉 5ms) → 합침");
   assert.equal(G.isPenBounce(tap(2, 0, 4), tap(2, 20, 80), Y700), true, "닿는 순간 튐(접촉 4ms) 뒤 콕 → 합침");
-  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 100, 160), Y700), false, "각 60ms, 뗀 뒤 40ms → 튐 아님");
+  // 한 번 콕 가운데가 잠깐 끊김(누르는 힘이 문턱 근처) — 두 접촉 모두 30ms 넘어도 한 콕(사람은 뗀 뒤 40ms 안에 다시 콕 못 함)
+  assert.equal(G.isPenBounce(tap(2, 0, 45), tap(2, 53, 110), Y700), true, "가운데 끊김 45 + 8ms + 57 → 합침");
+  assert.equal(G.isPenBounce(tap(2, 0, 35), tap(2, 40, 80), Y700), true, "가운데 끊김 35 + 5ms + 40 → 합침");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 70, 100), Y700), true, "끊김 10ms 는 짧은 쪽이 30ms 여도 합침");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 99, 160), Y700), true, "끊김 39ms 까지는 접촉 시간과 상관없이 합침");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 100, 160), Y700), false, "각 60ms, 뗀 뒤 40ms → 튐 아님(진짜 빠른 두 번 콕)");
   assert.equal(G.isPenBounce(tap(2, 0, 40), tap(2, 80, 120), Y700), false, "각 40ms, 뗀 뒤 40ms → 튐 아님");
-  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 70, 99), Y700), true, "짧은 쪽 29ms");
-  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 70, 100), Y700), false, "짧은 쪽 30ms");
+  // 뗀 뒤 40~50ms: 두 접촉 중 하나가 30ms 보다 짧을 때만
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 100, 129), Y700), true, "뗀 뒤 40ms · 짧은 쪽 29ms → 튐");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 100, 130), Y700), false, "뗀 뒤 40ms · 짧은 쪽 30ms → 튐 아님");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 109, 112), Y700), true, "뗀 뒤 49ms · 짧은 쪽 3ms → 튐");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 110, 113), Y700), false, "뗀 뒤 50ms(PEN_BOUNCE_MS) → 튐 아님");
+  // PEN_BOUNCE_MS 가 40 보다 작으면 그 안만(창 자체는 프로필 값)
+  assert.equal(G.isPenBounce(tap(2, 0, 45), tap(2, 53, 110), { ...Y700, PEN_BOUNCE_MS: 30 }), true);
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 95, 160), { ...Y700, PEN_BOUNCE_MS: 30 }), false);
   assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 65, 70), GALAXY), false, "갤럭시(PEN_BOUNCE_MS 0)는 늘 아님");
-  // InkInput.penTap 차례(튐 → 두 번 콕): 빠른 두 번 콕은 튐이 아니고 두 번 콕
+  assert.equal(G.isPenBounce(tap(2, 0, 45), tap(2, 53, 110), GALAXY), false, "갤럭시는 가운데 끊김도 그대로(두 번 콕 — master 와 같음)");
+  // InkInput.penTap 차례(튐 → 두 번 콕): 빠른 두 번 콕은 튐이 아니고 두 번 콕, 가운데 끊김은 두 번 콕 판정 전에 합침
   const first = tap(2, 0, 60);
   const second = tap(2, 100, 160);
   assert.equal(G.isPenBounce(first, second, Y700), false);
   assert.equal(G.isDoubleTap(first, second, Y700), true);
+  const a = tap(2, 0, 45);
+  const b = tap(2, 53, 110);
+  assert.equal(G.isDoubleTap(a, b, Y700), true, "(합치지 않으면 두 번 콕으로 열렸을 차례)");
+  assert.equal(G.isPenBounce(a, b, Y700), true);
 });
 
 function fakeStorage(init = {}) {

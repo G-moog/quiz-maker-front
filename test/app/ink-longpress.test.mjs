@@ -3,7 +3,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { GALAXY, Y700 } from "../../src/ink/geometry.js";
-import { LONG_PRESS_BOUNCE_MS, LONG_PRESS_CLICK_MS, LONG_PRESS_VETO_MS, LongPress } from "../../src/ink/longPress.js";
+import { LONG_PRESS_BOUNCE_MS, LONG_PRESS_CLICK_MS, LONG_PRESS_SWALLOW_MAX_MS, LONG_PRESS_VETO_MS, LongPress } from "../../src/ink/longPress.js";
 
 function setup(prof = () => GALAXY) {
   let t = 1000;
@@ -283,6 +283,70 @@ test("창이 열린 뒤 뗄 때까지만 창 touchmove 를 막음(capture·passi
     assert.equal(s.of("touchmove").length, 0, "거부된 누름에는 붙지 않음");
     s.advance(LONG_PRESS_VETO_MS);
     assert.equal(s.live(), 0);
+  } finally { mock.timers.reset(); }
+});
+
+test("창을 연 뒤 떼기를 못 받음: 5초 한도에 누름도 끝냄 — 창 touchmove 막기·리스너 0(떼기 없이 온 click 을 삼켜도), 그 뒤 다른 손가락·늦은 떼기는 아무 일 없음, 다음 꾹은 그대로", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    for (const [name, prof, clickFirst] of [["galaxy", () => GALAXY, false], ["y700", () => Y700, false], ["galaxy·click", () => GALAXY, true], ["y700·click", () => Y700, true]]) {
+      const s = setup(prof);
+      s.down();
+      s.advance(500);
+      assert.deepEqual(s.log, ["OPEN"]);
+      assert.equal(s.ev("touchmove").defaultPrevented, true, `${name}: 열린 뒤 막음`);
+      if (clickFirst) {
+        // 떼기는 못 받았는데 click 은 옴(데스크톱 등) — 삼키기는 여기서 끝나도 누름의 한도는 그대로 남아야 함
+        s.advance(100);
+        assert.equal(s.click(), "swallowed");
+        assert.equal(s.of("click").length, 0, `${name}: 삼키기는 끝남`);
+      }
+      s.advance(LONG_PRESS_SWALLOW_MAX_MS + 49 - (clickFirst ? 100 : 0)); // 창이 열린 지 5049ms
+      assert.equal(s.ev("touchmove").defaultPrevented, true, `${name}: 한도 전까지는 막음(아직 누르는 중일 수 있음)`);
+      s.advance(1);
+      assert.equal(s.live(), 0, `${name}: 한도에 창 리스너 0(누름·삼키기·touchmove 막기 모두)`);
+      assert.equal(s.of("touchmove").length, 0);
+      assert.equal(s.ev("touchmove").defaultPrevented, false, `${name}: 한 손가락 스크롤이 다시 됨`);
+      assert.equal(s.click(), "passed");
+      // 다른 손가락이 페이지를 누르고 뗌, 이어서 놓친 줄 알았던 그 손가락의 떼기가 늦게 옴 — 창 리스너가 다시 붙지 않고 click 도 그대로
+      s.ev("pointerdown", { pointerId: 2, pointerType: "touch", clientX: 300, clientY: 600 });
+      s.ev("pointerup", { pointerId: 2, pointerType: "touch", clientX: 300, clientY: 600 });
+      s.ev("pointerup", { pointerId: 1, pointerType: "touch", clientX: 50, clientY: 20 });
+      assert.equal(s.live(), 0);
+      assert.equal(s.click(), "passed", `${name}: 늦은 떼기 뒤 click 도 그대로`);
+      s.advance(60000);
+      assert.equal(s.ev("touchmove").defaultPrevented, false, `${name}: 1분 뒤에도 막지 않음`);
+      assert.deepEqual(s.log, ["OPEN"]);
+      // 다음 꾹은 그대로(열고, 뗀 click 하나 삼키고, 끝나면 리스너 0)
+      s.down();
+      s.advance(500);
+      assert.deepEqual(s.log, ["OPEN", "OPEN"]);
+      assert.equal(s.ev("touchmove").defaultPrevented, true);
+      s.ev("pointerup", { pointerId: 1, pointerType: "touch", clientX: 50, clientY: 20 });
+      assert.equal(s.ev("touchmove").defaultPrevented, false, "뗀 뒤 바로 풂");
+      assert.equal(s.click(), "swallowed");
+      s.advance(LONG_PRESS_CLICK_MS + 100);
+      assert.equal(s.live(), 0);
+    }
+  } finally { mock.timers.reset(); }
+});
+
+test("떼기를 받은 꾹은 5초 한도와 상관없음: 뗄 때 한도 타이머를 풀고 뗀 뒤 짧은 삼키기만(350ms 에 창 리스너 0)", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const s = setup();
+    s.down();
+    s.advance(500);
+    s.advance(4000); // 4초 동안 누르고 있다가 뗌
+    assert.equal(s.ev("touchmove").defaultPrevented, true);
+    s.ev("pointerup", { pointerId: 1, pointerType: "touch", clientX: 50, clientY: 20 });
+    assert.equal(s.of("touchmove").length, 0);
+    assert.equal(s.click(), "swallowed");
+    s.advance(LONG_PRESS_CLICK_MS + 50);
+    assert.equal(s.live(), 0, "뗀 뒤 350ms 에 모두 떨어짐");
+    s.advance(LONG_PRESS_SWALLOW_MAX_MS);
+    assert.equal(s.live(), 0);
+    assert.equal(s.click(), "passed");
   } finally { mock.timers.reset(); }
 });
 

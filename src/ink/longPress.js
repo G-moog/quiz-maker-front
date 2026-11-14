@@ -15,12 +15,13 @@ import { GALAXY } from "./geometry.js";
 //    (InkInput 도 머리 줄에서는 크기를 보지 않는다)
 //  - 창이 열린 뒤 누르던 손가락을 끌어도 뒤 페이지가 스크롤되지 않게 뗄 때까지 창 touchmove 를 막는다(열리기 전에는 막지 않음 —
 //    단추에서 끌어 스크롤하는 것은 그대로).
-//  - 창 리스너는 누르는 동안·삼키는 동안에만 붙는다(필기 모드를 끈 화면에 창 리스너를 남기지 않음).
+//  - 창 리스너는 누르는 동안·삼키는 동안에만 붙는다(필기 모드를 끈 화면에 창 리스너를 남기지 않음). 창을 연 뒤 떼기(pointerup·pointercancel)를
+//    LONG_PRESS_SWALLOW_MAX_MS 안에 못 받으면 떼기를 놓친 것으로 보고 누름도 끝낸다 — touchmove 막기가 남아 페이지 스크롤이 죽지 않게.
 // 여는 함수(open)는 누를 때마다 넘긴다 — 인스턴스가 콜백·ref 를 들고 있지 않게(react-hooks/refs 규칙)
 export const LONG_PRESS_MS = 500;
 export const LONG_PRESS_MOVE_PX = 10; // 손가락·마우스: 이만큼 움직이면 거부. 펜은 max(이 값, 프로필 PEN_BLANK_TAP_SLOP)
 export const LONG_PRESS_CLICK_MS = 300; // 뗀 뒤 이만큼 안의 click 하나를 삼킨다(크롬이 click 을 보내면 바로 옴)
-export const LONG_PRESS_SWALLOW_MAX_MS = 5000; // 떼기를 못 받아도 이만큼 뒤에는 삼키기를 끝낸다
+export const LONG_PRESS_SWALLOW_MAX_MS = 5000; // 떼기를 못 받아도 이만큼 뒤에는 삼키기·touchmove 막기를 끝낸다(누름도 끝냄)
 export const LONG_PRESS_VETO_MS = 3000;
 export const LONG_PRESS_BOUNCE_MS = 120; // 창을 연 누름을 뗀 뒤 이 안에 뗀 자리로 다시 온 같은 종류의 누름 = 촉 튐
 export const LONG_PRESS_BOUNCE_PX = 12; // 촉 튐 자리 한도: max(이 값, 프로필 PEN_BLANK_TAP_SLOP)
@@ -49,8 +50,9 @@ export class LongPress {
     this.swallowing = false;
     this.swallowEnd = 0;
     this.swallowTimer = 0;
+    this.holdTimer = 0; // 창을 연 누름의 떼기를 기다리는 한도(LONG_PRESS_SWALLOW_MAX_MS) — 삼키기 타이머와 따로(click 을 삼켜도 그대로)
     this.lastUp = null; // 창을 연 누름을 뗀 자리·때 { type, x, y, t } — 촉 튐 판정
-    for (const k of ["down", "onWin", "touchStart", "contextMenu", "fire", "onSwallow", "onMouseDown", "onRepress", "onTouchMove", "disarm"]) this[k] = this[k].bind(this);
+    for (const k of ["down", "onWin", "touchStart", "contextMenu", "fire", "onSwallow", "onMouseDown", "onRepress", "onTouchMove", "expire", "disarm"]) this[k] = this[k].bind(this);
   }
 
   // 단추 onPointerDown(e, 여는 함수)
@@ -126,8 +128,10 @@ export class LongPress {
     p.fired = true;
     clearTimeout(this.timer);
     this.arm(LONG_PRESS_SWALLOW_MAX_MS);
-    // 창이 열린 뒤 누르던 손가락을 끌면 덮개 뒤 페이지가 스크롤된다(이 터치의 touch-action 은 머리 줄 것) — 뗄 때까지 막는다
+    // 창이 열린 뒤 누르던 손가락을 끌면 덮개 뒤 페이지가 스크롤된다(이 터치의 touch-action 은 머리 줄 것) — 뗄 때까지 막는다.
+    // 떼기를 못 받으면 같은 한도에 expire 가 누름을 끝낸다(삼키기 타이머와 따로 — 떼기 없이 온 click 을 삼켜 삼키기가 먼저 끝나도)
     this.win.addEventListener("touchmove", this.onTouchMove, TOUCH_BLOCK);
+    this.holdTimer = setTimeout(this.expire, LONG_PRESS_SWALLOW_MAX_MS + 50);
     this.open?.();
   }
 
@@ -172,6 +176,12 @@ export class LongPress {
     this.swallowTimer = setTimeout(this.disarm, ms + 50);
   }
 
+  // 창을 연 누름의 떼기를 LONG_PRESS_SWALLOW_MAX_MS 안에 못 받음 — 떼기를 놓친 것으로 보고 누름을 끝낸다. 창 touchmove 막기·누름 리스너가
+  // 다음 꾹·창 초점 잃음까지 남아 필기 모드를 끈 화면의 한 손가락 스크롤까지 막지 않게(삼키기는 제 타이머로 끝남)
+  expire() {
+    if (this.press?.fired) this.cancel();
+  }
+
   // 삼킬 click 앞의 mousedown: 초점이 옮겨 가지 않게(손가락을 떼면 크롬이 호환 mousedown 을 덮개에 보내 초점이 body 로 감)
   onMouseDown(e) {
     if (this.now() > this.swallowEnd || e.detail === 0) return;
@@ -209,6 +219,8 @@ export class LongPress {
   cancel() {
     clearTimeout(this.timer);
     this.timer = 0;
+    clearTimeout(this.holdTimer);
+    this.holdTimer = 0;
     for (const t of WIN_TYPES) this.win.removeEventListener(t, this.onWin, CAP);
     this.win.removeEventListener("blur", this.onWin);
     this.win.removeEventListener("touchmove", this.onTouchMove, TOUCH_BLOCK);

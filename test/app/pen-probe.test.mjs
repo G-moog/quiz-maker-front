@@ -34,7 +34,7 @@ test("닿기 전 호버: 호버 움직임 줄기 시작부터 누름까지, 닿�
   p.pointer(pen("pointerdown", 5000));
   p.pointer(pen("pointerup", 5050));
   p.pointer(pen("pointerout", 5050, 100, 100, { relatedTarget: null }));
-  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "펜 누름 2번 중 호버가 먼저 온 것 1번 · 미리 온 시간 가운데값 190ms(가장 짧은 190ms) · 뗀 뒤 0.3초 안 호버 1번(뗌 2번)");
+  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "다가온 누름(뗀 지 0.5초 넘음) 2번 중 호버가 먼저 온 것 1번 · 미리 온 시간 가운데값 190ms(가장 짧은 190ms) · 이어 쓴 누름 0번 중 호버 먼저 0번 · 뗀 뒤 0.3초 안 호버 1번(뗌 2번)");
   assert.equal(createProbe().rows(GALAXY)[1][1], "아직 펜으로 누르지 않음");
 });
 
@@ -51,7 +51,7 @@ test("안드로이드 차례(호버 → out → over+down → up → out → ove
     p.pointer(pen("pointerover", T + 270, 100, 100, { relatedTarget: null }));
     for (let k = 280; k <= 400; k += 10) p.pointer(pen("pointermove", T + k)); // 뗀 뒤 다시 호버
   }
-  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "펜 누름 10번 중 호버가 먼저 온 것 10번 · 미리 온 시간 가운데값 200ms(가장 짧은 200ms) · 뗀 뒤 0.3초 안 호버 10번(뗌 10번)");
+  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "다가온 누름(뗀 지 0.5초 넘음) 10번 중 호버가 먼저 온 것 10번 · 미리 온 시간 가운데값 200ms(가장 짧은 200ms) · 이어 쓴 누름 0번 중 호버 먼저 0번 · 뗀 뒤 0.3초 안 호버 10번(뗌 10번)");
   assert.equal(p.penState(19400), "떠 있음");
   // 같은 차례의 호버 없는 펜(호버 움직임 없음)은 0번
   const q = createProbe();
@@ -62,17 +62,48 @@ test("안드로이드 차례(호버 → out → over+down → up → out → ove
     q.pointer(pen("pointerup", T + 60));
     q.pointer(pen("pointerout", T + 61, 100, 100, { relatedTarget: null }));
   }
-  assert.equal(row(q, "닿기 전·뗀 뒤 호버"), "펜 누름 3번 중 호버가 먼저 온 것 0번 · 뗀 뒤 0.3초 안 호버 0번(뗌 3번)");
+  assert.equal(row(q, "닿기 전·뗀 뒤 호버"), "다가온 누름(뗀 지 0.5초 넘음) 3번 중 호버가 먼저 온 것 0번 · 이어 쓴 누름 0번 중 호버 먼저 0번 · 뗀 뒤 0.3초 안 호버 0번(뗌 3번)");
 });
 
-test("닿기 전 호버는 앞 누름을 뗀 뒤 온 호버만: 호버 → 콕 → 20ms 뒤 다시 닿음(튐)은 '먼저 온 것' 1번", () => {
+test("닿기 전 호버는 앞 누름을 뗀 뒤 온 호버만: 호버 → 콕 → 20ms 뒤 다시 닿음(튐)은 이어 쓴 누름이고 '먼저 온 것' 아님", () => {
   const p = createProbe();
   for (let t = 1000; t <= 1080; t += 10) p.pointer(pen("pointermove", t));
   p.pointer(pen("pointerdown", 1090));
   p.pointer(pen("pointerup", 1130));
   p.pointer(pen("pointerdown", 1150)); // 뗀 뒤 호버 없이 곧바로(마지막 호버 70ms 전)
   p.pointer(pen("pointerup", 1155));
-  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "펜 누름 2번 중 호버가 먼저 온 것 1번 · 미리 온 시간 가운데값 90ms(가장 짧은 90ms) · 뗀 뒤 0.3초 안 호버 0번(뗌 2번)");
+  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "다가온 누름(뗀 지 0.5초 넘음) 1번 중 호버가 먼저 온 것 1번 · 미리 온 시간 가운데값 90ms(가장 짧은 90ms) · 이어 쓴 누름 1번 중 호버 먼저 0번 · 뗀 뒤 0.3초 안 호버 0번(뗌 2번)");
+});
+
+test("다가온 누름과 이어 쓴 누름을 따로: 멀리서 다가와 닿음 12번(호버 300ms 먼저) + 손글씨 획 40개(획 사이 60ms) → 다가온 누름 12/12 · 300ms — 획 사이 호버가 오든 안 오든", () => {
+  for (const hoverInLift of [true, false]) {
+    const p = createProbe();
+    let t = 1000;
+    for (let i = 0; i < 12; i++) { // 해 볼 것 1·2: 멀리서 다가와 닿음 — 안드로이드 차례(호버 → out → over+down → up → out)
+      for (let k = 0; k <= 290; k += 10) p.pointer(pen("pointermove", t + k));
+      p.pointer(pen("pointerout", t + 295)); p.pointer(pen("pointerover", t + 300)); p.pointer(pen("pointerdown", t + 300)); p.pointer(pen("pointerup", t + 370)); p.pointer(pen("pointerout", t + 371));
+      t += 2000;
+    }
+    t -= 2000 - 370 - 200; // 마지막으로 다가온 누름을 뗀 지 0.2초 뒤부터 이어 씀
+    for (let i = 0; i < 40; i++) { // 해 볼 것 5: 획 40개, 획 사이 60ms 들었다 닿음 — 획 사이 호버가 오거나(hoverInLift) 안 옴
+      p.pointer(pen("pointerover", t)); p.pointer(pen("pointerdown", t)); p.pointer(pen("pointermove", t + 60, 110, 100, { down: true })); p.pointer(pen("pointerup", t + 120, 110, 100)); p.pointer(pen("pointerout", t + 121));
+      if (hoverInLift) { p.pointer(pen("pointerover", t + 125)); for (let k = 130; k <= 175; k += 8) p.pointer(pen("pointermove", t + k)); p.pointer(pen("pointerout", t + 178)); }
+      t += 180;
+    }
+    assert.equal(row(p, "닿기 전·뗀 뒤 호버"), `다가온 누름(뗀 지 0.5초 넘음) 12번 중 호버가 먼저 온 것 12번 · 미리 온 시간 가운데값 300ms(가장 짧은 300ms) · 이어 쓴 누름 40번 중 호버 먼저 ${hoverInLift ? 39 : 0}번 · 뗀 뒤 0.3초 안 호버 ${hoverInLift ? 40 : 0}번(뗌 52번)`, `획 사이 호버 ${hoverInLift}`);
+  }
+});
+
+test("다가온 누름의 경계: 앞 누름이 끝난 지 500ms 는 이어 쓴 누름, 501ms 는 다가온 누름 · 취소(pointercancel)로 끝난 누름에서도 셈 · reset 뒤 첫 누름은 다가옴", () => {
+  const p = createProbe();
+  p.pointer(pen("pointerdown", 1000)); p.pointer(pen("pointerup", 1050)); // 처음 = 다가옴
+  p.pointer(pen("pointerdown", 1550)); p.pointer(pen("pointerup", 1600)); // 뗀 지 500ms — 이어 씀
+  p.pointer(pen("pointerdown", 2101)); p.pointer(pen("pointercancel", 2150)); // 501ms — 다가옴, 취소로 끝남
+  p.pointer(pen("pointerdown", 2400)); p.pointer(pen("pointerup", 2450)); // 취소한 지 250ms — 이어 씀
+  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "다가온 누름(뗀 지 0.5초 넘음) 2번 중 호버가 먼저 온 것 0번 · 이어 쓴 누름 2번 중 호버 먼저 0번 · 뗀 뒤 0.3초 안 호버 0번(뗌 3번)");
+  p.reset();
+  p.pointer(pen("pointerdown", 2600));
+  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "다가온 누름(뗀 지 0.5초 넘음) 1번 중 호버가 먼저 온 것 0번 · 이어 쓴 누름 0번 중 호버 먼저 0번 · 뗀 뒤 0.3초 안 호버 0번(뗌 0번)");
 });
 
 test("범위를 벗어날 때 out 이 안 오는 기기: 1초 뒤 '없음', 그 뒤 손은 '펜 멀리', 30초 뒤 누름의 '미리 온 시간'이 부풀지 않음", () => {
@@ -91,7 +122,7 @@ test("범위를 벗어날 때 out 이 안 오는 기기: 1초 뒤 '없음', 그 
   for (let t = 40000; t <= 40150; t += 10) p.pointer(pen("pointermove", t)); // 다시 다가와 150ms 호버 뒤 닿음
   p.pointer(pen("pointerdown", 40160));
   p.pointer(pen("pointerup", 40220));
-  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "펜 누름 2번 중 호버가 먼저 온 것 1번 · 미리 온 시간 가운데값 160ms(가장 짧은 160ms) · 뗀 뒤 0.3초 안 호버 0번(뗌 2번)");
+  assert.equal(row(p, "닿기 전·뗀 뒤 호버"), "다가온 누름(뗀 지 0.5초 넘음) 2번 중 호버가 먼저 온 것 1번 · 미리 온 시간 가운데값 160ms(가장 짧은 160ms) · 이어 쓴 누름 0번 중 호버 먼저 0번 · 뗀 뒤 0.3초 안 호버 0번(뗌 2번)");
 });
 
 test("'떠 있음'(펜 범위 안)은 pointerover~pointerout 중 마지막 펜 이벤트 1초 안 — 그동안 닿은 손은 '펜 범위 안'", () => {

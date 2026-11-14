@@ -5,6 +5,9 @@
 // 호버 움직임(pointermove)이 끊길 수 있으므로 움직임만으로는 정하지 않는다(마지막 호버 움직임 HOVER_NEAR_MS 안도 떠 있음으로 봄).
 // 다만 마지막 펜 이벤트에서 PEN_IN_MS 넘게 지나면 범위 밖으로 본다 — 범위를 벗어날 때 out 이 안 오는 기기에서 '떠 있음'에 굳지 않게.
 // '닿기 전 호버'는 over·out 차례에 기대지 않고 호버 움직임 줄기로 잰다 — 안드로이드 크롬은 닿기 직전·뗀 직후에도 out 을 보낸다.
+// 그리고 '다가온 누름'(앞 펜을 뗀 지 NEAR_UP_MS 넘음·처음)과 '이어 쓴 누름'(그 안 — 손글씨 획 사이 등)을 따로 센다. 이어 쓴 누름은 손바닥 막기가
+// 뗀 뒤 규칙으로 이미 켜져 있을 때라 호버가 막아 주는지와 상관없고, 수가 많아 섞으면 손글씨 박자가 값을 정한다 —
+// 손바닥 막기 값을 갤럭시처럼 낮출지는 다가온 누름 값(호버가 먼저 온 비율·미리 온 시간 가운데값)으로 본다.
 // '펜 콕 시간'·'펜 콕 튐'은 빈칸에서 시작한 펜 누름만 센다(PenTestView 가 pointer(e, { blank }) 로 알려 줌 — 손글씨 획은 빼고 따로 한도).
 
 export const PROBE = Object.freeze({
@@ -14,7 +17,7 @@ export const PROBE = Object.freeze({
   PEN_IN_MS: 1000, // '범위 안'(over 뒤 out 전)도 마지막 펜 이벤트에서 이 안만 믿는다(out 이 안 와도 굳지 않게)
   HOVER_LEAD_MS: 100, // 펜이 닿을 때 마지막 호버 움직임이 이 안이어야 호버가 먼저 온 것(그 줄기의 시작부터 잼)
   AFTER_UP_MS: 300, // 뗀 뒤 이 안에 호버 움직임이 오면 '뗀 뒤 호버'
-  NEAR_UP_MS: 500, // 펜을 뗀 뒤 이 안에 닿은 손은 '뗀 뒤'
+  NEAR_UP_MS: 500, // 펜을 뗀 뒤 이 안에 닿은 손은 '뗀 뒤'. 펜 누름은 앞 펜을 뗀 지 이보다 오래면(처음이면) '다가온 누름'(갤럭시 PALM_MS)
   NEAR_PEN_MS: 300, // 손 터치 취소가 마지막 펜 이벤트 뒤 이 안이면 '펜 가까이'
   PEN_STALE_MS: 2000, // '펜 닿음'은 마지막 펜 이벤트 뒤 이만큼만 믿는다(떼기를 놓쳐도)
   BOUNCE_MS: 60, // 뗀 뒤 이 안에 같은 자리(BOUNCE_PX)에 다시 닿으면 튐
@@ -64,7 +67,10 @@ function fresh() {
     pendingUp: null, // 뗀 뒤 아직 호버를 기다리는 뗌 시각
     // 호버(run: 지금 이어지는 호버 움직임 줄기, prevRun: 바로 앞에 닫힌 줄기 — 닿기 직전에 out 이 와서 닫혀도 '닿기 전 호버'를 잼)
     hovers: 0, enters: 0, run: null, prevRun: null, runN: 0, runMs: 0, maxGap: 0,
-    downs: 0, leadOk: 0, leads: [], ups: 0, afterUp: 0, afterUpGaps: [],
+    downs: 0, ups: 0, afterUp: 0, afterUpGaps: [],
+    lastEnd: null, // 마지막 펜 누름이 끝난(뗌·취소) 때 — 다가온 누름 가르기
+    approach: { n: 0, ok: 0, leads: [] }, // 다가온 누름: 수·호버가 먼저 온 수·미리 온 시간
+    cont: { n: 0, ok: 0 }, // 이어 쓴 누름: 수·호버가 먼저 온 수
     // 손
     near: { inRange: 0, down: 0, afterUp: 0, far: 0 },
     cancels: { near: 0, other: 0 },
@@ -124,9 +130,13 @@ export function createProbe() {
     const run = s.run || s.prevRun;
     const lead = run && t - s.lastHover <= PROBE.HOVER_LEAD_MS && s.lastHover > (s.lastUp?.t ?? -Infinity) ? t - run.start : 0;
     closeRun();
+    // 다가온 누름(앞 펜 누름이 끝난 지 NEAR_UP_MS 넘음·처음)과 이어 쓴 누름을 따로
+    const approach = s.lastEnd == null || t - s.lastEnd > PROBE.NEAR_UP_MS;
+    const g = approach ? s.approach : s.cont;
+    g.n += 1;
     if (lead >= 1) {
-      s.leadOk += 1;
-      push(s.leads, lead);
+      g.ok += 1;
+      if (approach) push(s.approach.leads, lead);
     }
     // 펜 콕 튐: 빈칸 누름이 앞 빈칸 누름을 뗀 자리(BOUNCE_PX)에 곧바로(REPEAT_MS) 다시 닿음 — 앞 누름이 콕이었는지는 표를 만들 때 프로필로 거름
     s.downGap = null;
@@ -161,7 +171,9 @@ export function createProbe() {
       if (s.downBlank) push(s.blankTaps, { ms, far, ...s.downGap }, PROBE.BLANK_KEEP);
       s.lastUp = { t, x, y, blank: s.downBlank, ms, far };
       s.pendingUp = t;
+      s.lastEnd = t;
     } else if (e.type === "pointercancel") {
+      if (s.downAt != null) s.lastEnd = t;
       s.lastUp = null;
       s.pendingUp = null;
     }
@@ -251,10 +263,12 @@ export function createProbe() {
     return `예 — 호버 ${s.hovers}번 · 범위 들어옴 ${s.enters}번 · 띄운 동안 초당 약 ${hz}개 · 가장 긴 끊김 ${r0(s.maxGap)}ms`;
   }
 
+  // 다가온 누름만 '미리 온 시간'을 낸다(손바닥 막기 값을 정할 때 보는 값). 이어 쓴 누름은 수만
   function leadText() {
     if (!s.downs) return "아직 펜으로 누르지 않음";
-    const lead = s.leadOk ? ` · 미리 온 시간 가운데값 ${r0(median(s.leads))}ms(가장 짧은 ${r0(Math.min(...s.leads))}ms)` : "";
-    return `펜 누름 ${s.downs}번 중 호버가 먼저 온 것 ${s.leadOk}번${lead} · 뗀 뒤 0.3초 안 호버 ${s.afterUp}번(뗌 ${s.ups}번)`;
+    const a = s.approach;
+    const lead = a.ok ? ` · 미리 온 시간 가운데값 ${r0(median(a.leads))}ms(가장 짧은 ${r0(Math.min(...a.leads))}ms)` : "";
+    return `다가온 누름(뗀 지 0.5초 넘음) ${a.n}번 중 호버가 먼저 온 것 ${a.ok}번${lead} · 이어 쓴 누름 ${s.cont.n}번 중 호버 먼저 ${s.cont.ok}번 · 뗀 뒤 0.3초 안 호버 ${s.afterUp}번(뗌 ${s.ups}번)`;
   }
 
   function contactsText() {

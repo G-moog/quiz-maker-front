@@ -524,7 +524,8 @@ export class InkInput {
     const tap = { blank: a.blank, downAt: a.t0, upAt: t };
     const prev = this.lastPenTapUp;
     this.lastPenTapUp = tap;
-    // 촉이 튀어 뗀 뒤 곧바로 다시 닿음(프로필 PEN_BOUNCE_MS — 갤럭시 0 = 안 봄): 같은 콕. 두 번 콕을 이루지도, 새 첫 콕이 되지도 않는다
+    // 촉이 튀어 뗀 뒤 곧바로 다시 닿음·한 콕 가운데가 잠깐 끊김(isPenBounce, 프로필 PEN_BOUNCE_MS — 갤럭시 0 = 안 봄): 같은 콕.
+    // 두 번 콕을 이루지도, 새 첫 콕이 되지도 않는다
     if (isPenBounce(prev, tap, a.prof)) {
       if (this.lastTap && this.lastTap.blank === tap.blank) this.lastTap = { ...this.lastTap, upAt: t };
       this.emit("pen-bounce", { blank: a.blank, gap: Math.round(tap.downAt - prev.upAt) });
