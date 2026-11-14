@@ -9,6 +9,11 @@
 // 뗀 뒤 규칙으로 이미 켜져 있을 때라 호버가 막아 주는지와 상관없고, 수가 많아 섞으면 손글씨 박자가 값을 정한다 —
 // 손바닥 막기 값을 갤럭시처럼 낮출지는 다가온 누름 값(호버가 먼저 온 비율·미리 온 시간 가운데값)으로 본다.
 // '펜 콕 시간'·'펜 콕 튐'은 빈칸에서 시작한 펜 누름만 센다(PenTestView 가 pointer(e, { blank }) 로 알려 줌 — 손글씨 획은 빼고 따로 한도).
+// 그 가운데서도 빈칸 콕으로 볼 묶음만(blankTapGroups): 앞뒤 TAP_ALONE_MS 안에 다른 펜 누름이 없는 한 번(따로 떨어진 콕), 또는
+// DOUBLE_TAP_MS 안의 두 번(두 번 콕) — 빈칸 위에 답을 쓴 획(이어 씀)이 '가장 긴' 값을 끌어올리지 않게. 묶음 안의 튐은 필기 코드와 같은 식
+// (geometry.isPenBounce — 지금 태블릿의 PEN_BOUNCE_MS)으로 가려 앞 누름에 합치고, 튐의 짧은 접촉(PEN_BOUNCE_CONTACT_MS 미만)은 콕 시간에서 뺀다.
+
+import { PEN_BOUNCE_CONTACT_MS, PEN_RETAP_MIN_MS, isPenBounce } from "./geometry.js";
 
 export const PROBE = Object.freeze({
   HOVER_RUN_GAP_MS: 300, // 호버 움직임 사이가 이보다 비면 새 줄기
@@ -20,10 +25,10 @@ export const PROBE = Object.freeze({
   NEAR_UP_MS: 500, // 펜을 뗀 뒤 이 안에 닿은 손은 '뗀 뒤'. 펜 누름은 앞 펜을 뗀 지 이보다 오래면(처음이면) '다가온 누름'(갤럭시 PALM_MS)
   NEAR_PEN_MS: 300, // 손 터치 취소가 마지막 펜 이벤트 뒤 이 안이면 '펜 가까이'
   PEN_STALE_MS: 2000, // '펜 닿음'은 마지막 펜 이벤트 뒤 이만큼만 믿는다(떼기를 놓쳐도)
-  BOUNCE_MS: 60, // 뗀 뒤 이 안에 같은 자리(BOUNCE_PX)에 다시 닿으면 튐
-  BOUNCE_PX: 10,
-  REPEAT_MS: 150, // 뗀 뒤 이 안에 같은 자리에 다시 닿은 간격은 모두 적는다(튐과 빠른 두 번 콕을 가르게)
+  BOUNCE_PX: 10, // 앞 빈칸 콕을 뗀 자리에서 이 안에 다시 닿아야 '같은 자리'(튐 후보)
+  REPEAT_MS: 150, // 뗀 뒤 이 안에 같은 자리에 다시 닿은 간격은 모두 적는다(튐과 빠른 두 번 콕을 가르게 — 앞·뒤 접촉 시간과 함께)
   REPEAT_KEEP: 20,
+  TAP_ALONE_MS: 500, // 빈칸 콕으로 볼 묶음: 앞뒤로 다른 펜 누름이 이보다 가까우면 이어 쓴 것(빈칸 위 손글씨)
   COMPANION_MS: 100, // 펜이 함께 보낸 touch: 펜 누름 뒤 이 안·±COMPANION_PX(InkInput.isPenTouch 와 같은 값)
   COMPANION_PX: 2,
   COMPANION_NEAR_PX: 30, // 짝은 못 맞췄지만 닿아 있는 펜에서 이 안 = 어긋난 touch(손바닥으로 막혀 펜으로 단추를 못 누름)
@@ -54,6 +59,56 @@ export function median(arr) {
 }
 const r0 = (v) => Math.round(v);
 
+// 빈칸 콕으로 볼 누름 가르기(펜 콕 시간·펜 콕 튐). list = 빈칸 누름 기록(blankTaps, 차례대로), p = 지금 태블릿 프로필.
+//  - 묶음: 바로 앞 펜 누름이 앞 기록이고 그 사이가 TAP_ALONE_MS 보다 짧으면 같은 묶음. 묶음 바로 앞·뒤(TAP_ALONE_MS 안)에 기록 밖의
+//    펜 누름(빈칸 밖 획·취소된 누름)이 붙어 있으면 이어 쓴 것으로 보고 뺀다
+//  - 묶음 안 튐: 같은 자리에 곧바로 다시 닿은 콕 쌍(두 누름 모두 빈칸 콕 한도·TAP_MS 안)이 isPenBounce(필기 코드와 같은 식 — 프로필
+//    PEN_BOUNCE_MS, 갤럭시 0 = 없음)면 앞 누름에 합친다
+//  - 합친 뒤 한 번(따로 떨어진 콕)이거나 DOUBLE_TAP_MS 안의 두 번(두 번 콕)인 묶음만 남긴다 — 빈칸 위 손글씨(획이 이어짐)는 빠짐
+// → { taps: 콕 시간에 셀 누름(콕 한도 안에서 움직인 것, 튐 쌍의 PEN_BOUNCE_CONTACT_MS 미만 접촉은 뺌),
+//     links: 남긴 묶음의 같은 자리 콕 쌍 [{ gap, a: 앞 접촉 ms, b: 뒤 접촉 ms, bounce }], skipped: 콕 한도 안이지만 뺀 누름 수 }
+export function blankTapGroups(list, p) {
+  const groups = [];
+  let g = null;
+  for (const x of list) {
+    if (g && x.linked && x.before < PROBE.TAP_ALONE_MS) g.push(x);
+    else groups.push((g = [x]));
+  }
+  const near = (v) => v != null && v < PROBE.TAP_ALONE_MS;
+  const tapLike = (x) => x.far < p.PEN_BLANK_TAP_SLOP && x.ms < p.TAP_MS;
+  const pair = (a, b) => b.gap != null && tapLike(a) && tapLike(b);
+  const taps = [];
+  const links = [];
+  let skipped = 0;
+  for (const grp of groups) {
+    // 튐: 같은 자리 콕 쌍 가운데 isPenBounce 인 것(앞 누름 a: 0~a.ms, 뒤 누름 b: a.ms + gap ~ 그 + b.ms)
+    const bounce = grp.map((b, i) => i > 0 && pair(grp[i - 1], b)
+      && isPenBounce({ blank: 0, downAt: 0, upAt: grp[i - 1].ms }, { blank: 0, downAt: grp[i - 1].ms + b.gap, upAt: grp[i - 1].ms + b.gap + b.ms }, p));
+    // 튐을 합친 누름 수와 둘째 누름의 앞 사이(두 번 콕인지)
+    let n = 0;
+    let gap2 = null;
+    grp.forEach((x, i) => {
+      if (bounce[i]) return;
+      n += 1;
+      if (n === 2) gap2 = x.before;
+    });
+    const open = near(grp[0].before) || near(grp[grp.length - 1].after);
+    const ok = !open && (n === 1 || (n === 2 && gap2 >= 0 && gap2 <= p.DOUBLE_TAP_MS));
+    grp.forEach((x, i) => {
+      if (x.far >= p.PEN_BLANK_TAP_SLOP) return; // 선(콕 한도 넘게 움직임)은 콕이 아님
+      const bounceShort = x.ms < PEN_BOUNCE_CONTACT_MS && (bounce[i] || bounce[i + 1]);
+      if (ok && !bounceShort) taps.push(x);
+      else skipped += 1;
+    });
+    if (ok) {
+      for (let i = 1; i < grp.length; i++) {
+        if (pair(grp[i - 1], grp[i])) links.push({ gap: grp[i].gap, a: grp[i - 1].ms, b: grp[i].ms, bounce: bounce[i] });
+      }
+    }
+  }
+  return { taps, links, skipped };
+}
+
 function fresh() {
   return {
     // 펜 상태
@@ -61,7 +116,9 @@ function fresh() {
     lastHover: -Infinity,
     downAt: null, downX: 0, downY: 0, downFar: 0,
     downBlank: false, // 지금 누름이 빈칸에서 시작했나
-    downGap: null, // 지금 누름이 앞 빈칸 콕을 뗀 자리에 곧바로 다시 닿은 것이면 { gap, prevMs, prevFar }
+    downGap: null, // 지금 누름이 앞 빈칸 누름을 뗀 자리에 곧바로 다시 닿은 것이면 { gap }
+    downBefore: Infinity, // 지금 누름 앞 사이: 바로 앞 펜 누름(빈칸 밖·취소 포함)이 끝난 뒤 닿기까지
+    downLinked: false, // 바로 앞 펜 누름이 빈칸 누름 기록(blankTaps 의 마지막)인가
     lastDownPen: null, // 마지막 펜 누름 { t, x, y }
     lastUp: null, // 마지막 펜 뗌 { t, x, y, blank, ms, far }
     pendingUp: null, // 뗀 뒤 아직 호버를 기다리는 뗌 시각
@@ -78,7 +135,9 @@ function fresh() {
     touchDowns: [], // 최근 손 pointerdown { t, x, y, size, ghost, paired }
     radius: { seen: false, start: 0, move: 0, force: 0, pairs: [], types: {}, hasType: null },
     companion: { matched: 0, near: 0, ghost: 0 },
-    blankTaps: [], // 빈칸에서 시작한 펜 누름 { ms, far, gap?, prevMs?, prevFar? } (최근 BLANK_KEEP 개)
+    // 빈칸에서 시작해 뗀 펜 누름(최근 BLANK_KEEP 개, 차례대로) { ms, far, before, linked, after?, gap? } —
+    // before·linked: 위 downBefore·downLinked, after: 뗀 뒤 다음 펜 누름까지(다음 누름이 오면 적음), gap: downGap
+    blankTaps: [],
     lastTouchDown: null, blocked: [], blockedN: { "pen-guard": 0, "pen-overlap": 0 },
     menu: { pen: 0, touch: 0, mouse: 0 }, lastDownType: "", lastDownAt: -Infinity,
     keys: 0, keyNames: [], blur: 0, hidden: 0,
@@ -138,12 +197,17 @@ export function createProbe() {
       g.ok += 1;
       if (approach) push(s.approach.leads, lead);
     }
-    // 펜 콕 튐: 빈칸 누름이 앞 빈칸 누름을 뗀 자리(BOUNCE_PX)에 곧바로(REPEAT_MS) 다시 닿음 — 앞 누름이 콕이었는지는 표를 만들 때 프로필로 거름
-    s.downGap = null;
+    // 빈칸 누름 묶음(펜 콕 시간·펜 콕 튐 — blankTapGroups): 바로 앞 펜 누름이 빈칸 누름 기록이면 그 기록에 '뒤 사이'를 적고,
+    // 이 누름에는 '앞 사이'(바로 앞 펜 누름이 끝난 뒤 — 빈칸 밖 획·취소 포함)와 앞 누름이 그 기록인지를 남긴다
     const u = s.lastUp;
+    if (u?.blank && s.blankTaps.length) s.blankTaps[s.blankTaps.length - 1].after = t - u.t;
+    s.downBefore = s.lastEnd == null ? Infinity : t - s.lastEnd;
+    s.downLinked = !!u?.blank;
+    // 펜 콕 튐: 빈칸 누름이 앞 빈칸 누름을 뗀 자리(BOUNCE_PX)에 곧바로(REPEAT_MS) 다시 닿음 — 두 누름이 콕이었는지·튐인지는 표를 만들 때 프로필로 가름
+    s.downGap = null;
     if (blank && u?.blank) {
       const gap = t - u.t;
-      if (gap >= 0 && gap <= PROBE.REPEAT_MS && dist(x, y, u.x, u.y) <= PROBE.BOUNCE_PX) s.downGap = { gap: r0(gap), prevMs: u.ms, prevFar: u.far };
+      if (gap >= 0 && gap <= PROBE.REPEAT_MS && dist(x, y, u.x, u.y) <= PROBE.BOUNCE_PX) s.downGap = { gap: r0(gap) };
     }
     // 유령 손가락(펜보다 먼저 온 손 포인터)
     for (const d of s.touchDowns) {
@@ -168,7 +232,7 @@ export function createProbe() {
       const ms = t - s.downAt;
       const far = Math.max(s.downFar, dist(x, y, s.downX, s.downY));
       // 빈칸에서 시작한 누름만 따로 한도(손글씨 획에 밀리지 않게) — 펜 콕 시간·펜 콕 튐
-      if (s.downBlank) push(s.blankTaps, { ms, far, ...s.downGap }, PROBE.BLANK_KEEP);
+      if (s.downBlank) push(s.blankTaps, { ms, far, before: s.downBefore, linked: s.downLinked, ...s.downGap }, PROBE.BLANK_KEEP);
       s.lastUp = { t, x, y, blank: s.downBlank, ms, far };
       s.pendingUp = t;
       s.lastEnd = t;
@@ -181,6 +245,8 @@ export function createProbe() {
     s.downAt = null;
     s.downBlank = false;
     s.downGap = null;
+    s.downBefore = Infinity;
+    s.downLinked = false;
   }
 
   function penEvent(e, t, blank) {
@@ -294,19 +360,28 @@ export function createProbe() {
     return `닿을 때 최대 ${r0(R.start)} · 움직이는 중 최대 ${r0(R.move)} · 같은 입력(포인터/Touch) ${pairs} · force 최대 ${Math.round(R.force * 100) / 100} · touchType ${types}`;
   }
 
-  // 빈칸에서 시작해 빈칸 콕 한도(프로필) 안에서 움직인 누름의 시간
+  // 빈칸 콕으로 볼 묶음(blankTapGroups)의 누름 가운데 빈칸 콕 한도(프로필) 안에서 움직인 것의 시간 — 가장 긴 값과 둘째로 긴 값.
+  // 뺀 누름: 빈칸 위 손글씨(이어 쓴 묶음)·튐의 짧은 접촉
   function tapText(p) {
-    const short = s.blankTaps.filter((x) => x.far < p.PEN_BLANK_TAP_SLOP).map((x) => x.ms);
-    if (!short.length) return "아직 없음";
-    const long = short.filter((ms) => ms >= p.TAP_MS).length;
-    return `${short.length}번 · 가운데값 ${r0(median(short))}ms · 가장 긴 ${r0(Math.max(...short))}ms · ${p.TAP_MS}ms 넘어 점이 된 것 ${long}번`;
+    const { taps, skipped } = blankTapGroups(s.blankTaps, p);
+    const skip = skipped ? ` · 뺀 누름 ${skipped}번(빈칸 위 손글씨·튐)` : "";
+    if (!taps.length) return `아직 없음${skip}`;
+    const ms = taps.map((x) => x.ms);
+    const desc = [...ms].sort((a, b) => b - a);
+    const long = ms.filter((v) => v >= p.TAP_MS).length;
+    const second = desc.length > 1 ? ` · 둘째로 긴 ${r0(desc[1])}ms` : "";
+    return `${ms.length}번 · 가운데값 ${r0(median(ms))}ms · 가장 긴 ${r0(desc[0])}ms${second} · ${p.TAP_MS}ms 넘어 점이 된 것 ${long}번${skip}`;
   }
 
-  // 빈칸 누름 가운데 앞 누름도 빈칸 콕(빈칸 콕 한도·TAP_MS 안 — 프로필)이었던 것의 다시 닿은 간격
+  // 같은 자리에 곧바로(0.15초 안) 다시 닿은 빈칸 콕 쌍(두 누름 모두 콕 — 빈칸 콕 한도·TAP_MS 안, 빈칸 콕으로 볼 묶음만):
+  // 간격(앞 접촉/뒤 접촉) 목록과, 그중 필기 코드가 촉 튐으로 한 콕에 합칠 것(isPenBounce — 지금 태블릿 값)의 수
   function bounceText(p, ink) {
-    const gaps = s.blankTaps.filter((x) => x.gap != null && x.prevFar < p.PEN_BLANK_TAP_SLOP && x.prevMs < p.TAP_MS).map((x) => x.gap);
-    const bounce = gaps.filter((g) => g <= PROBE.BOUNCE_MS).length;
-    return `뗀 뒤 ${PROBE.BOUNCE_MS}ms 안 같은 자리 다시 닿음 ${bounce}번(0이어야 함) · 한 번 콕으로 합친 것 ${ink.penBounce || 0}번 · 0.15초 안 다시 닿은 간격(ms) ${gaps.slice(-PROBE.REPEAT_KEEP).join(" ") || "-"}`;
+    const { links } = blankTapGroups(s.blankTaps, p);
+    const list = links.slice(-PROBE.REPEAT_KEEP).map((l) => `${l.gap}(${r0(l.a)}/${r0(l.b)})`).join(" ") || "-";
+    const head = p.PEN_BOUNCE_MS > 0
+      ? `튐 ${links.filter((l) => l.bounce).length}번(뗀 뒤 ${PEN_RETAP_MIN_MS}ms 안, 또는 ${p.PEN_BOUNCE_MS}ms 안 + 한쪽 접촉 ${PEN_BOUNCE_CONTACT_MS}ms 미만)`
+      : "튐 합치기 안 씀(이 태블릿 기준)";
+    return `${head} · 한 번 콕으로 합친 것 ${ink.penBounce || 0}번 · 0.15초 안 다시 닿은 간격 ms(앞 접촉/뒤 접촉) ${list}`;
   }
 
   function blockedText() {

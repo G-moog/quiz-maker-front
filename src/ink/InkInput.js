@@ -23,7 +23,8 @@ import {
 //  펜 촉 튐 합치기(PEN_BOUNCE_MS), 펜이 닿는 순간 이미 닿아 있던 손의 click 막기(PEN_OVERLAP_BLOCK)
 // 이 리스너들은 필기 모드를 켰을 때만 붙는다(InkSurface) — 끄면 앱은 예전 그대로
 // hooks: { onBlankTap(i), onEvent(type, detail), livePath(kind), profile() } — livePath 는 그리는 중인 선을 그릴 <path>
-// 펜 시험 페이지가 onEvent 로 무슨 일이 있었는지 센다('stroke' 에는 그 선의 입력 값: 움직임·점 수·예측 점·입력 → 그림 시간).
+// 펜 시험 페이지가 onEvent 로 무슨 일이 있었는지 센다('stroke' 에는 그 선의 입력 값: 움직임·점 수·예측 점·입력 → 그림 시간,
+// 'down'·'down-skip' 은 영역이 누름을 받았는지 — 알림만, 동작은 그대로).
 // 그리는 중인 선: 점은 getCoalescedEvents 로 빠짐없이 모으고, 그림은 rAF 한 번에 path 의 d 만 바꾼다(React 를 거치지 않음).
 // 브라우저가 예측 점(getPredictedEvents)을 주면 그리는 선 끝에만 잠깐 붙인다(저장하지 않음 — geometry.predictTail)
 
@@ -321,6 +322,9 @@ export class InkInput {
   }
 
   onDown(e) {
+    // 알림만(동작 없음): 영역이 누름을 받음 — 펜 시험 페이지가 '펜 누른 곳'(글 안 누름을 필기가 받았나)을 센다.
+    // 아래에서 일찍 돌아가는 곳은 'down-skip'(why) — 풀기 화면은 onEvent 를 넘기지 않아 아무 일 없음
+    this.emit("down", { type: e.pointerType });
     const t = timeOf(e);
     this.lastDown = { type: e.pointerType, at: t };
     this.blockMouseClick = false;
@@ -328,11 +332,20 @@ export class InkInput {
       this.touchDown(e, t);
       return;
     }
-    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (e.pointerType === "mouse" && e.button !== 0) {
+      this.emit("down-skip", { type: e.pointerType, why: "button" });
+      return;
+    }
     const hit = e.target instanceof Element ? e.target.closest(INTERACTIVE) : null;
-    if (hit && this.el.contains(hit)) return;
+    if (hit && this.el.contains(hit)) {
+      this.emit("down-skip", { type: e.pointerType, why: "interactive" });
+      return;
+    }
     if (this.active) {
-      if (this.active.type !== e.pointerType) return; // 펜으로 긋는 중의 마우스 등
+      if (this.active.type !== e.pointerType) { // 펜으로 긋는 중의 마우스 등
+        this.emit("down-skip", { type: e.pointerType, why: "busy" });
+        return;
+      }
       // 같은 펜·마우스가 다시 눌렸다 = 앞 누름의 떼기를 놓쳤다. 앞에서 그은 선은 살린다
       this.salvage(this.active, "missed-up");
     }

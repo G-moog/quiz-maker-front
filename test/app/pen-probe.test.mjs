@@ -2,8 +2,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PROBE, createProbe, median, resultText } from "../../src/ink/penProbe.js";
+import { GALAXY, Y700 } from "../../src/ink/geometry.js";
 
-const GALAXY = { TAP_MS: 300, PEN_BLANK_TAP_SLOP: 12 };
 const pen = (type, t, x = 100, y = 100, o = {}) => ({ type, pointerType: "pen", pointerId: 9, timeStamp: t, clientX: x, clientY: y, buttons: type === "pointerdown" || (type === "pointermove" && o.down) ? 1 : 0, relatedTarget: null, ...o });
 const fing = (type, t, x = 300, y = 300, o = {}) => ({ type, pointerType: "touch", pointerId: o.id ?? 1, isPrimary: o.isPrimary ?? true, timeStamp: t, clientX: x, clientY: y, width: o.w ?? 20, height: o.h ?? 20, ...o });
 const row = (p, name, prof = GALAXY, ink = {}) => p.rows(prof, ink).find(([k]) => k === name)[1];
@@ -208,51 +208,100 @@ test("펜이 함께 보낸 touch: 같은 자리 짝·어긋난 것·유령 손�
 });
 
 const BLANK = { blank: true };
+// 빈칸 누름 하나: 누름 → (가운데 미끄러짐) → 뗌. o: pointer 의 두 번째 인자({ blank: true } = 빈칸에서 시작, {} = 빈칸 밖)
+function blankPress(p, t0, t1, x = 100, { o = BLANK, slide = 0 } = {}) {
+  p.pointer(pen("pointerdown", t0, x), o);
+  if (slide) p.pointer(pen("pointermove", (t0 + t1) / 2, x + slide, 100, { down: true }));
+  p.pointer(pen("pointerup", t1, x + slide));
+}
+const TAPS = "펜 콕 시간(짧게 누른 것)";
+const yHead = (n) => `튐 ${n}번(뗀 뒤 40ms 안, 또는 50ms 안 + 한쪽 접촉 30ms 미만)`;
+const GAPS = "0.15초 안 다시 닿은 간격 ms(앞 접촉/뒤 접촉)";
 
-test("펜 콕 튐: 빈칸 누름끼리만, 60ms·10px 경계, 0.15초 안 간격 목록, 합친 수는 필기 코드 값", () => {
-  const p = createProbe();
-  const tap = (t0, t1, x = 100) => { p.pointer(pen("pointerdown", t0, x), BLANK); p.pointer(pen("pointerup", t1, x)); };
-  tap(0, 50);
-  tap(58, 90); // 8ms 뒤 — 튐
-  tap(150, 200); // 60ms 뒤 — 튐(경계 포함)
-  tap(261, 300); // 61ms — 튐 아님, 목록에는
-  tap(400, 450, 115); // 100ms 뒤 15px — 목록에도 없음
-  tap(1000, 1050); // 550ms 뒤
-  assert.equal(row(p, "펜 콕 튐", GALAXY, { penBounce: 1 }), "뗀 뒤 60ms 안 같은 자리 다시 닿음 2번(0이어야 함) · 한 번 콕으로 합친 것 1번 · 0.15초 안 다시 닿은 간격(ms) 8 60 61");
+test("펜 콕 튐(Y700): 간격(앞 접촉/뒤 접촉), 튐 셈은 isPenBounce 와 같은 식 — 빠른 두 번 콕은 아님, 콕 + 짧은 튐·가운데 끊김은 튐(검토 exp-f8-bounce) · 갤럭시는 합치기 안 씀", () => {
+  const seq = (taps) => { const p = createProbe(); for (const [d, u] of taps) blankPress(p, d, u); return p; };
+  assert.equal(row(seq([[1000, 1060], [1100, 1160]]), "펜 콕 튐", Y700), `${yHead(0)} · 한 번 콕으로 합친 것 0번 · ${GAPS} 40(60/60)`, "각 60ms·뗀 뒤 40ms — 필기 코드: 두 번 콕");
+  assert.equal(row(seq([[1000, 1060], [1065, 1070]]), "펜 콕 튐", Y700, { penBounce: 1 }), `${yHead(1)} · 한 번 콕으로 합친 것 1번 · ${GAPS} 5(60/5)`, "콕 + 5ms 튐 — 필기 코드: 합침");
+  assert.equal(row(seq([[1000, 1045], [1053, 1110]]), "펜 콕 튐", Y700), `${yHead(1)} · 한 번 콕으로 합친 것 0번 · ${GAPS} 8(45/57)`, "가운데 끊김 45 + 8 + 57 — 필기 코드: 합침");
+  const all = seq([[1000, 1060], [1100, 1160], [3000, 3060], [3065, 3070], [5000, 5045], [5053, 5110]]);
+  assert.equal(row(all, "펜 콕 튐", Y700, { penBounce: 2 }), `${yHead(2)} · 한 번 콕으로 합친 것 2번 · ${GAPS} 40(60/60) 5(60/5) 8(45/57)`);
+  // 튐의 짧은 접촉(5ms)은 콕 시간에서 뺌 — 가운데 끊김의 두 접촉(45·57)은 둘 다 30ms 넘어 그대로
+  assert.equal(row(all, TAPS, Y700), "5번 · 가운데값 60ms · 가장 긴 60ms · 둘째로 긴 60ms · 300ms 넘어 점이 된 것 0번 · 뺀 누름 1번(빈칸 위 손글씨·튐)");
+  // 갤럭시(PEN_BOUNCE_MS 0): 튐을 합치지 않음 — 쌍은 모두 두 번 콕으로 남고 짧은 접촉도 콕 시간에 셈
+  assert.equal(row(all, "펜 콕 튐", GALAXY), `튐 합치기 안 씀(이 태블릿 기준) · 한 번 콕으로 합친 것 0번 · ${GAPS} 40(60/60) 5(60/5) 8(45/57)`);
+  assert.equal(row(all, TAPS, GALAXY), "6번 · 가운데값 59ms · 가장 긴 60ms · 둘째로 긴 60ms · 300ms 넘어 점이 된 것 0번");
 });
 
-test("펜 콕 튐: 손글씨 획(빈칸 밖)·빈칸 밖에서 이어진 누름·콕이 아니었던 앞 누름(길거나 미끄러짐)은 세지 않음", () => {
+test("펜 콕 튐: 두 누름 모두 콕(빈칸 콕 한도·TAP_MS 안)인 쌍만 — 손글씨 획(빈칸 밖)·앞이나 지금 누름이 길거나 미끄러진 쌍은 빼고, 프로필 한도로 콕이 되면 셈", () => {
   const p = createProbe();
-  const press = (t0, t1, x, o = BLANK, slide = 0) => {
-    p.pointer(pen("pointerdown", t0, x), o);
-    if (slide) p.pointer(pen("pointermove", (t0 + t1) / 2, x + slide, 100, { down: true }));
-    p.pointer(pen("pointerup", t1, x + slide));
-  };
-  // 손글씨: 짧은 획 끝 바로 옆에서 30ms 뒤 다음 획(빈칸 밖) — 예전에는 '튐 5번'으로 셌음
-  for (let i = 0; i < 6; i++) press(i * 150, i * 150 + 120, 300, {}, 0);
-  assert.equal(row(p, "펜 콕 튐"), "뗀 뒤 60ms 안 같은 자리 다시 닿음 0번(0이어야 함) · 한 번 콕으로 합친 것 0번 · 0.15초 안 다시 닿은 간격(ms) -");
-  press(2000, 2100, 500, {}); // 빈칸 밖 누름 뒤
-  press(2120, 2160, 500); // 빈칸 누름 — 앞 누름이 빈칸이 아니면 세지 않음
-  press(3000, 3400, 600); // 앞 누름이 길었음(400ms ≥ TAP_MS)
-  press(3420, 3450, 600);
-  press(4000, 4100, 700, BLANK, 13); // 앞 누름이 13px 미끄러짐(빈칸 콕 한도 12 넘음 — 뗀 자리는 713)
-  press(4120, 4150, 713);
-  press(5000, 5060, 800); // 콕
-  press(5080, 5090, 800); // 20ms 뒤 튐 — 이것만
-  assert.equal(row(p, "펜 콕 튐"), "뗀 뒤 60ms 안 같은 자리 다시 닿음 1번(0이어야 함) · 한 번 콕으로 합친 것 0번 · 0.15초 안 다시 닿은 간격(ms) 20");
-  assert.equal(row(p, "펜 콕 튐", { TAP_MS: 500, PEN_BLANK_TAP_SLOP: 14 }), "뗀 뒤 60ms 안 같은 자리 다시 닿음 3번(0이어야 함) · 한 번 콕으로 합친 것 0번 · 0.15초 안 다시 닿은 간격(ms) 20 20 20", "프로필 한도로 앞 누름이 콕이 되면 셈");
+  for (let i = 0; i < 6; i++) blankPress(p, i * 150, i * 150 + 120, 300, { o: {} }); // 빈칸 밖 손글씨 — 기록 없음
+  assert.equal(row(p, "펜 콕 튐", Y700), `${yHead(0)} · 한 번 콕으로 합친 것 0번 · ${GAPS} -`);
+  blankPress(p, 3000, 3400, 600); // 앞 누름이 길었음(400ms ≥ TAP_MS)
+  blankPress(p, 3420, 3450, 600);
+  blankPress(p, 5000, 5060, 800); // 콕
+  blankPress(p, 5080, 5400, 800); // 20ms 뒤 다시 닿아 320ms 누름 — 지금 누름이 콕이 아님(예전에는 셌음)
+  blankPress(p, 7000, 7100, 700, { slide: 13 }); // 앞 누름이 13px 미끄러짐(빈칸 콕 한도 12 넘음 — 뗀 자리는 713)
+  blankPress(p, 7120, 7150, 713);
+  blankPress(p, 9000, 9060, 900); // 콕
+  blankPress(p, 9080, 9090, 900); // 20ms 뒤 10ms 튐 — 이것만
+  assert.equal(row(p, "펜 콕 튐", Y700), `${yHead(1)} · 한 번 콕으로 합친 것 0번 · ${GAPS} 20(60/10)`);
+  assert.equal(row(p, "펜 콕 튐", { ...Y700, TAP_MS: 500, PEN_BLANK_TAP_SLOP: 14 }),
+    `${yHead(4)} · 한 번 콕으로 합친 것 0번 · ${GAPS} 20(400/30) 20(60/320) 20(100/30) 20(60/10)`, "프로필 한도로 두 누름이 콕이 되면 셈");
 });
 
-test("펜 콕 시간: 빈칸에서 시작한 누름 중 빈칸 콕 한도(프로필) 안에서 움직인 것만, 프로필 TAP_MS 넘은 수", () => {
+test("펜 콕 시간: 따로 떨어진 빈칸 누름 중 빈칸 콕 한도(프로필) 안에서 움직인 것만 — 가장 긴 값·둘째로 긴 값, 프로필 TAP_MS 넘은 수", () => {
   const p = createProbe();
-  p.pointer(pen("pointerdown", 0, 0, 0), BLANK); p.pointer(pen("pointermove", 50, 5, 0, { down: true })); p.pointer(pen("pointerup", 120, 5, 0));
-  p.pointer(pen("pointerdown", 500, 0, 0)); p.pointer(pen("pointerup", 900, 0, 0)); // 빈칸 밖(점·손글씨) — 세지 않음
-  p.pointer(pen("pointerdown", 1000, 0, 0), BLANK); p.pointer(pen("pointerup", 1350, 0, 0));
-  p.pointer(pen("pointerdown", 2000, 0, 0), BLANK); p.pointer(pen("pointermove", 2050, 13, 0, { down: true })); p.pointer(pen("pointerup", 2100, 13, 0)); // 선(13px)
-  p.pointer(pen("pointerdown", 3000, 0, 0), BLANK); p.pointer(pen("pointerup", 3200, 0, 0));
-  assert.equal(row(p, "펜 콕 시간(짧게 누른 것)"), "3번 · 가운데값 200ms · 가장 긴 350ms · 300ms 넘어 점이 된 것 1번");
-  assert.equal(row(p, "펜 콕 시간(짧게 누른 것)", { TAP_MS: 400, PEN_BLANK_TAP_SLOP: 14 }), "4번 · 가운데값 160ms · 가장 긴 350ms · 400ms 넘어 점이 된 것 0번");
-  assert.equal(row(createProbe(), "펜 콕 시간(짧게 누른 것)"), "아직 없음");
+  blankPress(p, 0, 120, 0, { slide: 5 });
+  blankPress(p, 1000, 1400, 0, { o: {} }); // 빈칸 밖(점·손글씨) — 세지 않음(0.5초 넘게 떨어져 있어 앞뒤 콕도 그대로)
+  blankPress(p, 2000, 2350, 0);
+  blankPress(p, 3000, 3100, 0, { slide: 13 }); // 선(13px)
+  blankPress(p, 4000, 4200, 0);
+  assert.equal(row(p, TAPS), "3번 · 가운데값 200ms · 가장 긴 350ms · 둘째로 긴 200ms · 300ms 넘어 점이 된 것 1번");
+  assert.equal(row(p, TAPS, { ...GALAXY, TAP_MS: 400, PEN_BLANK_TAP_SLOP: 14 }), "4번 · 가운데값 160ms · 가장 긴 350ms · 둘째로 긴 200ms · 400ms 넘어 점이 된 것 0번");
+  assert.equal(row(createProbe(), TAPS), "아직 없음");
+  const one = createProbe();
+  blankPress(one, 0, 90);
+  assert.equal(row(one, TAPS), "1번 · 가운데값 90ms · 가장 긴 90ms · 300ms 넘어 점이 된 것 0번");
+});
+
+test("빈칸 위 손글씨(이어 쓴 획)는 콕 시간·튐에서 빠짐 — 콕 10번 + 빈칸 위 답 쓰기(검토 exp-f8-write) → 가장 긴 값은 콕 값", () => {
+  const p = createProbe();
+  for (let i = 0; i < 10; i++) { const t = 1000 + i * 1100; blankPress(p, t, t + 70); } // 해 볼 것 2: 한 번 콕 → 1초 쉬기
+  let t = 30000;
+  let x = 300;
+  // 해 볼 것 5: 빈칸 위에 답을 씀 — 빈칸에서 시작해 12px 안에서 끝나는 짧은 획(점·삐침), 획 사이 45ms, 다음 획은 앞 획 끝 바로 옆
+  for (const [ms, dx] of [[150, 8], [320, 6], [90, 4], [260, 10], [380, 7], [120, 5], [200, 9], [340, 11]]) {
+    blankPress(p, t, t + ms, x, { slide: dx });
+    t += ms + 45;
+    x += dx;
+  }
+  assert.equal(row(p, TAPS, Y700), "10번 · 가운데값 70ms · 가장 긴 70ms · 둘째로 긴 70ms · 300ms 넘어 점이 된 것 0번 · 뺀 누름 8번(빈칸 위 손글씨·튐)");
+  assert.equal(row(p, "펜 콕 튐", Y700), `${yHead(0)} · 한 번 콕으로 합친 것 0번 · ${GAPS} -`);
+  assert.equal(row(p, TAPS, GALAXY), "10번 · 가운데값 70ms · 가장 긴 70ms · 둘째로 긴 70ms · 300ms 넘어 점이 된 것 0번 · 뺀 누름 8번(빈칸 위 손글씨·튐)");
+});
+
+test("빈칸 콕으로 볼 묶음: 앞뒤 0.5초 안에 다른 펜 누름(빈칸 밖 획·취소된 누름)이 있으면 뺌, 두 번 콕은 DOUBLE_TAP_MS 안의 한 쌍만, 세 번은 뺌, 튐은 합쳐 셈(Y700)", () => {
+  const p = createProbe();
+  blankPress(p, 1000, 1070); // A: 0.3초 뒤 빈칸 밖 획 — 뺌
+  blankPress(p, 1370, 1500, 300, { o: {} });
+  blankPress(p, 3000, 3080); // B: 앞 획 끝에서 1.5초 — 따로 떨어진 콕
+  blankPress(p, 5000, 5060); blankPress(p, 5260, 5330); // C: 두 번 콕(사이 200ms)
+  blankPress(p, 7000, 7060); blankPress(p, 7510, 7590); // D: 사이 450ms(두 번 콕 400ms 넘음, 0.5초 안) — 뺌
+  blankPress(p, 9000, 9060); blankPress(p, 9200, 9260); blankPress(p, 9400, 9460); // E: 세 번 — 뺌
+  p.pointer(pen("pointerdown", 11000, 100), BLANK); p.pointer(pen("pointercancel", 11050)); // 취소된 빈칸 누름(기록 밖)
+  blankPress(p, 11300, 11390); // F: 앞 0.25초에 취소된 누름 — 뺌
+  blankPress(p, 13000, 13060); blankPress(p, 13065, 13072); blankPress(p, 13300, 13360); // G: 두 번 콕 가운데 7ms 튐
+  assert.equal(row(p, TAPS, Y700), "5번 · 가운데값 60ms · 가장 긴 80ms · 둘째로 긴 70ms · 300ms 넘어 점이 된 것 0번 · 뺀 누름 8번(빈칸 위 손글씨·튐)");
+  assert.equal(row(p, "펜 콕 튐", Y700), `${yHead(1)} · 한 번 콕으로 합친 것 0번 · ${GAPS} 5(60/7)`);
+  // 갤럭시는 튐을 합치지 않아 G 가 세 번 — 뺌
+  assert.equal(row(p, TAPS, GALAXY), "3번 · 가운데값 70ms · 가장 긴 80ms · 둘째로 긴 70ms · 300ms 넘어 점이 된 것 0번 · 뺀 누름 10번(빈칸 위 손글씨·튐)");
+  assert.equal(row(p, "펜 콕 튐", GALAXY), `튐 합치기 안 씀(이 태블릿 기준) · 한 번 콕으로 합친 것 0번 · ${GAPS} -`);
+  // 마지막 콕 바로 뒤(0.3초)에 다음 누름이 닿아 있는 동안은 그 콕도 이어 쓴 것으로 봄
+  const q = createProbe();
+  blankPress(q, 0, 70);
+  assert.equal(row(q, TAPS), "1번 · 가운데값 70ms · 가장 긴 70ms · 300ms 넘어 점이 된 것 0번");
+  q.pointer(pen("pointerdown", 370, 300));
+  assert.equal(row(q, TAPS), "아직 없음 · 뺀 누름 1번(빈칸 위 손글씨·튐)");
 });
 
 test("빈칸 누름은 손글씨 획과 따로 최근 100개 — 획 300개 뒤에도 콕 기록이 남음", () => {
@@ -262,9 +311,9 @@ test("빈칸 누름은 손글씨 획과 따로 최근 100개 — 획 300개 뒤�
     const t = 20000 + i * 300;
     p.pointer(pen("pointerdown", t, 300, 300)); p.pointer(pen("pointermove", t + 60, 305, 300, { down: true })); p.pointer(pen("pointerup", t + 170, 305, 300));
   }
-  assert.equal(row(p, "펜 콕 시간(짧게 누른 것)"), "10번 · 가운데값 70ms · 가장 긴 70ms · 300ms 넘어 점이 된 것 0번");
+  assert.equal(row(p, TAPS), "10번 · 가운데값 70ms · 가장 긴 70ms · 둘째로 긴 70ms · 300ms 넘어 점이 된 것 0번");
   for (let i = 0; i < 120; i++) { p.pointer(pen("pointerdown", 200000 + i * 1000, 0, 0), BLANK); p.pointer(pen("pointerup", 200000 + i * 1000 + 80, 0, 0)); }
-  assert.equal(row(p, "펜 콕 시간(짧게 누른 것)"), `${PROBE.BLANK_KEEP}번 · 가운데값 80ms · 가장 긴 80ms · 300ms 넘어 점이 된 것 0번`);
+  assert.equal(row(p, TAPS), `${PROBE.BLANK_KEEP}번 · 가운데값 80ms · 가장 긴 80ms · 둘째로 긴 80ms · 300ms 넘어 점이 된 것 0번`);
 });
 
 test("막은 손 터치: 바로 앞 손 누름의 크기 · 펜 뒤는 손이 닿을 때의 마지막 펜 자리에서, 펜과 겹침은 겹친 펜이 닿은 자리에서 거리, palm 은 세지 않음", () => {
