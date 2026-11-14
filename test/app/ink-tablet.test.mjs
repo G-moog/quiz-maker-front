@@ -1,5 +1,6 @@
 // 태블릿 프로필(geometry GALAXY·Y700)과 고른 태블릿 저장(ink/tablet) 시험.
 // 갤럭시 = 지금까지와 똑같음: GALAXY 는 내보낸 상수 그대로, 프로필을 넘기든 안 넘기든 판정 함수 결과가 같음(경계값 격자)
+// Y700 = 11/15 ?pentest 실측 값(갤럭시와 다른 것은 손 접촉 42px·촉 튐 50ms 뿐 — 판정 격자로 지킨다)
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as G from "../../src/ink/geometry.js";
@@ -7,6 +8,10 @@ import { DEFAULT_TABLET, TABLETS, TABLET_KEY, baselineText, createTabletStore, m
 
 const { GALAXY, Y700, TABLET_PROFILES, profileOf } = G;
 const SHARED = ["TAP_SLOP", "PEN_BLANK_TAP_SLOP", "TAP_MS", "DOUBLE_TAP_MS", "PALM_MS", "PALM_SAFE_MS", "PEN_STUCK_MS", "PEN_HELD_MAX_MS", "TOUCH_SLOP", "PALM_CONTACT_PX"];
+// 지금 어느 태블릿도 쓰지 않는 값을 지키는 고정 시험 프로필(pen-probe 시험의 BOUNCY 와 같은 방식) — 실측으로 Y700 값이 또 바뀌어도
+// 판정 함수가 프로필의 손바닥 시간·펜 뒤 손 막기를 쓰는지는 이 둘로 본다. LONG_PALM = 옛 Y700 처음 값의 손바닥 700ms
+const LONG_PALM = Object.freeze({ ...GALAXY, id: "t-palm700", PALM_MS: 700 });
+const GUARD = Object.freeze({ ...GALAXY, id: "t-guard", HAND_TAP_AFTER_PEN_MS: 1000, PEN_OVERLAP_BLOCK: 1 });
 
 test("GALAXY = 내보낸 상수 그대로 + 예전 숫자(100·2·34), 새 규칙은 0(끔)", () => {
   for (const k of SHARED) assert.equal(GALAXY[k], G[k], k);
@@ -19,13 +24,13 @@ test("GALAXY = 내보낸 상수 그대로 + 예전 숫자(100·2·34), 새 규�
   assert.equal(GALAXY.PEN_OVERLAP_BLOCK, 0);
 });
 
-test("Y700: 같은 열쇠, 모두 유한한 수, 얼려 있음, 처음 값", () => {
+test("Y700: 같은 열쇠, 모두 유한한 수, 얼려 있음, 11/15 실측 값(갤럭시와 다른 것은 손 접촉·촉 튐뿐)", () => {
   assert.deepEqual(Object.keys(Y700).sort(), Object.keys(GALAXY).sort());
   for (const [k, v] of Object.entries(Y700)) if (k !== "id") assert.ok(Number.isFinite(v), k);
   assert.ok(Object.isFrozen(GALAXY) && Object.isFrozen(Y700) && Object.isFrozen(TABLET_PROFILES));
   const diff = Object.keys(GALAXY).filter((k) => GALAXY[k] !== Y700[k]).sort();
-  assert.deepEqual(diff, ["HAND_TAP_AFTER_PEN_MS", "PALM_CONTACT_PX", "PALM_MS", "PEN_BOUNCE_MS", "PEN_OVERLAP_BLOCK", "id"]);
-  assert.deepEqual([Y700.PALM_MS, Y700.PALM_CONTACT_PX, Y700.HAND_TAP_AFTER_PEN_MS, Y700.PEN_BOUNCE_MS, Y700.PEN_OVERLAP_BLOCK], [700, 42, 1000, 50, 1]);
+  assert.deepEqual(diff, ["PALM_CONTACT_PX", "PEN_BOUNCE_MS", "id"]);
+  assert.deepEqual([Y700.PALM_MS, Y700.PALM_CONTACT_PX, Y700.HAND_TAP_AFTER_PEN_MS, Y700.PEN_BOUNCE_MS, Y700.PEN_OVERLAP_BLOCK], [500, 42, 0, 50, 0]);
 });
 
 test("profileOf: 모르는 값('__proto__' 등)은 GALAXY, 프로필 차례 = 고르기 차례", () => {
@@ -73,20 +78,30 @@ test("같음 격자: f(...a) === f(...a, GALAXY) (갤럭시 판정이 바뀌지 
   assert.ok(n > 10000, `격자 ${n}개`);
 });
 
-test("Y700 차이(의도한 것만)", () => {
+test("Y700 차이(의도한 것만): 손 접촉 42px·촉 튐 50ms — 손바닥 시간·펜 뒤 손 막기는 갤럭시와 같고, 그 계산은 고정 시험 프로필로", () => {
+  for (const t of [LONG_PALM, GUARD]) {
+    assert.deepEqual(Object.keys(t).sort(), Object.keys(GALAXY).sort(), `${t.id}: 열쇠 이름이 프로필과 같음(오타면 값이 안 쓰임)`);
+    assert.ok(Object.isFrozen(t));
+  }
   assert.equal(G.isLargeContact(40, 40, Y700), false);
   assert.equal(G.isLargeContact(40, 40, GALAXY), true);
   assert.equal(G.isLargeContact(43, 1, Y700), true);
+  // 손바닥 시간은 프로필 PALM_MS 로 셈(LONG_PALM 700) — Y700 은 11/15 실측 뒤 갤럭시와 같은 500
   const up = { penDown: false, lastPenDown: 0, lastPenHover: -Infinity, lastPenUp: 0 };
-  assert.equal(G.palmBlocked(up, 600, false, Y700), true);
+  assert.equal(G.palmBlocked(up, 600, false, LONG_PALM), true);
   assert.equal(G.palmBlocked(up, 600, false, GALAXY), false);
-  assert.equal(G.palmBlocked(up, 600, true, Y700), false, "머리 줄(safe)은 같게 150ms");
-  assert.equal(G.tapSlop("pen", true, Y700), 12, "콕 한도는 실측 전까지 갤럭시와 같음");
+  assert.equal(G.palmBlocked(up, 600, true, LONG_PALM), false, "머리 줄(safe)은 같게 150ms");
+  assert.equal(G.palmBlocked(up, 600, false, Y700), false, "Y700 손바닥 500ms = 갤럭시");
+  assert.equal(G.palmBlocked(up, 499, false, Y700), true);
+  assert.equal(G.tapSlop("pen", true, Y700), 12, "콕 한도는 실측 뒤에도 갤럭시와 같음");
   assert.equal(G.isTap(6.5, 100, "pen", undefined, { ...Y700, TAP_SLOP: 7 }), true, "slop 을 빼면 넘긴 프로필의 TAP_SLOP");
-  assert.equal(G.handTapGuarded({ lastPenUp: 0 }, 999, Y700), true);
-  assert.equal(G.handTapGuarded({ lastPenUp: 0 }, 1000, Y700), false);
-  assert.equal(G.handTapGuarded({ lastPenUp: 0, lastPenHover: 1000 }, 1999, Y700), true, "마지막 호버부터 셈");
-  assert.equal(G.handTapGuarded({}, 5, Y700), false, "펜을 쓴 적 없음");
+  // 펜 뒤 손 막기(GUARD 1000ms): 마지막 펜 뗌·호버 중 늦은 것부터, 문턱 미만만 — Y700 은 0(끔) = 갤럭시
+  assert.equal(G.handTapGuarded({ lastPenUp: 0 }, 999, GUARD), true);
+  assert.equal(G.handTapGuarded({ lastPenUp: 0 }, 1000, GUARD), false);
+  assert.equal(G.handTapGuarded({ lastPenUp: 0, lastPenHover: 1000 }, 1999, GUARD), true, "마지막 호버부터 셈");
+  assert.equal(G.handTapGuarded({}, 5, GUARD), false, "펜을 쓴 적 없음");
+  assert.equal(G.handTapGuarded({ lastPenUp: 0 }, 1, Y700), false, "Y700 펜 뒤 손 막기 끔");
+  assert.equal(G.handTapGuarded({ lastPenUp: 0 }, 999, Y700), false);
   // 튐: 앞 콕(60ms 접촉)을 뗀 뒤 PEN_BOUNCE_MS 안에 같은 빈칸에 짧게(5ms) 다시 닿음
   const tap = (blank, downAt, upAt) => ({ blank, downAt, upAt });
   assert.equal(G.isPenBounce(tap(2, 40, 100), tap(2, 149, 154), Y700), true);
@@ -95,6 +110,64 @@ test("Y700 차이(의도한 것만)", () => {
   assert.equal(G.isPenBounce(tap(2, 40, 100), tap(3, 120, 125), Y700), false);
   assert.equal(G.isPenBounce(tap(null, 40, 100), tap(null, 120, 125), Y700), false);
   assert.equal(G.isPenBounce(null, tap(2, 120, 125), Y700), false);
+});
+
+test("Y700 판정 = 갤럭시(11/15 실측): 손바닥·펜 뒤·콕·두 번 콕은 같고, 손 접촉은 36~42px 에서만, 촉 튐은 튐인 경우만 다름", () => {
+  let n = 0;
+  const same = (name, a, b, args) => { n++; assert.equal(a, b, `${name}(${JSON.stringify(args)})`); };
+  const T = 20000;
+  const offs = [0, 1, 149, 150, 151, 299, 300, 499, 500, 501, 699, 700, 701, 999, 1000, 1001, 1999, 2000, 2001, 9999, 10000, 10001];
+  for (const penDown of [false, true]) for (const lastPenDown of [undefined, -Infinity, T - 100, T - 2500]) for (const lastPenHover of [-Infinity, T - 300, T - 1200])
+    for (const lastPenUp of [-Infinity, T - 50, T - 600]) for (const penActiveAt of [null, T - 400, T - 12000]) for (const lastPenAir of [-Infinity, T - 200]) {
+      const s = { penDown, lastPenHover, lastPenUp, penActiveAt, lastPenAir };
+      if (lastPenDown !== undefined) s.lastPenDown = lastPenDown;
+      for (const o of offs) {
+        const now = T + o - 1000;
+        for (const safe of [false, true]) same("palmBlocked", G.palmBlocked(s, now, safe, Y700), G.palmBlocked(s, now, safe, GALAXY), [s, now, safe]);
+        same("handTapGuarded", G.handTapGuarded(s, now, Y700), G.handTapGuarded(s, now, GALAXY), [s, now]);
+      }
+    }
+  const moves = [0, 5.9, 6, 9.9, 10, 11.9, 12, 13];
+  const times = [0, 299, 300, 1000];
+  for (const type of ["pen", "mouse", "touch", ""]) {
+    for (const moved of moves) for (const ms of times) same("isTap(slop 뺌)", G.isTap(moved, ms, type, undefined, Y700), G.isTap(moved, ms, type, undefined, GALAXY), [moved, ms, type]);
+    for (const blank of [true, false]) {
+      same("tapSlop", G.tapSlop(type, blank, Y700), G.tapSlop(type, blank, GALAXY), [type, blank]);
+      for (const moved of moves) for (const ms of times) {
+        same("isTap", G.isTap(moved, ms, type, G.tapSlop(type, blank, Y700), Y700), G.isTap(moved, ms, type, G.tapSlop(type, blank, GALAXY), GALAXY), [moved, ms, type, blank]);
+      }
+    }
+  }
+  for (const gap of [-1, 0, 49, 50, 399, 400, 401]) for (const pb of [3, 4, null]) for (const prevNull of [false, true]) {
+    const prev = prevNull ? null : { blank: 3, downAt: 0, upAt: 100 };
+    const tap = { blank: pb, downAt: 100 + gap, upAt: 150 + gap };
+    same("isDoubleTap", G.isDoubleTap(prev, tap, Y700), G.isDoubleTap(prev, tap, GALAXY), [prev, tap]);
+  }
+  // 손 접촉: 큰 쪽이 35px 넘고 42px 이하일 때만 다름(갤럭시는 손바닥, Y700 은 아님) — 이 기기는 크기를 늘 0 으로 줘서 실제로는 같음
+  const sizes = [NaN, undefined, 0, 1, 2, 34, 35, 36, 41, 42, 43, 70, 80];
+  for (const w of sizes) for (const h of sizes) {
+    n++;
+    const big = Math.max(Number.isFinite(w) ? w : 0, Number.isFinite(h) ? h : 0);
+    assert.equal(G.isLargeContact(w, h, Y700) !== G.isLargeContact(w, h, GALAXY), big > 35 && big <= 42, `isLargeContact(${w}, ${h})`);
+  }
+  // 촉 튐: 갤럭시는 늘 아님, Y700 은 같은 빈칸 · 뗀 뒤 50ms 안 · (뗀 뒤 40ms 안 또는 한쪽 접촉 30ms 미만)일 때만
+  const tap = (blank, downAt, upAt) => ({ blank, downAt, upAt });
+  for (const [pb, tb] of [[2, 2], [2, 3], [null, null]]) for (const a of [4, 29, 30, 45, 67, 80]) for (const gap of [-1, 0, 1, 20, 39, 40, 45, 49, 50, 60, 78, 96]) for (const b of [4, 29, 30, 57, 67, 80]) {
+    n++;
+    const prev = tap(pb, 0, a);
+    const cur = tap(tb, a + gap, a + gap + b);
+    const bounce = pb != null && pb === tb && gap >= 0 && gap < 50 && (gap < 40 || Math.min(a, b) < 30);
+    assert.equal(G.isPenBounce(prev, cur, GALAXY), false);
+    assert.equal(G.isPenBounce(prev, cur, Y700), bounce, `isPenBounce(${a}/${gap}/${b}, 빈칸 ${pb}/${tb})`);
+  }
+  // 사용자가 실측한 두 번 콕(뗀 뒤 78·96ms, 접촉 67~80ms)은 튐이 아니고 두 번 콕 — 갤럭시처럼 열린다
+  for (const [a, gap, b] of [[67, 78, 80], [80, 78, 67], [67, 96, 80], [80, 96, 67]]) {
+    const prev = tap(1, 0, a);
+    const cur = tap(1, a + gap, a + gap + b);
+    assert.equal(G.isPenBounce(prev, cur, Y700), false);
+    assert.equal(G.isDoubleTap(prev, cur, Y700), true);
+  }
+  assert.ok(n > 25000, `격자 ${n}개`);
 });
 
 test("isTap: slop 을 빼면(undefined) 프로필 TAP_SLOP, null 은 예전 기본 인자(slop = TAP_SLOP)처럼 그대로 — moved < null", () => {
@@ -188,7 +261,11 @@ test("parseTablet·tabletOf·baselineText·modelHint", () => {
   assert.equal(tabletOf("zzz").id, "galaxy");
   assert.equal(tabletOf("y700").changed, "태블릿을 레노버 Y700으로 바꿨습니다");
   assert.equal(baselineText("galaxy"), "갤럭시탭 — 손바닥 500ms · 손 접촉 35px · 손 터치 10px · 빈칸 콕 12px · 콕 300ms · 두 번 콕 400ms");
-  assert.equal(baselineText("y700"), "레노버 Y700 5세대 — 손바닥 700ms · 손 접촉 42px · 손 터치 10px · 빈칸 콕 12px · 콕 300ms · 두 번 콕 400ms · 펜 뒤 손 터치 1000ms 막음 · 콕 튐 50ms 합침 · 펜과 겹친 손 막음");
+  assert.equal(baselineText("y700"), "레노버 Y700 5세대 — 손바닥 500ms · 손 접촉 42px · 손 터치 10px · 빈칸 콕 12px · 콕 300ms · 두 번 콕 400ms · 콕 튐 50ms 합침");
+  assert.equal(baselineText("y700", Y700), baselineText("y700"), "값 묶음을 빼면 id 의 프로필");
+  // 지금 어느 태블릿도 켜지 않은 규칙의 글(펜 뒤 손 터치 막음·펜과 겹친 손 막음)은 넘긴 값 묶음으로 — 옛 Y700 처음 값이면 예전 글 그대로
+  assert.equal(baselineText("y700", { ...Y700, PALM_MS: 700, HAND_TAP_AFTER_PEN_MS: 1000, PEN_OVERLAP_BLOCK: 1 }), "레노버 Y700 5세대 — 손바닥 700ms · 손 접촉 42px · 손 터치 10px · 빈칸 콕 12px · 콕 300ms · 두 번 콕 400ms · 펜 뒤 손 터치 1000ms 막음 · 콕 튐 50ms 합침 · 펜과 겹친 손 막음");
+  assert.equal(baselineText("galaxy", GUARD), "갤럭시탭 — 손바닥 500ms · 손 접촉 35px · 손 터치 10px · 빈칸 콕 12px · 콕 300ms · 두 번 콕 400ms · 펜 뒤 손 터치 1000ms 막음 · 펜과 겹친 손 막음");
   assert.equal(modelHint("TB323FU", "galaxy"), "이 기기는 레노버 태블릿(TB323FU)으로 보입니다 — '레노버 Y700 5세대'를 고르세요.");
   assert.equal(modelHint("Lenovo TB-J716F", "galaxy"), "이 기기는 레노버 태블릿(Lenovo TB-J716F)으로 보입니다 — '레노버 Y700 5세대'를 고르세요.");
   assert.equal(modelHint("TB323FU", "y700"), "");

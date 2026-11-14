@@ -18,9 +18,9 @@ export function tabletOf(id) {
   return TABLETS.find((t) => t.id === id) || TABLETS[0];
 }
 
-// '태블릿 기준' 한 줄(?pentest 표 맨 위 — 캡처·복사한 결과가 어느 기준인지 스스로 말하게)
-export function baselineText(id) {
-  const p = profileOf(id);
+// '태블릿 기준' 한 줄(?pentest 표 맨 위 — 캡처·복사한 결과가 어느 기준인지 스스로 말하게).
+// p 는 시험이 다른 값 묶음(지금 어느 태블릿도 켜지 않은 규칙 등)의 글을 보려고 넘긴다 — 화면은 id 만
+export function baselineText(id, p = profileOf(id)) {
   const parts = [
     `손바닥 ${p.PALM_MS}ms`, `손 접촉 ${p.PALM_CONTACT_PX}px`, `손 터치 ${p.TOUCH_SLOP}px`,
     `빈칸 콕 ${p.PEN_BLANK_TAP_SLOP}px`, `콕 ${p.TAP_MS}ms`, `두 번 콕 ${p.DOUBLE_TAP_MS}ms`,

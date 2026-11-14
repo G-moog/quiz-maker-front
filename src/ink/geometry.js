@@ -35,7 +35,8 @@ export const SCROLL_MOVING_MS = 120;
 
 // ── 태블릿별 입력 판정 값(펜·손 가르기) ──
 // GALAXY = 지금까지 쓰던 값 그대로(위 상수 자체 — 시험 ink-tablet 이 지킨다). 다른 태블릿은 다른 값만 덮어쓴다.
-// 0 인 값(HAND_TAP_AFTER_PEN_MS·PEN_BOUNCE_MS·PEN_OVERLAP_BLOCK)은 그 규칙을 쓰지 않음 — 갤럭시는 모두 0
+// 0 인 값(HAND_TAP_AFTER_PEN_MS·PEN_BOUNCE_MS·PEN_OVERLAP_BLOCK)은 그 규칙을 쓰지 않음. 펜 뒤 손 막기·겹침 막기는 지금 두 태블릿
+// 모두 0(다시 켤 수 있게 코드는 남기고 고정 시험 프로필로 시험이 지킨다), 촉 튐 합치기는 Y700 만 50
 export const GALAXY = Object.freeze({
   id: "galaxy",
   TAP_SLOP, PEN_BLANK_TAP_SLOP, TAP_MS, DOUBLE_TAP_MS, PALM_MS, PALM_SAFE_MS, PEN_STUCK_MS, PEN_HELD_MAX_MS,
@@ -47,15 +48,15 @@ export const GALAXY = Object.freeze({
   PEN_BOUNCE_MS: 0, // 펜 콕을 뗀 뒤 이 ms 안에 같은 빈칸에 다시 닿으면 촉이 튄 것 — 같은 콕으로 합침
   PEN_OVERLAP_BLOCK: 0, // 1 이면 펜이 닿는 순간 이미 닿아 있던 손(머리 줄 밖)의 click 을 막음
 });
-// 레노버 Y700 5세대(리전탭, TB323FU) + 펜 AP501U(탭 펜 플러스, 액티브 정전식). 실측 전 처음 값 — ?pentest 로 고친다
+// 레노버 Y700 5세대(리전탭, TB323FU) + 펜 AP501U(탭 펜 플러스, 액티브 정전식). 11/15 ?pentest 실측으로 고친 값:
+// 펜 호버가 갤럭시처럼 먼저 온다(다가온 누름 9/9 호버가 먼저, 미리 온 시간 가운데 745ms · 뗀 뒤 0.3초 안 호버 20/20) —
+// 호버가 손바닥을 막아 주므로 손바닥 시간·펜 뒤 손 막기·겹침 막기는 갤럭시 값(500·0·0). 갤럭시와 다른 것은 아래 둘뿐.
+// ('손 터치 움직임' 94.7px 는 손가락으로 일부러 끈 거리까지 잰 값이라 TOUCH_SLOP 근거가 아님 — 10 그대로)
 export const Y700 = Object.freeze({
   ...GALAXY,
   id: "y700",
-  PALM_MS: 700, // 호버가 없거나 짧아도 펜을 뗀 뒤 손바닥을 조금 더 오래 막게
-  PALM_CONTACT_PX: 42, // 크기 눈금을 모름 — 손가락을 손바닥으로 잘못 보는 쪽(영역 손 입력이 모두 죽음)으로 틀리지 않게
-  HAND_TAP_AFTER_PEN_MS: 1000,
-  PEN_BOUNCE_MS: 50,
-  PEN_OVERLAP_BLOCK: 1,
+  PALM_CONTACT_PX: 42, // 이 기기는 손 접촉 크기를 늘 0×0 으로 줘서 크기 규칙이 걸리지 않음(쓰이지 않는 값 — 근거 없이 바꾸지 않음)
+  PEN_BOUNCE_MS: 50, // 실측한 두 번 콕(간격 78·96ms)은 합치지 않음. '한 번 콕 → 1초 쉬기' 실측 뒤 다시 본다
 });
 export const TABLET_PROFILES = Object.freeze({ galaxy: GALAXY, y700: Y700 });
 // id → 값 묶음. 모르는 값('__proto__' 포함)은 GALAXY
