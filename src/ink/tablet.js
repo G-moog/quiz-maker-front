@@ -6,7 +6,7 @@ import { profileOf } from "./geometry.js";
 export const TABLET_KEY = "qm:ink-tablet:v1";
 export const DEFAULT_TABLET = "galaxy";
 export const TABLETS = [
-  { id: "galaxy", name: "갤럭시탭", sub: "S펜 · 지금까지 쓰던 기준", chip: "갤럭시탭 · S펜", changed: "태블릿을 갤럭시탭으로 바꿨습니다" },
+  { id: "galaxy", name: "갤럭시탭", sub: "S펜", chip: "갤럭시탭 · S펜", changed: "태블릿을 갤럭시탭으로 바꿨습니다" },
   { id: "y700", name: "레노버 Y700 5세대", sub: "펜 AP501U", chip: "레노버 Y700 5세대 · 펜 AP501U", changed: "태블릿을 레노버 Y700으로 바꿨습니다" },
 ];
 

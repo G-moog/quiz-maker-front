@@ -40,7 +40,7 @@ test("같음 격자: f(...a) === f(...a, GALAXY) (갤럭시 판정이 바뀌지 
   const same = (name, a, b, args) => { n++; assert.equal(b, a, `${name}(${JSON.stringify(args)})`); };
   for (const type of ["pen", "mouse", "touch", ""]) for (const blank of [true, false]) same("tapSlop", G.tapSlop(type, blank), G.tapSlop(type, blank, GALAXY), [type, blank]);
   for (const moved of [0, 5.9, 6, 6.9, 7, 9.9, 10, 11.9, 12, 13.9, 14, 20]) for (const ms of [0, 299, 300, 1000]) for (const type of ["pen", "mouse", "touch", ""]) {
-    for (const slop of [undefined, 6, 7, 10, 12, 14]) {
+    for (const slop of [undefined, null, 6, 7, 10, 12, 14]) {
       const a = slop === undefined ? G.isTap(moved, ms, type) : G.isTap(moved, ms, type, slop);
       same("isTap", a, G.isTap(moved, ms, type, slop, GALAXY), [moved, ms, type, slop]);
     }
@@ -87,12 +87,41 @@ test("Y700 차이(의도한 것만)", () => {
   assert.equal(G.handTapGuarded({ lastPenUp: 0 }, 1000, Y700), false);
   assert.equal(G.handTapGuarded({ lastPenUp: 0, lastPenHover: 1000 }, 1999, Y700), true, "마지막 호버부터 셈");
   assert.equal(G.handTapGuarded({}, 5, Y700), false, "펜을 쓴 적 없음");
-  assert.equal(G.isPenBounce({ blank: 2, upAt: 100 }, { blank: 2, downAt: 149 }, Y700), true);
-  assert.equal(G.isPenBounce({ blank: 2, upAt: 100 }, { blank: 2, downAt: 150 }, Y700), false);
-  assert.equal(G.isPenBounce({ blank: 2, upAt: 100 }, { blank: 2, downAt: 99 }, Y700), false);
-  assert.equal(G.isPenBounce({ blank: 2, upAt: 100 }, { blank: 3, downAt: 120 }, Y700), false);
-  assert.equal(G.isPenBounce({ blank: null, upAt: 100 }, { blank: null, downAt: 120 }, Y700), false);
-  assert.equal(G.isPenBounce(null, { blank: 2, downAt: 120 }, Y700), false);
+  // 튐: 앞 콕(60ms 접촉)을 뗀 뒤 PEN_BOUNCE_MS 안에 같은 빈칸에 짧게(5ms) 다시 닿음
+  const tap = (blank, downAt, upAt) => ({ blank, downAt, upAt });
+  assert.equal(G.isPenBounce(tap(2, 40, 100), tap(2, 149, 154), Y700), true);
+  assert.equal(G.isPenBounce(tap(2, 40, 100), tap(2, 150, 155), Y700), false, "뗀 뒤 50ms 면 아님");
+  assert.equal(G.isPenBounce(tap(2, 40, 100), tap(2, 99, 104), Y700), false);
+  assert.equal(G.isPenBounce(tap(2, 40, 100), tap(3, 120, 125), Y700), false);
+  assert.equal(G.isPenBounce(tap(null, 40, 100), tap(null, 120, 125), Y700), false);
+  assert.equal(G.isPenBounce(null, tap(2, 120, 125), Y700), false);
+});
+
+test("isTap: slop 을 빼면(undefined) 프로필 TAP_SLOP, null 은 예전 기본 인자(slop = TAP_SLOP)처럼 그대로 — moved < null", () => {
+  assert.equal(G.isTap(5.99, 100, "mouse"), true);
+  assert.equal(G.isTap(5.99, 100, "mouse", undefined), true);
+  assert.equal(G.isTap(5.99, 100, "mouse", null), false, "master 와 같게(기본 인자는 undefined 일 때만)");
+  assert.equal(G.isTap(0, 100, "pen", null), false);
+  assert.equal(G.isTap(-1, 100, "pen", null), true);
+  assert.equal(G.isTap(5.99, 100, "mouse", null, Y700), false);
+  assert.equal(G.isTap(5.99, 100, "mouse", undefined, Y700), true);
+});
+
+test("촉 튐은 두 접촉 중 하나가 아주 짧을 때만(PEN_BOUNCE_CONTACT_MS 30) — 뗀 뒤 40ms 에 다시 닿은 진짜 빠른 두 번 콕은 열림", () => {
+  const tap = (blank, downAt, upAt) => ({ blank, downAt, upAt });
+  assert.equal(G.PEN_BOUNCE_CONTACT_MS, 30);
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 65, 70), Y700), true, "콕 + 5ms 뒤 튐(접촉 5ms) → 합침");
+  assert.equal(G.isPenBounce(tap(2, 0, 4), tap(2, 20, 80), Y700), true, "닿는 순간 튐(접촉 4ms) 뒤 콕 → 합침");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 100, 160), Y700), false, "각 60ms, 뗀 뒤 40ms → 튐 아님");
+  assert.equal(G.isPenBounce(tap(2, 0, 40), tap(2, 80, 120), Y700), false, "각 40ms, 뗀 뒤 40ms → 튐 아님");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 70, 99), Y700), true, "짧은 쪽 29ms");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 70, 100), Y700), false, "짧은 쪽 30ms");
+  assert.equal(G.isPenBounce(tap(2, 0, 60), tap(2, 65, 70), GALAXY), false, "갤럭시(PEN_BOUNCE_MS 0)는 늘 아님");
+  // InkInput.penTap 차례(튐 → 두 번 콕): 빠른 두 번 콕은 튐이 아니고 두 번 콕
+  const first = tap(2, 0, 60);
+  const second = tap(2, 100, 160);
+  assert.equal(G.isPenBounce(first, second, Y700), false);
+  assert.equal(G.isDoubleTap(first, second, Y700), true);
 });
 
 function fakeStorage(init = {}) {

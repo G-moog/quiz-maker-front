@@ -90,7 +90,10 @@ export default function TabletPicker({ current, onPick, onClose, returnFocus }) 
           <div id={titleId} style={S.title}>태블릿 고르기</div>
           <button type="button" style={S.close} onClick={onClose} aria-label="태블릿 고르기 닫기">✕</button>
         </div>
-        <div style={S.note}>펜과 손을 가르는 기준을 태블릿에 맞춥니다 · 이 기기에만 기억합니다</div>
+        <div style={S.note}>
+          <div>펜과 손을 가르는 기준을 태블릿에 맞춥니다.</div>
+          <div>이 기기에만 기억합니다.</div>
+        </div>
         <div style={S.list} ref={listRef}>
           {TABLETS.map((t) => {
             const cur = t.id === current;

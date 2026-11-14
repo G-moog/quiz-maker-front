@@ -3,12 +3,16 @@
 // rows(프로필, 필기 셈)로 표 줄 [[이름, 글], …] 을 만든다. 이벤트는 필드만 읽으므로 시험에서는 평범한 객체로 부른다.
 // 펜 '범위 안'(떠 있음)은 pointerover(펜) ~ relatedTarget 없는 pointerout(펜)으로 따로 센다 — 펜을 가만히 띄우면
 // 호버 움직임(pointermove)이 끊길 수 있으므로 움직임만으로는 정하지 않는다(마지막 호버 움직임 HOVER_NEAR_MS 안도 떠 있음으로 봄).
+// 다만 마지막 펜 이벤트에서 PEN_IN_MS 넘게 지나면 범위 밖으로 본다 — 범위를 벗어날 때 out 이 안 오는 기기에서 '떠 있음'에 굳지 않게.
+// '닿기 전 호버'는 over·out 차례에 기대지 않고 호버 움직임 줄기로 잰다 — 안드로이드 크롬은 닿기 직전·뗀 직후에도 out 을 보낸다.
+// '펜 콕 시간'·'펜 콕 튐'은 빈칸에서 시작한 펜 누름만 센다(PenTestView 가 pointer(e, { blank }) 로 알려 줌 — 손글씨 획은 빼고 따로 한도).
 
 export const PROBE = Object.freeze({
   HOVER_RUN_GAP_MS: 300, // 호버 움직임 사이가 이보다 비면 새 줄기
   HOVER_RUN_MIN_MS: 100, // 초당 개수는 이보다 긴 줄기로만
   HOVER_NEAR_MS: 300, // 마지막 호버 움직임이 이 안이면 '떠 있음'(범위 들어옴·나감 이벤트가 없어도)
-  HOVER_LEAD_MS: 100, // 펜이 닿을 때 마지막 호버 움직임이 이 안(또는 범위 안)이어야 호버가 먼저 온 것
+  PEN_IN_MS: 1000, // '범위 안'(over 뒤 out 전)도 마지막 펜 이벤트에서 이 안만 믿는다(out 이 안 와도 굳지 않게)
+  HOVER_LEAD_MS: 100, // 펜이 닿을 때 마지막 호버 움직임이 이 안이어야 호버가 먼저 온 것(그 줄기의 시작부터 잼)
   AFTER_UP_MS: 300, // 뗀 뒤 이 안에 호버 움직임이 오면 '뗀 뒤 호버'
   NEAR_UP_MS: 500, // 펜을 뗀 뒤 이 안에 닿은 손은 '뗀 뒤'
   NEAR_PEN_MS: 300, // 손 터치 취소가 마지막 펜 이벤트 뒤 이 안이면 '펜 가까이'
@@ -29,6 +33,7 @@ export const PROBE = Object.freeze({
   BLOCKED_KEEP: 8,
   KEYS_KEEP: 8,
   KEEP: 200, // 가운데값을 셀 배열 한도
+  BLANK_KEEP: 100, // 빈칸에서 시작한 펜 누름(펜 콕 시간·펜 콕 튐) 한도 — 손글씨 획과 따로
 });
 
 const fin = (v) => (Number.isFinite(v) ? v : 0);
@@ -50,13 +55,15 @@ function fresh() {
   return {
     // 펜 상태
     penDown: false, penIn: false, lastPen: -Infinity, lastPenX: null, lastPenY: null,
-    lastHover: -Infinity, hoverFrom: null, // hoverFrom: 지금 이어지는 '떠 있음'의 시작(뗀 뒤 떠 있으면 뗀 때)
+    lastHover: -Infinity,
     downAt: null, downX: 0, downY: 0, downFar: 0,
+    downBlank: false, // 지금 누름이 빈칸에서 시작했나
+    downGap: null, // 지금 누름이 앞 빈칸 콕을 뗀 자리에 곧바로 다시 닿은 것이면 { gap, prevMs, prevFar }
     lastDownPen: null, // 마지막 펜 누름 { t, x, y }
-    lastUp: null, // 마지막 펜 뗌 { t, x, y }
+    lastUp: null, // 마지막 펜 뗌 { t, x, y, blank, ms, far }
     pendingUp: null, // 뗀 뒤 아직 호버를 기다리는 뗌 시각
-    // 호버
-    hovers: 0, enters: 0, run: null, runN: 0, runMs: 0, maxGap: 0,
+    // 호버(run: 지금 이어지는 호버 움직임 줄기, prevRun: 바로 앞에 닫힌 줄기 — 닿기 직전에 out 이 와서 닫혀도 '닿기 전 호버'를 잼)
+    hovers: 0, enters: 0, run: null, prevRun: null, runN: 0, runMs: 0, maxGap: 0,
     downs: 0, leadOk: 0, leads: [], ups: 0, afterUp: 0, afterUpGaps: [],
     // 손
     near: { inRange: 0, down: 0, afterUp: 0, far: 0 },
@@ -65,7 +72,7 @@ function fresh() {
     touchDowns: [], // 최근 손 pointerdown { t, x, y, size, ghost, paired }
     radius: { seen: false, start: 0, move: 0, force: 0, pairs: [], types: {}, hasType: null },
     companion: { matched: 0, near: 0, ghost: 0 },
-    bounce: 0, repeatGaps: [], taps: [],
+    blankTaps: [], // 빈칸에서 시작한 펜 누름 { ms, far, gap?, prevMs?, prevFar? } (최근 BLANK_KEEP 개)
     lastTouchDown: null, blocked: [], blockedN: { "pen-guard": 0, "pen-overlap": 0 },
     menu: { pen: 0, touch: 0, mouse: 0 }, lastDownType: "", lastDownAt: -Infinity,
     keys: 0, keyNames: [], blur: 0, hidden: 0,
@@ -76,12 +83,15 @@ export function createProbe() {
   let s = fresh();
 
   const penIsDown = (t) => s.penDown && t - s.lastPen < PROBE.PEN_STALE_MS;
+  // 펜이 범위 안(over 뒤 out 전)이고 마지막 펜 이벤트가 PEN_IN_MS 안
+  const penNear = (t) => s.penIn && t - s.lastPen <= PROBE.PEN_IN_MS;
   const closeRun = () => {
     const r = s.run;
     if (r && r.last - r.start >= PROBE.HOVER_RUN_MIN_MS) {
       s.runN += r.n - 1;
       s.runMs += r.last - r.start;
     }
+    if (r) s.prevRun = r;
     s.run = null;
   };
 
@@ -95,7 +105,6 @@ export function createProbe() {
       closeRun();
       s.run = { start: t, last: t, n: 1 };
     }
-    if (s.hoverFrom == null) s.hoverFrom = t;
     if (s.pendingUp != null) {
       if (t - s.pendingUp <= PROBE.AFTER_UP_MS) {
         s.afterUp += 1;
@@ -107,21 +116,24 @@ export function createProbe() {
     s.penDown = false; // 떠 있다 = 닿아 있지 않다(떼기를 놓쳐도 — InkInput 과 같게)
   }
 
-  function penDown(t, x, y) {
-    closeRun();
+  // blank: 빈칸에서 시작한 누름(PenTestView 가 알려 줌)
+  function penDown(t, x, y, blank) {
     s.downs += 1;
-    const seen = s.hoverFrom != null && (s.penIn || t - s.lastHover <= PROBE.HOVER_LEAD_MS);
-    const lead = seen ? t - s.hoverFrom : 0;
+    // 닿기 전 호버: 마지막 호버 움직임이 HOVER_LEAD_MS 안이면 그 줄기의 시작부터 닿기까지. 줄기가 닿기 직전의 out 으로 닫혔어도(안드로이드) 잰다.
+    // 앞 누름을 뗀 뒤 호버가 없었으면(촉 튐·곧바로 다시 콕) 세지 않고, 닿는 순간과 같은 때 시작한 줄기(0ms)도 먼저 온 것이 아님
+    const run = s.run || s.prevRun;
+    const lead = run && t - s.lastHover <= PROBE.HOVER_LEAD_MS && s.lastHover > (s.lastUp?.t ?? -Infinity) ? t - run.start : 0;
+    closeRun();
     if (lead >= 1) {
       s.leadOk += 1;
       push(s.leads, lead);
     }
-    if (s.lastUp) {
-      const gap = t - s.lastUp.t;
-      if (gap >= 0 && gap <= PROBE.REPEAT_MS && dist(x, y, s.lastUp.x, s.lastUp.y) <= PROBE.BOUNCE_PX) {
-        push(s.repeatGaps, r0(gap), PROBE.REPEAT_KEEP);
-        if (gap <= PROBE.BOUNCE_MS) s.bounce += 1;
-      }
+    // 펜 콕 튐: 빈칸 누름이 앞 빈칸 누름을 뗀 자리(BOUNCE_PX)에 곧바로(REPEAT_MS) 다시 닿음 — 앞 누름이 콕이었는지는 표를 만들 때 프로필로 거름
+    s.downGap = null;
+    const u = s.lastUp;
+    if (blank && u?.blank) {
+      const gap = t - u.t;
+      if (gap >= 0 && gap <= PROBE.REPEAT_MS && dist(x, y, u.x, u.y) <= PROBE.BOUNCE_PX) s.downGap = { gap: r0(gap), prevMs: u.ms, prevFar: u.far };
     }
     // 유령 손가락(펜보다 먼저 온 손 포인터)
     for (const d of s.touchDowns) {
@@ -135,6 +147,7 @@ export function createProbe() {
     s.downX = x;
     s.downY = y;
     s.downFar = 0;
+    s.downBlank = !!blank;
     s.pendingUp = null;
     s.lastDownPen = { t, x, y };
   }
@@ -142,8 +155,11 @@ export function createProbe() {
   function penUp(e, t, x, y) {
     if (s.downAt != null && e.type === "pointerup") {
       s.ups += 1;
-      push(s.taps, { ms: t - s.downAt, far: Math.max(s.downFar, dist(x, y, s.downX, s.downY)) });
-      s.lastUp = { t, x, y };
+      const ms = t - s.downAt;
+      const far = Math.max(s.downFar, dist(x, y, s.downX, s.downY));
+      // 빈칸에서 시작한 누름만 따로 한도(손글씨 획에 밀리지 않게) — 펜 콕 시간·펜 콕 튐
+      if (s.downBlank) push(s.blankTaps, { ms, far, ...s.downGap }, PROBE.BLANK_KEEP);
+      s.lastUp = { t, x, y, blank: s.downBlank, ms, far };
       s.pendingUp = t;
     } else if (e.type === "pointercancel") {
       s.lastUp = null;
@@ -151,18 +167,18 @@ export function createProbe() {
     }
     s.penDown = false;
     s.downAt = null;
-    s.hoverFrom = s.penIn ? t : null;
+    s.downBlank = false;
+    s.downGap = null;
   }
 
-  function penEvent(e, t) {
+  function penEvent(e, t, blank) {
     const x = fin(e.clientX);
     const y = fin(e.clientY);
     if (e.type === "pointerout") {
-      // 펜이 범위를 벗어남(다른 요소로 옮겨 간 것은 relatedTarget 이 있음)
+      // 펜이 범위를 벗어남(다른 요소로 옮겨 간 것은 relatedTarget 이 있음). 뗀 뒤 호버 기다림(pendingUp)은 지우지 않는다 —
+      // 안드로이드는 뗀 직후에도 out 을 보내고, 기다리는 기간은 AFTER_UP_MS 가 이미 정한다
       if (e.relatedTarget == null) {
         s.penIn = false;
-        s.hoverFrom = null;
-        s.pendingUp = null;
         closeRun();
       }
       return;
@@ -171,13 +187,12 @@ export function createProbe() {
       if (!s.penIn) {
         s.penIn = true;
         s.enters += 1;
-        if (s.hoverFrom == null && !s.penDown) s.hoverFrom = t;
       }
     } else if (e.type === "pointermove") {
       if (e.buttons === 0) hoverMove(t);
       else if (s.downAt != null) s.downFar = Math.max(s.downFar, dist(x, y, s.downX, s.downY));
     } else if (e.type === "pointerdown") {
-      penDown(t, x, y);
+      penDown(t, x, y, blank);
     } else if (e.type === "pointerup" || e.type === "pointercancel") {
       penUp(e, t, x, y);
     }
@@ -192,7 +207,7 @@ export function createProbe() {
     const y = fin(e.clientY);
     if (e.type === "pointerdown") {
       if (penIsDown(t)) s.near.down += 1;
-      else if (s.penIn || t - s.lastHover < PROBE.HOVER_NEAR_MS) s.near.inRange += 1;
+      else if (penNear(t) || t - s.lastHover < PROBE.HOVER_NEAR_MS) s.near.inRange += 1;
       else if (s.lastUp && t - s.lastUp.t < PROBE.NEAR_UP_MS) s.near.afterUp += 1;
       else s.near.far += 1;
       if (e.isPrimary) s.live.clear(); // 첫 손가락: 떼기를 놓쳐 남은 접촉은 버린다
@@ -215,7 +230,7 @@ export function createProbe() {
         s.live.delete(e.pointerId);
       }
       if (e.type === "pointercancel") {
-        if (penIsDown(t) || s.penIn || t - s.lastPen < PROBE.NEAR_PEN_MS) s.cancels.near += 1;
+        if (penIsDown(t) || penNear(t) || t - s.lastPen < PROBE.NEAR_PEN_MS) s.cancels.near += 1;
         else s.cancels.other += 1;
       }
     }
@@ -265,11 +280,19 @@ export function createProbe() {
     return `닿을 때 최대 ${r0(R.start)} · 움직이는 중 최대 ${r0(R.move)} · 같은 입력(포인터/Touch) ${pairs} · force 최대 ${Math.round(R.force * 100) / 100} · touchType ${types}`;
   }
 
+  // 빈칸에서 시작해 빈칸 콕 한도(프로필) 안에서 움직인 누름의 시간
   function tapText(p) {
-    const short = s.taps.filter((x) => x.far < p.PEN_BLANK_TAP_SLOP).map((x) => x.ms);
+    const short = s.blankTaps.filter((x) => x.far < p.PEN_BLANK_TAP_SLOP).map((x) => x.ms);
     if (!short.length) return "아직 없음";
     const long = short.filter((ms) => ms >= p.TAP_MS).length;
     return `${short.length}번 · 가운데값 ${r0(median(short))}ms · 가장 긴 ${r0(Math.max(...short))}ms · ${p.TAP_MS}ms 넘어 점이 된 것 ${long}번`;
+  }
+
+  // 빈칸 누름 가운데 앞 누름도 빈칸 콕(빈칸 콕 한도·TAP_MS 안 — 프로필)이었던 것의 다시 닿은 간격
+  function bounceText(p, ink) {
+    const gaps = s.blankTaps.filter((x) => x.gap != null && x.prevFar < p.PEN_BLANK_TAP_SLOP && x.prevMs < p.TAP_MS).map((x) => x.gap);
+    const bounce = gaps.filter((g) => g <= PROBE.BOUNCE_MS).length;
+    return `뗀 뒤 ${PROBE.BOUNCE_MS}ms 안 같은 자리 다시 닿음 ${bounce}번(0이어야 함) · 한 번 콕으로 합친 것 ${ink.penBounce || 0}번 · 0.15초 안 다시 닿은 간격(ms) ${gaps.slice(-PROBE.REPEAT_KEEP).join(" ") || "-"}`;
   }
 
   function blockedText() {
@@ -280,13 +303,14 @@ export function createProbe() {
   }
 
   return {
-    pointer(e) {
+    // o.blank: 펜 pointerdown 이 빈칸에서 시작했나(PenTestView 가 대상의 [data-ink-blank] 로 알려 줌)
+    pointer(e, o = {}) {
       const t = timeOf(e);
       if (e.type === "pointerdown") {
         s.lastDownType = e.pointerType || "";
         s.lastDownAt = t;
       }
-      if (e.pointerType === "pen") penEvent(e, t);
+      if (e.pointerType === "pen") penEvent(e, t, !!o.blank);
       else if (e.pointerType === "touch") touchPointer(e, t);
     },
     touch(e) {
@@ -343,20 +367,22 @@ export function createProbe() {
       s.penIn = false;
       s.penDown = false;
     },
-    // InkInput 'click-blocked'(손, why = pen-guard | pen-overlap) — 바로 앞 손 누름의 크기와 펜에서 떨어진 거리를 남긴다
+    // InkInput 'click-blocked'(손, why = pen-guard | pen-overlap) — 바로 앞 손 누름의 크기와 펜에서 떨어진 거리를 남긴다.
+    // 거리: 펜 뒤(pen-guard)는 손이 닿을 때의 마지막 펜 자리에서, 펜과 겹침(pen-overlap)은 겹친 펜이 닿은 자리(그 click 앞 마지막 펜 누름)에서
     inkBlocked(why) {
       if (!(why in s.blockedN)) return;
       s.blockedN[why] += 1;
       const d = s.lastTouchDown;
       if (!d) return;
-      push(s.blocked, { why, size: r0(d.size), dist: d.penX == null ? null : r0(dist(d.x, d.y, d.penX, d.penY)) }, PROBE.BLOCKED_KEEP);
+      const pen = why === "pen-overlap" ? s.lastDownPen : d.penX == null ? null : { x: d.penX, y: d.penY };
+      push(s.blocked, { why, size: r0(d.size), dist: pen ? r0(dist(d.x, d.y, pen.x, pen.y)) : null }, PROBE.BLOCKED_KEEP);
     },
     reset() {
       s = fresh();
     },
     penState(now) {
       if (penIsDown(now)) return "닿음";
-      if (s.penIn || now - s.lastHover < PROBE.HOVER_NEAR_MS) return "떠 있음";
+      if (penNear(now) || now - s.lastHover < PROBE.HOVER_NEAR_MS) return "떠 있음";
       return "없음";
     },
     // p: 지금 태블릿 프로필(geometry GALAXY·Y700), ink: PenTestView 가 필기 코드 이벤트로 센 값 { penBounce, palmStopScroll }
@@ -369,7 +395,7 @@ export function createProbe() {
         ["최근 손 접촉(닿은 차례 · 가장 컸던 크기 px)", contactsText()],
         ["Touch 반지름×2(포인터 크기와 견줌)", radiusText()],
         ["펜이 함께 보낸 touch", `펜 누름 ${s.downs}번 · 같은 자리 touch ${s.companion.matched}번 · 어긋난 touch ${s.companion.near}번(0이어야 펜으로 단추가 눌림) · 펜 옆 손 포인터(유령) ${s.companion.ghost}번(0이어야 함)`],
-        ["펜 콕 튐", `뗀 뒤 ${PROBE.BOUNCE_MS}ms 안 같은 자리 다시 닿음 ${s.bounce}번(0이어야 함) · 한 번 콕으로 합친 것 ${ink.penBounce || 0}번 · 0.15초 안 다시 닿은 간격(ms) ${s.repeatGaps.join(" ") || "-"}`],
+        ["펜 콕 튐", bounceText(p, ink)],
         ["펜 콕 시간(짧게 누른 것)", tapText(p)],
         ["막은 손 터치(펜 뒤·펜과 겹침)", blockedText()],
         ["길게 누름 메뉴(contextmenu)", `펜 ${s.menu.pen} · 손 ${s.menu.touch} · 마우스·자판 ${s.menu.mouse}`],

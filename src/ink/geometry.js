@@ -74,8 +74,9 @@ export function tapSlop(pointerType, onBlank, prof = GALAXY) {
 
 // 펜·마우스로 누른 것이 '콕'인가 (moved: 처음 누른 곳에서 가장 멀리 간 거리, slop: tapSlop)
 // 펜은 시간 한도(TAP_MS)를 늘 본다 — 짧고 느린 선이 콕으로 바뀌지 않게
+// slop 을 빼면(undefined) 프로필의 TAP_SLOP — 예전 기본 인자(slop = TAP_SLOP)와 같게 null 은 그대로 둔다(moved < null)
 export function isTap(moved, ms, pointerType, slop, prof = GALAXY) {
-  const s = slop ?? prof.TAP_SLOP;
+  const s = slop === undefined ? prof.TAP_SLOP : slop;
   return moved < s && (pointerType === "mouse" || ms < prof.TAP_MS);
 }
 
@@ -118,11 +119,15 @@ export function handTapGuarded({ lastPenUp = -Infinity, lastPenHover = -Infinity
   return prof.HAND_TAP_AFTER_PEN_MS > 0 && now - Math.max(lastPenUp, lastPenHover) < prof.HAND_TAP_AFTER_PEN_MS;
 }
 
-// 펜 콕(tap)이 바로 앞 펜 콕(prev)에서 촉이 튄 것인가 — 같은 빈칸, 뗀 뒤 PEN_BOUNCE_MS 안에 다시 닿음(갤럭시 0 = 늘 아님)
+// 촉 튐의 접촉: 튄 쪽 접촉은 몇 ms 뿐이다. 사람의 콕은 빨라도 접촉마다 40ms 넘게 닿으므로, 두 접촉 중 하나가 이보다 짧을 때만 튐으로 본다
+export const PEN_BOUNCE_CONTACT_MS = 30;
+
+// 펜 콕(tap)이 바로 앞 펜 콕(prev)에서 촉이 튄 것인가 — 같은 빈칸, 뗀 뒤 PEN_BOUNCE_MS 안에 다시 닿음, 두 접촉 중 하나가
+// PEN_BOUNCE_CONTACT_MS 보다 짧음(뗀 뒤 곧바로 다시 닿은 진짜 빠른 두 번 콕은 튐이 아님). 콕 = { blank, downAt, upAt }. 갤럭시 0 = 늘 아님
 export function isPenBounce(prev, tap, prof = GALAXY) {
   if (!(prof.PEN_BOUNCE_MS > 0) || !prev || tap.blank == null || prev.blank !== tap.blank) return false;
   const gap = tap.downAt - prev.upAt;
-  return gap >= 0 && gap < prof.PEN_BOUNCE_MS;
+  return gap >= 0 && gap < prof.PEN_BOUNCE_MS && Math.min(prev.upAt - prev.downAt, tap.upAt - tap.downAt) < PEN_BOUNCE_CONTACT_MS;
 }
 
 // ── 두 손가락 스크롤 ──
