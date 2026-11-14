@@ -2,9 +2,11 @@
 // 실기기(Y700, 운영의 옛 ?pentest)에서 펜 누름 25번에 '펜으로 그은 선 0 · 펜 콕 0 · 취소 0'이 나왔다 — 필기 코드가 펜 누름을 하나도 받지 않았다.
 // 글(필기 영역)이 아니라 설명·결과 표 등을 눌렀는지(표 위에서 펜으로 끌면 화면이 밀려 손처럼 보임), 정말 못 받았는지를 바로 가른다.
 //  - 결과 요약 '펜 누른 곳'(whereText): 글 안 N번(필기가 받음 K번) · 글 밖 M번(칸별) · 필기 모드 꺼짐 f번 — N > K 면 빨간 경고,
-//    글 밖을 누르고 그은 선이 0개면 회색 안내
-//  - 위 모니터 '펜 자리'(spotText): 마지막 펜 누름의 자리
-//  - 자세히 '마지막 펜 누름'(lastPressText): 그 누름 한 번의 차례(자리 · id · 주 포인터 · 단추 · 압력 · 접촉 → 움직임 → 뗌 · 필기가 한 일)
+//    그은 선이 0개인데 글 밖을 눌렀거나 필기 모드를 끈 채 눌렀으면 회색 안내
+//  - 위 모니터 '펜 자리'(spotLive): 마지막 펜 누름의 자리(글 안인데 필기가 받지 못했으면 「글 안(못 받음)」)
+//  - 자세히 '마지막 펜 누름'(lastPressText): 그 누름 한 번의 차례(자리 · id · 주 포인터 · 단추 · 압력 · 접촉 → 움직임 → 뗌 · 필기가 한 일).
+//    글 밖의 단추·링크·입력칸을 누른 것(결과 복사·결과 표로 ↓ 등 — ctl)은 칸별 수와 위 '펜 자리'에만 넣고 이 기록은 바꾸지 않는다
+//    (펜으로 결과 복사를 누르면 복사 글의 이 줄이 그 복사 누름이 되지 않게)
 // 기록은 바꾸지 않고 새로 만들어 돌려준다(PenTestView 의 기록 보관소 — 바뀐 것이 없으면 같은 객체).
 // PenTestView 가 창 캡처 리스너에서 펜 포인터 이벤트와 누름의 자리(spot — spotOf)를 wherePointer 로, 필기 코드의 알림(onEvent)을 whereInk 로 넣는다.
 // 창 캡처가 먼저 돌므로 같은 누름의 필기 코드 'down'(영역 pointerdown 첫머리) 알림은 그 누름의 pointerdown 기록 다음에 온다(같은 이벤트 안).
@@ -14,9 +16,14 @@ export const ZONES = Object.freeze([["steps", "설명"], ["buttons", "단추 줄
 const ZONE_NAME = Object.freeze(Object.fromEntries(ZONES));
 const isZone = (k) => typeof k === "string" && Object.hasOwn(ZONE_NAME, k);
 
-// n: 누름 수 — in 글 안 · got 그중 필기가 받은 것 · off 필기 모드 꺼짐 · 칸 이름마다 글 밖. last: 마지막 펜 누름
+// 글 밖에서 이것을 누른 펜은 '단추를 누른 것'(ctl) — 마지막 펜 누름 기록을 바꾸지 않는다
+export const CONTROL = 'button, a[href], input, textarea, select, label, [role="button"]';
+
+// n: 누름 수 — in 글 안 · got 그중 필기가 받은 것 · off 필기 모드 꺼짐 · 칸 이름마다 글 밖.
+// spot: 마지막 펜 누름(단추 누름 포함)의 자리, last: 마지막 펜 누름(글 밖 단추 누름은 빼고)의 기록
 export const WHERE_ZERO = Object.freeze({
   n: Object.freeze({ in: 0, got: 0, off: 0, ...Object.fromEntries(ZONES.map(([k]) => [k, 0])) }),
+  spot: null,
   last: null,
 });
 
@@ -38,21 +45,37 @@ export function spotText(spot) {
 // 글 밖인가(위 모니터 강조)
 export const spotIsOut = (spot) => isZone(spot);
 
+// 위 모니터 '펜 자리' 칸: { text, hot(강조) } — 글 밖, 그리고 글 안인데 필기가 그 누름을 받지 못함(받았는지는 같은 이벤트 안에 정해져
+// 다음 그림에서 맞음)이면 강조
+export function spotLive(w) {
+  const s = w?.spot;
+  if (s === "in" && w.last && !w.last.recv) return { text: "글 안(못 받음)", hot: true };
+  return { text: spotText(s), hot: spotIsOut(s) };
+}
+
 const fin = (v) => (Number.isFinite(v) ? v : 0);
 const r2 = (v) => Math.round(fin(v) * 100) / 100;
 
-// 창 캡처 펜 포인터 이벤트 → 새 기록. e 는 필드만 읽는다(펜이 아니면 그대로). o = { t: 이벤트 시각, spot: pointerdown 의 자리(spotOf) }
-//  - pointerdown: 새 누름(자리별 수 +1)
+// 창 캡처 펜 포인터 이벤트 → 새 기록. e 는 필드만 읽는다(펜이 아니면 그대로).
+// o = { t: 이벤트 시각, spot: pointerdown 의 자리(spotOf), ctl: 글 밖 단추·링크·입력칸을 누름(CONTROL) }
+//  - pointerdown: 새 누름(자리별 수 +1, 마지막 자리). 단추 누름(ctl)이 아니면 새 기록(last) — 단추 누름은 기록을 그대로 두되,
+//    앞 누름이 아직 닿아 있던 것이면 '떼기 못 받음(다음 누름)'으로 닫는다(단추 누름의 움직임·뗌이 앞 누름에 붙지 않게)
 //  - 그 누름이 닿은 채 움직임(buttons > 0): 움직임 수·누른 곳에서 가장 멀리 간 거리
 //  - pointerup·pointercancel: 끝(뗌·취소)과 누른 시간. 떼기 없이 떠 있는 움직임(buttons 0)이 오면 '떼기 못 받음'(필기 코드도 그렇게 봄)
-export function wherePointer(w, e, { t = 0, spot } = {}) {
+export function wherePointer(w, e, { t = 0, spot, ctl = false } = {}) {
   if (!w || e?.pointerType !== "pen") return w;
   const x = fin(e.clientX);
   const y = fin(e.clientY);
   if (e.type === "pointerdown") {
     const s = spot === "in" || spot === "off" || isZone(spot) ? spot : "other";
+    const n = { ...w.n, [s]: w.n[s] + 1 };
+    if (ctl && s !== "in") {
+      const p = w.last;
+      return { n, spot: s, last: p && !p.end ? { ...p, end: "next", ms: t - p.t0 } : p };
+    }
     return {
-      n: { ...w.n, [s]: w.n[s] + 1 },
+      n,
+      spot: s,
       last: {
         spot: s, id: e.pointerId, primary: !!e.isPrimary, button: e.button, buttons: e.buttons,
         pressure: r2(e.pressure), w: r2(e.width), h: r2(e.height), t0: t, x0: x, y0: y,
@@ -81,7 +104,7 @@ export function whereInk(w, type, d = {}) {
   const D = d || {};
   if (type === "down") {
     if (D.type !== "pen" || p.recv) return w;
-    return { n: p.spot === "in" ? { ...w.n, got: w.n.got + 1 } : w.n, last: { ...p, recv: true } };
+    return { ...w, n: p.spot === "in" ? { ...w.n, got: w.n.got + 1 } : w.n, last: { ...p, recv: true } };
   }
   if (!p.recv || D.why === "missed-up") return w;
   const set = (o) => ({ ...w, last: { ...p, ...o } });
@@ -98,7 +121,7 @@ export function whereInk(w, type, d = {}) {
   }
 }
 
-// 결과 요약 '펜 누른 곳' → { text, warn(빨간 글 — 글 안 누름을 필기가 못 받음), hint(회색 안내 — 글 밖만 누르고 선이 없음) }
+// 결과 요약 '펜 누른 곳' → { text, warn(빨간 글 — 글 안 누름을 필기가 못 받음), hint(회색 안내 — 선이 0개인데 글 밖을 누름·필기 모드를 끈 채 누름) }
 // strokes: 결과 요약 '펜으로 그은 선' 수
 export function whereText(n, strokes = 0) {
   const out = ZONES.reduce((a, [k]) => a + n[k], 0);
@@ -107,10 +130,15 @@ export function whereText(n, strokes = 0) {
   if (out) text += `(${ZONES.map(([k, name]) => `${name} ${n[k]}`).join(" · ")})`;
   if (n.off) text += ` · 필기 모드 꺼짐 ${n.off}번`;
   const miss = n.in - n.got;
+  const hints = [];
+  if (!(strokes > 0)) {
+    if (out > 0) hints.push("선은 글 위에서만 그어집니다");
+    if (n.off > 0) hints.push("필기 모드를 켜야 선이 그어집니다");
+  }
   return {
     text,
     warn: miss > 0 ? `— 글 안에서 누른 펜 ${miss}번을 필기가 받지 못함(알려 주세요)` : null,
-    hint: out > 0 && !(strokes > 0) ? "선은 글 위에서만 그어집니다" : null,
+    hint: hints.length ? hints.join(" · ") : null,
   };
 }
 
@@ -141,6 +169,7 @@ export function lastPressText(p) {
   const head = `${spotText(p.spot)} · id ${p.id ?? "?"} · 주 포인터 ${p.primary ? "예" : "아니오"} · 단추 ${p.button ?? "?"}/${p.buttons ?? "?"} · 압력 ${p.pressure} · 접촉 ${p.w}×${p.h}`;
   const move = `닿은 채 움직임 ${p.moves}번(가장 멀리 ${Math.round(p.far)}px)`;
   const ms = Math.round(fin(p.ms));
-  const end = p.end === "up" ? `뗌 ${ms}ms` : p.end === "cancel" ? `취소 ${ms}ms` : p.end === "air" ? `떼기 못 받음(떠 있음) ${ms}ms` : "아직 닿아 있음";
+  const end = p.end === "up" ? `뗌 ${ms}ms` : p.end === "cancel" ? `취소 ${ms}ms` : p.end === "air" ? `떼기 못 받음(떠 있음) ${ms}ms`
+    : p.end === "next" ? `떼기 못 받음(다음 누름) ${ms}ms` : "아직 닿아 있음";
   return `${head} → ${move} → ${end} · 필기: ${inkText(p)}`;
 }

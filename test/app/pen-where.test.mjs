@@ -1,12 +1,13 @@
 // 펜 시험(?pentest) '펜 누른 곳'·'펜 자리'·'마지막 펜 누름'(ink/penWhere) — 순수 함수, DOM 없음
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WHERE_ZERO, ZONES, lastPressText, spotIsOut, spotOf, spotText, whereInk, wherePointer, whereText } from "../../src/ink/penWhere.js";
+import { CONTROL, WHERE_ZERO, ZONES, lastPressText, spotIsOut, spotLive, spotOf, spotText, whereInk, wherePointer, whereText } from "../../src/ink/penWhere.js";
 
 const pen = (type, o = {}) => ({ type, pointerType: "pen", pointerId: 2, isPrimary: true, button: type === "pointerdown" ? 0 : -1, buttons: type === "pointerup" || type === "pointercancel" ? 0 : 1, pressure: 0.31, width: 1, height: 1, clientX: 100, clientY: 100, ...o });
 // 펜 누름 한 번: 누름(자리) → 필기 코드 알림들 → 움직임 → 뗌. inks: [[종류, 알림 값], …] (영역 pointerdown 첫머리의 'down' 은 recv 일 때 대본이 넣음)
-function press(w, { spot = "in", recv = spot === "in", t0 = 1000, ms = 80, moves = [], inks = [], end = "pointerup", id = 2 } = {}) {
-  let v = wherePointer(w, pen("pointerdown", { pointerId: id }), { t: t0, spot });
+// ctl: 글 밖 단추·링크를 누름(결과 복사 등)
+function press(w, { spot = "in", recv = spot === "in", t0 = 1000, ms = 80, moves = [], inks = [], end = "pointerup", id = 2, ctl = false } = {}) {
+  let v = wherePointer(w, pen("pointerdown", { pointerId: id }), { t: t0, spot, ctl });
   if (recv) v = whereInk(v, "down", { type: "pen" });
   moves.forEach(([dx, dy], i) => { v = wherePointer(v, pen("pointermove", { pointerId: id, clientX: 100 + dx, clientY: 100 + dy }), { t: t0 + (i + 1) * 10 }); });
   if (end) v = wherePointer(v, pen(end, { pointerId: id, clientX: 100 + (moves.at(-1)?.[0] ?? 0), clientY: 100 + (moves.at(-1)?.[1] ?? 0) }), { t: t0 + ms });
@@ -49,12 +50,13 @@ test("펜 누른 곳: 결과 표 위만 25번(실기기 장면) → 글 밖 칸�
   assert.deepEqual(whereText(w.n, 1), { text: "글 안 1번(필기가 받음 1번) · 글 밖 29번(설명 1 · 단추 줄 1 · 결과 표 25 · 머리 줄 1 · 그 밖 1)", warn: null, hint: null });
 });
 
-test("펜 누른 곳: 필기 모드 꺼짐은 따로(경고 아님) · 손·마우스 알림과 같은 누름의 두 번째 'down' 은 세지 않음 · 누름 없는 'down' 은 무시", () => {
+test("펜 누른 곳: 필기 모드 꺼짐은 따로(경고 아님 — 선이 0개면 회색 안내) · 손·마우스 알림과 같은 누름의 두 번째 'down' 은 세지 않음 · 누름 없는 'down' 은 무시", () => {
   let w = whereInk(WHERE_ZERO, "down", { type: "pen" });
   assert.equal(w, WHERE_ZERO, "누름 기록 없이 온 알림");
   w = press(w, { spot: "off", t0: 1000 });
   w = press(w, { spot: "off", t0: 2000 });
-  assert.deepEqual(whereText(w.n, 0), { text: "글 안 0번(필기가 받음 0번) · 글 밖 0번 · 필기 모드 꺼짐 2번", warn: null, hint: null });
+  assert.deepEqual(whereText(w.n, 0), { text: "글 안 0번(필기가 받음 0번) · 글 밖 0번 · 필기 모드 꺼짐 2번", warn: null, hint: "필기 모드를 켜야 선이 그어집니다" });
+  assert.equal(whereText(w.n, 1).hint, null, "선이 있으면 안내 없음");
   w = wherePointer(w, pen("pointerdown"), { t: 3000, spot: "in" });
   const before = w;
   w = whereInk(w, "down", { type: "touch" });
@@ -141,4 +143,62 @@ test("받지 않은 누름에는 필기 알림을 붙이지 않음(글 밖 누�
   let w = press(WHERE_ZERO, { spot: "result", inks: [["stroke", { type: "pen" }], ["pen-tap", {}]] });
   assert.match(lastPressText(w.last), /필기: 받지 않음$/);
   assert.equal(whereText(w.n, 1).hint, null, "선이 있으면 안내 없음");
+});
+
+test("펜 누른 곳: 글 밖·필기 모드 꺼짐이 함께면 회색 안내 둘(선 0)", () => {
+  let w = press(WHERE_ZERO, { spot: "result" });
+  w = press(w, { spot: "off", t0: 2000 });
+  assert.deepEqual(whereText(w.n, 0), {
+    text: "글 안 0번(필기가 받음 0번) · 글 밖 1번(설명 0 · 단추 줄 0 · 결과 표 1 · 머리 줄 0 · 그 밖 0) · 필기 모드 꺼짐 1번",
+    warn: null, hint: "선은 글 위에서만 그어집니다 · 필기 모드를 켜야 선이 그어집니다",
+  });
+});
+
+test("글 밖 단추 누름(결과 복사 등 — ctl): 칸별 수·위 '펜 자리'는 바뀌고 마지막 펜 누름 기록은 그대로(펜으로 복사해도 그 줄이 복사 누름이 되지 않음)", () => {
+  assert.equal(WHERE_ZERO.spot, null);
+  let w = press(WHERE_ZERO, { ms: 240, moves: [[40, 0], [85, 4]], inks: [["stroke", { type: "pen" }]] });
+  const line = lastPressText(w.last);
+  assert.deepEqual(spotLive(w), { text: "글 안", hot: false });
+  const rec = w.last;
+  w = press(w, { spot: "buttons", ctl: true, t0: 5000, ms: 70 }); // 펜으로 결과 복사 — 같은 펜 id
+  assert.equal(w.last, rec, "기록 그대로(그 누름의 움직임·뗌도 붙지 않음)");
+  assert.equal(lastPressText(w.last), line);
+  assert.equal(w.n.buttons, 1);
+  assert.equal(w.spot, "buttons");
+  assert.deepEqual(spotLive(w), { text: "글 밖(단추 줄)", hot: true });
+  assert.equal(whereText(w.n, 1).text, "글 안 1번(필기가 받음 1번) · 글 밖 1번(설명 0 · 단추 줄 1 · 결과 표 0 · 머리 줄 0 · 그 밖 0)");
+  // 필기 모드를 끈 채 단추를 눌러도 같음(꺼짐 수만)
+  w = press(w, { spot: "off", ctl: true, t0: 6000 });
+  assert.equal(w.last, rec);
+  assert.equal(w.n.off, 1);
+  // 글 안의 단추(빈칸)는 ctl 이어도 새 기록 — 필기 코드가 받는 누름
+  w = press(w, { spot: "in", ctl: true, t0: 7000, inks: [["down-skip", { type: "pen", why: "interactive" }]] });
+  assert.notEqual(w.last, rec);
+  assert.match(lastPressText(w.last), /필기: 건너뜀\(단추·입력칸 위\)$/);
+  // 단추가 아닌 글 밖(결과 표 칸)은 새 기록
+  w = press(w, { spot: "result", t0: 8000, end: "pointercancel" });
+  assert.match(lastPressText(w.last), /^글 밖\(결과 표\) · .* → 취소 80ms · 필기: 받지 않음$/);
+  // 'down' 알림 뒤에도 마지막 자리는 그대로(알림이 자리를 지우지 않음)
+  w = press(w, { t0: 9000 });
+  assert.equal(w.spot, "in");
+  assert.ok(typeof CONTROL === "string" && CONTROL.includes("button"));
+});
+
+test("글 밖 단추 누름이 아직 닿아 있던 앞 누름(떼기를 놓침)을 닫음 — '떼기 못 받음(다음 누름)', 단추 누름의 뗌은 붙지 않음", () => {
+  let w = press(WHERE_ZERO, { t0: 1000, moves: [[20, 0]], end: null });
+  w = press(w, { spot: "buttons", ctl: true, t0: 1600, ms: 60 });
+  assert.match(lastPressText(w.last), /^글 안 · .* → 닿은 채 움직임 1번\(가장 멀리 20px\) → 떼기 못 받음\(다음 누름\) 600ms · 필기: 받음\(선·콕 없음\)$/);
+});
+
+test("위 모니터 '펜 자리': 없음 '-' · 글 안인데 필기가 받지 못함은 「글 안(못 받음)」 강조 → 받으면 「글 안」 · 꺼짐은 강조 아님", () => {
+  assert.deepEqual(spotLive(WHERE_ZERO), { text: "-", hot: false });
+  let w = wherePointer(WHERE_ZERO, pen("pointerdown"), { t: 1000, spot: "in" });
+  assert.deepEqual(spotLive(w), { text: "글 안(못 받음)", hot: true });
+  w = whereInk(w, "down", { type: "pen" });
+  assert.deepEqual(spotLive(w), { text: "글 안", hot: false });
+  assert.equal(w.spot, "in", "'down' 알림이 자리를 지우지 않음");
+  w = press(w, { spot: "off", t0: 2000 });
+  assert.deepEqual(spotLive(w), { text: "필기 모드 꺼짐", hot: false });
+  w = press(w, { spot: "head", t0: 3000 });
+  assert.deepEqual(spotLive(w), { text: "글 밖(머리 줄)", hot: true });
 });
