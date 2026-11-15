@@ -73,6 +73,20 @@ function overlap(prof, attrs) {
   return clickResult(ink, events, 5205);
 }
 
+// 펜 콕(1000 누름 · 1050 뗌) → 뗀 뒤 after ms 에 손가락(영역 밖) 누름 → 손가락이 닿은 채 50ms 뒤 펜이 다시 닿았다 뗌 → 손가락 뗌 → click
+// (손바닥을 대고 쓰는 중이면 흔한 차례 — 이미 막힌 손가락에 겹침이 다시 걸리는 때)
+function blockedThenPen(prof, after) {
+  const { ink, events } = setup(prof);
+  ink.onWinDown(pe("pointerdown", "pen", 1000));
+  ink.onWinUp(pe("pointerup", "pen", 1050));
+  const t = 1050 + after;
+  ink.onWinDown(pe("pointerdown", "touch", t, { id: 3 }));
+  ink.onWinDown(pe("pointerdown", "pen", t + 50));
+  ink.onWinUp(pe("pointerup", "pen", t + 100));
+  ink.onWinUp(pe("pointerup", "touch", t + 110, { id: 3 }));
+  return clickResult(ink, events, t + 115);
+}
+
 test("고정 시험 프로필은 프로필과 같은 열쇠(오타면 값이 안 쓰임) · 차례 = [옛 Y700 처음 값, GUARD, Y700, 갤럭시]", () => {
   for (const p of [GUARD, OLD_Y700]) assert.deepEqual(Object.keys(p).sort(), Object.keys(GALAXY).sort(), p.id);
   assert.deepEqual(PROFILES.map((p) => [p.PALM_MS, p.HAND_TAP_AFTER_PEN_MS, p.PEN_OVERLAP_BLOCK]), [[700, 1000, 1], [500, 1000, 1], [500, 0, 0], [500, 0, 0]]);
@@ -107,4 +121,11 @@ test("펜 뒤 손 막기로 막힌 손가락도 닿은 뒤 접촉이 커지면 �
 test("겹침: 손가락이 먼저 닿아 있는데 펜이 닿으면 pen-overlap — 머리 줄에서 시작한 손은 빼고, Y700·갤럭시는 막지 않음", () => {
   assert.deepEqual(each((p) => overlap(p)), ["막힘(pen-overlap)", "막힘(pen-overlap)", "통과", "통과"]);
   assert.deepEqual(each((p) => overlap(p, PALM_SAFE)), ["통과", "통과", "통과", "통과"]);
+});
+
+// 겹침 갈래는 아직 막히지 않은 손만 본다(InkInput onWinDown 의 !touchDownBlocked) — 덮어쓰면 ?pentest '막은 손 터치'의
+// 펜과 겹침 수가 부풀어(손바닥을 대고 쓸 때마다), 나중에 가드·겹침을 다시 정할 자료가 흐려진다
+test("겹침은 이미 막힌 손의 까닭을 덮어쓰지 않음: 막힌 손가락이 닿아 있는 채 펜이 다시 닿아도 palm·pen-guard 그대로", () => {
+  assert.deepEqual(each((p) => blockedThenPen(p, 300)), ["막힘(palm)", "막힘(palm)", "막힘(palm)", "막힘(palm)"], "손바닥 시간 안(뗀 뒤 300ms)");
+  assert.deepEqual(each((p) => blockedThenPen(p, 850)), ["막힘(pen-guard)", "막힘(pen-guard)", "통과", "통과"], "펜 뒤 손 막기(뗀 뒤 850ms)");
 });
