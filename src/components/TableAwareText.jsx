@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo } from "react";
+import { Fragment, memo, useMemo, useState } from "react";
 import { textModel } from "../utils/textBlocks";
 
 // 칸 글 길이. 공백 없이 긴 덩어리(주소 등)는 어차피 칸 안에서 줄바꿈되므로 8글자로만 셈
@@ -76,6 +76,42 @@ const Seg = memo(function Seg({ item, states, renderBlank, headings }) {
   );
 }, sameProps);
 
+// 그림 칸(2026-11-19): 처음엔 가리고 누르면 보이고 다시 누르면 가린다. reveal(모두 보기/가리기)이 바뀌면 그쪽으로 맞춘다.
+// 칸 크기는 파일 이름의 가로x세로로 미리 잡아 열고 닫아도 같다(아래 글 위치가 그대로라 필기가 어긋나지 않음).
+// 평범한 <button> 이라 필기 중에도 펜·손가락으로 누르면 열린다(필기 층은 단추 위에서 선을 긋지 않음)
+const ImageBox = memo(function ImageBox({ image, reveal }) {
+  // reveal: { open } 객체(누를 때마다 새 객체 — 같은 값을 다시 눌러도 맞춤). 처음 그릴 때의 reveal 은 따르지 않는다(늘 가림부터).
+  // 바뀐 reveal 은 그리는 중에 맞춘다(React 권장: 앞 값을 state 에 두고 비교 — effect 에서 setState 하지 않음)
+  const [st, setSt] = useState({ open: false, reveal });
+  let open = st.open;
+  if (st.reveal !== reveal) {
+    if (reveal != null) open = typeof reveal === "object" ? !!reveal.open : !!reveal;
+    setSt({ open, reveal });
+  }
+  const setOpen = (f) => setSt((s) => ({ ...s, open: f(s.open) }));
+  const sized = image.w && image.h;
+  const label = `그림 ${image.n + 1}`;
+  const style = sized
+    ? { aspectRatio: `${image.w} / ${image.h}`, width: `min(100%, 560px, ${Math.round((420 * image.w) / image.h)}px)` }
+    : { width: "min(100%, 560px)", minHeight: open ? undefined : 120 };
+  return (
+    <div className="qm-img">
+      <button
+        type="button"
+        className={`qm-img-box${open ? " is-open" : ""}`}
+        style={style}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={open ? `${label} 가리기` : `${label} 보기`}
+      >
+        {open
+          ? <img src={image.url} alt={image.caption || label} decoding="async" draggable={false} />
+          : <span className="qm-img-cover">{label} · 눌러서 보기</span>}
+      </button>
+    </div>
+  );
+});
+
 const Table = memo(function Table({ item, states, renderBlank }) {
   const { rows, cells, sizes, start } = item;
   // 열이 7개 이상이면 넓은 화면에서도 칸 최소 너비 합이 카드를 넘을 수 있어 좁은 화면처럼 고정 배치.
@@ -118,12 +154,14 @@ const Table = memo(function Table({ item, states, renderBlank }) {
  *               빈칸 하나가 바뀔 때 그 빈칸이 든 줄만 다시 그린다. 안 쓰면 예전처럼 renderBlank 가 바뀔 때마다 모두 다시 그림
  * headings    : (선택) true 면 '■ ' 절 제목·'□ ' 소제목·첫 줄 '《제목》' 을 색·굵기로 구분하고 [data-qm-h=번호] 를 붙인다
  *               (번호·목록은 utils/textBlocks.js 의 textModel().headings)
+ * revealImages: (선택) 그림 칸(노션 그림 줄 "[[그림 … | 주소]]")을 한꺼번에 열거나 닫을 때 { open } — 바뀔 때만 맞춘다.
+ *               없으면 그림마다 처음엔 가리고 눌러서 열고 닫는다
  *
  * 줄바꿈·표 모양은 index.css 의 .qm-text / .qm-table 참고 (가로 스크롤 없이 카드 폭 안에서 줄바꿈)
  * 글 블록 앞뒤의 빈 줄은 지운다: 표 바로 뒤 글이 "\n…" 으로 시작하면 pre-wrap 이 빈 줄 한 칸을 더 그려
  * 표 아래 틈이 크게 벌어졌다(표 margin 이 이미 띄워 줌). ___ 수·순서는 그대로라 빈칸 번호는 안전
  */
-function TableAwareText({ text, renderBlank, blankState, headings = false }) {
+function TableAwareText({ text, renderBlank, blankState, headings = false, revealImages }) {
   // 24KB 페이지를 렌더마다 다시 나누지 않게 글이 바뀔 때만
   const model = useMemo(() => {
     const m = textModel(text);
@@ -143,15 +181,18 @@ function TableAwareText({ text, renderBlank, blankState, headings = false }) {
         }
         return (
           <div key={`txt-${bi}`} className="qm-text">
-            {block.segs.map((seg, si) => (
-              <Seg
-                key={si}
-                item={seg}
-                states={statesOf(seg.start, seg.count)}
-                renderBlank={renderBlank}
-                headings={headings}
-              />
-            ))}
+            {block.segs.map((seg, si) => (seg.image
+              // 그림 칸: 주소·번호가 바뀌면(다른 문항) 새로 만들어 가린 상태로 시작
+              ? <ImageBox key={`img-${seg.image.n}-${seg.image.url}`} image={seg.image} reveal={revealImages} />
+              : (
+                <Seg
+                  key={si}
+                  item={seg}
+                  states={statesOf(seg.start, seg.count)}
+                  renderBlank={renderBlank}
+                  headings={headings}
+                />
+              )))}
           </div>
         );
       })}

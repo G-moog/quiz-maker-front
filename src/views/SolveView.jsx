@@ -493,6 +493,8 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
   const [showExplanation, setShowExplanation] = useState(false);
   const [userInput, setUserInput] = useState("");
   const [fillRevealed, setFillRevealed] = useState([]); // FILL 빈칸 공개 상태
+  // 그림 칸(노션 그림 줄)을 모두 보기/가리기로 한꺼번에 맞출 때만 { open } (그 밖엔 그림마다 눌러서 열고 닫음)
+  const [imgReveal, setImgReveal] = useState(undefined);
   const [showAnswerImage, setShowAnswerImage] = useState(false); // 답안 이미지 토글
   const [done, setDone] = useState(false);
   const [mode, setMode] = useState(null);       // null | "ordered" | "random"
@@ -1135,6 +1137,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
     setFillRevealed(Array(fillBlankCount).fill(v));
     setFilterPre(null);
     lastJump.current = null;
+    setImgReveal({ open: v, qid: currentId }); // 그림 칸도 함께(새 객체라 같은 값을 다시 눌러도 맞춤). 이 문항에만
   }
 
   // 메모에서 엿보다가 '읽던 곳으로': 열기 전에 읽던 자리로 가고, 이제부터는 보통처럼 지금 자리를 남긴다
@@ -1788,7 +1791,7 @@ export default function SolveView({ set, target = null, knownSets = null, backLa
                     className={starMode && starTools ? "qm-star-mode" : undefined}
                     style={S.fillText}
                   >
-                    <TableAwareText text={current.text} renderBlank={renderBlank} blankState={blankView} headings />
+                    <TableAwareText text={current.text} renderBlank={renderBlank} blankState={blankView} headings revealImages={imgReveal && imgReveal.qid === currentId ? imgReveal : undefined} />
                   </InkSurface>
                   {/* 모두 보기 / 모두 가리기 */}
                   <div style={{ display: "flex", gap: 8, marginTop: 18 }}>

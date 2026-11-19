@@ -117,6 +117,48 @@ textarea::-webkit-resizer {
   }
 }
 
+/* ── 그림 칸(TableAwareText, 노션 그림 줄 2026-11-19) ──
+   처음엔 가린 상자('그림 N · 눌러서 보기'), 누르면 같은 크기 상자 안에 그림. 상자 크기는 열고 닫아도 같다
+   (인라인 style 의 aspect-ratio·width) — 아래 글이 밀리지 않아 필기 위치가 그대로다 */
+.qm-img {
+  margin: 8px 0;
+  line-height: 1.4;
+}
+.qm-img-box {
+  display: block;
+  position: relative;
+  max-width: 100%;
+  padding: 0;
+  border: 2px dashed #f59e0b;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.06);
+  color: #f59e0b;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  overflow: hidden;
+}
+.qm-img-box.is-open {
+  border-style: solid;
+  border-color: #3a3a3a;
+  background: #fff;
+}
+.qm-img-box img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.qm-img-cover {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  text-align: center;
+}
+
 /* 빈칸 번호 단추: 보이는 크기(촘촘한 모양)는 그대로, 손가락으로 누르는 범위만 좌우로 조금 넓힌다.
    위아래는 1px 만: 본문 줄 사이 틈이 약 3.4~3.9px 뿐이라, 더 넓히면 아랫줄 빈칸의 누르는 범위가
    윗줄 빈칸 아래쪽을 덮어(뒤 단추가 위에 그려짐) 엉뚱한 빈칸이 열린다 */

@@ -82,3 +82,26 @@ test('textModel 덩어리: 제목 줄은 한 덩어리, 보통 줄은 이어 붙
   assert.equal(segs[2].parts.join('___'), '줄8 ___\n줄9 ___\n');
   assert.equal(segs[4].parts.join('___'), '끝 줄');
 });
+
+// 그림 줄(2026-11-19): 우리 그림 저장소 주소의 "[[그림 … | 주소]]" 줄만 그림 칸(image 덩어리). 빈칸 번호·제목 번호는 그대로
+test('그림 줄 → 그림 칸: 우리 저장소 주소만, 크기는 파일 이름의 가로x세로, 빈칸 번호는 그대로', async () => {
+  const { imageOfLine, IMAGE_PREFIX, plainPreview } = await import('../../src/utils/textBlocks.js');
+  const u1 = `${IMAGE_PREFIX}uid/notion/abc-1200x800.png`;
+  const u2 = `${IMAGE_PREFIX}uid/notion/def.jpg`;
+  assert.deepEqual(imageOfLine(`[[그림: 그래프 | ${u1}]]`), { url: u1, caption: '그래프', w: 1200, h: 800 });
+  assert.deepEqual(imageOfLine(`[[그림 | ${u2}]]`), { url: u2, caption: '', w: null, h: null });
+  assert.equal(imageOfLine('[[그림 | https://example.org/a-10x10.png]]'), null, '남의 주소는 그림이 아님');
+  assert.equal(imageOfLine(`앞 글 [[그림 | ${u1}]]`), null, '한 줄 전체여야 함');
+  const text = ['《제목》', '■ 절', '첫 ___ 줄', `[[그림: 그래프 | ${u1}]]`, '둘째 ___ 줄', `[[그림 | ${u2}]]`, '□ 소제목 ___'].join('\n');
+  const m = textModel(text);
+  assert.equal(m.blankCount, 3);
+  assert.equal(m.imageCount, 2);
+  const segs = m.blocks.flatMap((b) => b.segs || []);
+  const imgs = segs.filter((s) => s.image);
+  assert.deepEqual(imgs.map((s) => [s.image.n, s.image.url, s.start, s.count]), [[0, u1, 1, 0], [1, u2, 2, 0]]);
+  // 그림 바로 앞 덩어리는 끝 줄바꿈을 뗌(그림 위 빈 줄 막기), 빈칸 번호는 읽는 순서 그대로
+  const before = segs[segs.indexOf(imgs[0]) - 1];
+  assert.equal(before.parts.join('___'), '첫 ___ 줄');
+  assert.deepEqual(m.headings.map((h) => [h.kind, h.blank]), [['title', 0], ['h1', 0], ['h2', 2]]);
+  assert.equal(plainPreview(text, 80), '《제목》 ■ 절 첫 ( ) 줄 [그림] 둘째 ( ) 줄 [그림] □ 소제목 ( )');
+});

@@ -1,6 +1,23 @@
 // 문제 텍스트를 "일반 텍스트" / "표" 블록으로 분리하는 파서
 // "|"로 시작하고 끝나는 연속된 줄을 표 블록으로 인식한다.
+import { SUPABASE_URL } from "../config.js";
+
 const TABLE_LINE = /^\s*\|.*\|\s*$/;
+
+// ── 그림 줄(2026-11-19) ──
+// 노션 공부 페이지의 그림을 quiz-maker-notion 이 옮긴 한 줄: "[[그림: 설명 | 주소]]" 또는 "[[그림 | 주소]]".
+// 주소는 우리 그림 저장소(공개 버킷 question-images)의 것만 그림으로 본다(다른 주소면 글 그대로 보임).
+// 파일 이름 끝의 "-가로x세로" 로 그림 칸 크기를 미리 잡는다(열고 닫아도 아래 글 위치가 그대로 — 필기가 어긋나지 않게)
+const IMAGE_LINE = /^\[\[그림(?:: ?(.*?))? ?\| ?(https:\/\/[^\s|\]]+)\]\]$/;
+export const IMAGE_PREFIX = `${SUPABASE_URL}/storage/v1/object/public/question-images/`;
+export function imageOfLine(line) {
+  const m = String(line ?? "").trim().match(IMAGE_LINE);
+  if (!m || !m[2].startsWith(IMAGE_PREFIX)) return null;
+  const dim = m[2].match(/-(\d{1,5})x(\d{1,5})\.(?:png|jpe?g|webp)$/i);
+  const w = dim ? Number(dim[1]) : 0;
+  const h = dim ? Number(dim[2]) : 0;
+  return { url: m[2], caption: (m[1] || "").trim(), w: w > 0 && h > 0 ? w : null, h: w > 0 && h > 0 ? h : null };
+}
 
 export function parseTextBlocks(text) {
   const lines = (text || "").split("\n");
@@ -64,6 +81,7 @@ export function textModel(text) {
   const headings = [];
   let blank = 0;
   let hid = 0;
+  let imageNo = 0;
   let seen = false; // 빈 줄 아닌 줄이 이미 나왔나(《제목》은 맨 첫 줄만)
   for (const b of parseTextBlocks(text)) {
     if (b.type === "table") {
@@ -83,13 +101,24 @@ export function textModel(text) {
     const raw = content.split("\n");
     const segs = [];
     let run = null; // 이어 붙이는 중인 보통 줄들 { text, start, count }
-    const flush = () => {
+    const flush = (beforeBlock = false) => {
       if (!run) return;
+      // 그림 칸(블록) 바로 앞이면 마지막 줄바꿈을 뗀다 — 남기면 pre-wrap 이 그림 위에 빈 줄을 하나 더 그린다
+      if (beforeBlock) run.text = run.text.replace(/\n$/, "");
       const parts = run.text.split("___");
       segs.push({ parts, start: run.start, count: parts.length - 1, kind: null, hid: null });
       run = null;
     };
     raw.forEach((line, li) => {
+      const img = imageOfLine(line);
+      if (img) {
+        // 그림 칸: 빈칸·제목이 아닌 따로 된 덩어리(image). 번호는 글 순서대로 0부터
+        flush(true);
+        segs.push({ parts: [], start: blank, count: 0, kind: null, hid: null, image: { ...img, n: imageNo } });
+        imageNo += 1;
+        seen = true;
+        return;
+      }
       const kind = headingKind(line, !seen);
       if (line.trim()) seen = true;
       // 줄바꿈은 줄 끝에 붙여 둔다(pre-wrap 이 줄을 바꿈) — 예전처럼 블록 하나를 통째로 그린 것과 같은 글
@@ -111,7 +140,7 @@ export function textModel(text) {
     flush();
     blocks.push({ type: "text", segs });
   }
-  return { blocks, headings, blankCount: blank };
+  return { blocks, headings, blankCount: blank, imageCount: imageNo };
 }
 
 // 목차에 보일 제목 글: 앞 표시(■ □ 《》)를 떼고 빈칸은 '(  )' 로
@@ -125,7 +154,9 @@ function headingLabel(line, kind) {
 // 목록에 보이는 문항 앞부분: 표 칸 구분선(|)과 줄바꿈은 띄어쓰기로, 빈칸(___)은 "( )" 로 바꾼 뒤 max 글자까지
 // (결과 화면 문항별 목록, 편집기 문항 목록에서 '| 단계 | 기간 |' 같은 표 문법이 그대로 보이지 않게)
 export function plainPreview(text, max) {
-  const t = (text || "").replace(/___/g, "( )").replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+  const t = (text || "")
+    .split("\n").map((l) => (imageOfLine(l) ? "[그림]" : l)).join("\n")
+    .replace(/___/g, "( )").replace(/\|/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return "";
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
